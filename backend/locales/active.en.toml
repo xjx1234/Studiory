@@ -1,0 +1,57 @@
+# English
+
+[success]
+other = "Success"
+
+# ── Auth / Permission ──────────────────────────────────────────────────────────
+
+[err_unauthorized]
+other = "Unauthorized, please login first"
+
+[err_invalid_token]
+other = "Invalid token, please login again"
+
+[err_token_expired]
+other = "Token has expired, please login again"
+
+[err_invalid_credentials]
+other = "Invalid account or password"
+
+[err_invalid_code]
+other = "Invalid or expired verification code"
+
+[err_unsupported_grant]
+other = "Unsupported grant type"
+
+[err_forbidden]
+other = "Access denied"
+
+# ── Request / Validation ───────────────────────────────────────────────────────
+
+[err_bad_request]
+other = "Bad request"
+
+[err_validation]
+other = "Validation failed"
+
+[err_too_many_requests]
+other = "Too many requests, please try again later"
+
+# ── Business / Resource ────────────────────────────────────────────────────────
+
+[err_not_found]
+other = "Resource not found"
+
+[err_already_exists]
+other = "Resource already exists"
+
+# ── Server Internal ────────────────────────────────────────────────────────────
+
+[err_body_too_large]
+other = "Request body too large"
+
+[err_internal]
+other = "Internal server error, please try again later"
+
+[err_service_unavailable]
+other = "Service temporarily unavailable, please try again later"
