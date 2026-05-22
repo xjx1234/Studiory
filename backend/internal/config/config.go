@@ -1,37 +1,313 @@
 package config
 
-import "os"
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
 
-// Config 从环境变量读取运行配置，后续可改为配置文件或 viper。
+	"github.com/spf13/viper"
+	"github.com/subosito/gotenv"
+)
+
+// Config 汇聚所有运行配置（扁平结构，便于全项目直接访问字段）。
+//
+// 加载优先级（高 → 低）：
+//  1. 系统环境变量
+//  2. config/local.yaml     （本地私有，gitignore）
+//  3. config/{env}.yaml     （环境专用，如 development.yaml）
+//  4. config/base.yaml      （全局默认值，提交到 git）
 type Config struct {
-	// 服务
+	// ── 服务 ─────────────────────────────────────────────────────────────
+	AppEnv     string
 	ServerAddr string
-	AppEnv    string
 
-	// 数据库
-	DatabaseURL string
+	// ── PostgreSQL ────────────────────────────────────────────────────────
+	DatabaseURL   string
+	DBHost        string
+	DBPort        string
+	DBUser        string
+	DBPassword    string
+	DBName        string
+	DBSSLMode     string
+	DBMaxConns    int
+	DBMinConns    int
+	DBMaxConnIdle time.Duration
+	DBMaxConnLife time.Duration
 
-	// Redis
-	RedisURL string
+	// ── Redis ─────────────────────────────────────────────────────────────
+	RedisURL       string
+	RedisHost      string
+	RedisPort      string
+	RedisPassword  string
+	RedisDB        int
+	RedisPoolSize  int
+	RedisKeyPrefix string
 
-	// JWT
-	JWTSecret string
+	// ── JWT ───────────────────────────────────────────────────────────────
+	JWTSecret          string
+	JWTAccessTokenTTL  time.Duration
+	JWTRefreshTokenTTL time.Duration
+
+	// ── Auth ──────────────────────────────────────────────────────────────
+	AuthMockCodeEnabled bool
+
+	// ── OAuth ─────────────────────────────────────────────────────────────
+	OAuthDevMode   bool
+	OAuthProviders []string
+
+	// ── 日志 ──────────────────────────────────────────────────────────────
+	LogLevel  string
+	LogFormat string
+
+	// ── 限流 ──────────────────────────────────────────────────────────────
+	RateLimitPerMinute int
+
+	// ── CORS ──────────────────────────────────────────────────────────────
+	CORSAllowOrigins     []string
+	CORSAllowCredentials bool
 }
 
-// Load 从环境变量加载配置。
+// Load 按 base → {env} → local → 环境变量 的顺序加载并合并配置。
 func Load() *Config {
-	return &Config{
-		ServerAddr:  envOr("SERVER_ADDR", ":8080"),
-		AppEnv:      envOr("APP_ENV", "development"),
-		DatabaseURL: envOr("DATABASE_URL", "postgres://localhost:5432/shixishe?sslmode=disable"),
-		RedisURL:    envOr("REDIS_URL", "redis://localhost:6379/0"),
-		JWTSecret:   envOr("JWT_SECRET", "dev-secret-change-in-production"),
+	v := loadViper()
+
+	cfg := &Config{
+		AppEnv:     v.GetString("app.env"),
+		ServerAddr: v.GetString("app.server_addr"),
+
+		DBHost:        v.GetString("database.host"),
+		DBPort:        v.GetString("database.port"),
+		DBUser:        v.GetString("database.user"),
+		DBPassword:    v.GetString("database.password"),
+		DBName:        v.GetString("database.name"),
+		DBSSLMode:     v.GetString("database.ssl_mode"),
+		DBMaxConns:    v.GetInt("database.pool.max_conns"),
+		DBMinConns:    v.GetInt("database.pool.min_conns"),
+		DBMaxConnIdle: v.GetDuration("database.pool.max_conn_idle"),
+		DBMaxConnLife: v.GetDuration("database.pool.max_conn_life"),
+
+		RedisHost:      v.GetString("redis.host"),
+		RedisPort:      v.GetString("redis.port"),
+		RedisPassword:  v.GetString("redis.password"),
+		RedisDB:        v.GetInt("redis.db"),
+		RedisPoolSize:  v.GetInt("redis.pool_size"),
+		RedisKeyPrefix: v.GetString("redis.key_prefix"),
+
+		JWTSecret:          v.GetString("jwt.secret"),
+		JWTAccessTokenTTL:  v.GetDuration("jwt.access_ttl"),
+		JWTRefreshTokenTTL: v.GetDuration("jwt.refresh_ttl"),
+
+		AuthMockCodeEnabled: v.GetBool("auth.mock_code_enabled"),
+
+		OAuthDevMode:   v.GetBool("oauth.dev_mode"),
+		OAuthProviders: getStringSlice(v, "oauth.providers"),
+
+		LogLevel:  v.GetString("log.level"),
+		LogFormat: v.GetString("log.format"),
+
+		RateLimitPerMinute: v.GetInt("rate_limit.per_minute"),
+
+		CORSAllowOrigins:     getStringSlice(v, "cors.allow_origins"),
+		CORSAllowCredentials: v.GetBool("cors.allow_credentials"),
+	}
+
+	// DATABASE_URL 和 REDIS_URL 优先（为空时从分项拼接）
+	cfg.DatabaseURL = firstNonEmpty(v.GetString("database.url"), cfg.buildDatabaseURL())
+	cfg.RedisURL = firstNonEmpty(v.GetString("redis.url"), cfg.buildRedisURL())
+
+	return cfg
+}
+
+// Validate 检查启动所需的关键配置，避免生产环境带着不安全默认值运行。
+func (c *Config) Validate() error {
+	if c.ServerAddr == "" {
+		return errors.New("app.server_addr 不能为空")
+	}
+	if c.DatabaseURL == "" {
+		return errors.New("database.url 不能为空")
+	}
+	if c.RedisURL == "" {
+		return errors.New("redis.url 不能为空")
+	}
+	if c.JWTSecret == "" {
+		return errors.New("jwt.secret 不能为空")
+	}
+	if c.IsProd() {
+		if c.JWTSecret == "dev-secret-change-in-production" {
+			return errors.New("production 环境必须设置安全的 JWT_SECRET")
+		}
+		if c.AuthMockCodeEnabled {
+			return errors.New("production 环境不能启用 auth.mock_code_enabled")
+		}
+		if c.OAuthDevMode {
+			return errors.New("production 环境不能启用 oauth.dev_mode")
+		}
+	}
+	if c.RateLimitPerMinute <= 0 {
+		return errors.New("rate_limit.per_minute 必须大于 0")
+	}
+	if len(c.CORSAllowOrigins) == 0 {
+		return errors.New("cors.allow_origins 至少需要配置一个来源")
+	}
+	return nil
+}
+
+// IsDev 是否为开发环境。
+func (c *Config) IsDev() bool {
+	return c.AppEnv == "development" || c.AppEnv == ""
+}
+
+// IsProd 是否为生产环境。
+func (c *Config) IsProd() bool {
+	return c.AppEnv == "production"
+}
+
+// ── 内部 ─────────────────────────────────────────────────────────────────────
+
+func loadViper() *viper.Viper {
+	loadDotEnv()
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+
+	// 配置目录：优先使用 CONFIG_PATH 环境变量，默认 config/
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "config"
+	}
+
+	// 第一层：读取 base.yaml（全局默认值）
+	v.SetConfigName("base")
+	v.AddConfigPath(configPath)
+	if err := v.ReadInConfig(); err != nil {
+		// base.yaml 不存在时不中断，继续用空配置
+		_ = err
+	}
+
+	// 第二层：合并 {env}.yaml（环境专用配置）
+	// APP_ENV 此时从环境变量获取（因 viper 还没完成加载）
+	env := os.Getenv("APP_ENV")
+	if env == "" {
+		env = v.GetString("app.env")
+	}
+	if env == "" {
+		env = "development"
+	}
+	mergeConfig(v, configPath, env)
+
+	// 第三层：合并 local.yaml（本地私有，不提交到 git）
+	mergeConfig(v, configPath, "local")
+
+	// 第四层：环境变量覆盖（点路径 → 下划线大写，如 database.password → DATABASE_PASSWORD）
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+	v.AutomaticEnv()
+
+	// 显式绑定常用的环境变量（保持对原有 .env 变量名的兼容）
+	bindEnvs(v)
+
+	return v
+}
+
+// mergeConfig 合并指定名称的 yaml 文件（文件不存在时静默跳过）。
+func mergeConfig(base *viper.Viper, path, name string) {
+	v := viper.New()
+	v.SetConfigType("yaml")
+	v.SetConfigName(name)
+	v.AddConfigPath(path)
+
+	if err := v.ReadInConfig(); err == nil {
+		_ = base.MergeConfigMap(v.AllSettings())
 	}
 }
 
-func envOr(key, defaultVal string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// bindEnvs 显式绑定关键环境变量，保持与原有 .env 变量名兼容。
+func bindEnvs(v *viper.Viper) {
+	bindings := map[string]string{
+		"app.env":                     "APP_ENV",
+		"app.server_addr":             "SERVER_ADDR",
+		"database.url":                "DATABASE_URL",
+		"database.host":               "DB_HOST",
+		"database.port":               "DB_PORT",
+		"database.user":               "DB_USER",
+		"database.password":           "DB_PASSWORD",
+		"database.name":               "DB_NAME",
+		"database.ssl_mode":           "DB_SSL_MODE",
+		"database.pool.max_conns":     "DB_MAX_CONNS",
+		"database.pool.min_conns":     "DB_MIN_CONNS",
+		"database.pool.max_conn_idle": "DB_MAX_CONN_IDLE",
+		"database.pool.max_conn_life": "DB_MAX_CONN_LIFE",
+		"redis.url":                   "REDIS_URL",
+		"redis.host":                  "REDIS_HOST",
+		"redis.port":                  "REDIS_PORT",
+		"redis.password":              "REDIS_PASSWORD",
+		"redis.db":                    "REDIS_DB",
+		"redis.pool_size":             "REDIS_POOL_SIZE",
+		"redis.key_prefix":            "REDIS_KEY_PREFIX",
+		"jwt.secret":                  "JWT_SECRET",
+		"jwt.access_ttl":              "JWT_ACCESS_TTL",
+		"jwt.refresh_ttl":             "JWT_REFRESH_TTL",
+		"auth.mock_code_enabled":      "AUTH_MOCK_CODE_ENABLED",
+		"oauth.dev_mode":              "OAUTH_DEV_MODE",
+		"oauth.providers":             "OAUTH_PROVIDERS",
+		"log.level":                   "LOG_LEVEL",
+		"log.format":                  "LOG_FORMAT",
+		"rate_limit.per_minute":       "RATE_LIMIT_PER_MINUTE",
+		"cors.allow_origins":          "CORS_ALLOW_ORIGINS",
+		"cors.allow_credentials":      "CORS_ALLOW_CREDENTIALS",
 	}
-	return defaultVal
+
+	for key, envVar := range bindings {
+		_ = v.BindEnv(key, envVar)
+	}
+}
+
+func loadDotEnv() {
+	// gotenv.Load 不覆盖已经存在的系统环境变量，适合本地开发。
+	_ = gotenv.Load(".env", "backend/.env", "../.env")
+}
+
+func (c *Config) buildDatabaseURL() string {
+	dsn := fmt.Sprintf("postgres://%s", c.DBUser)
+	if c.DBPassword != "" {
+		dsn += ":" + c.DBPassword
+	}
+	dsn += fmt.Sprintf("@%s:%s/%s?sslmode=%s", c.DBHost, c.DBPort, c.DBName, c.DBSSLMode)
+	return dsn
+}
+
+func (c *Config) buildRedisURL() string {
+	url := "redis://"
+	if c.RedisPassword != "" {
+		url += ":" + c.RedisPassword + "@"
+	}
+	url += fmt.Sprintf("%s:%s/%d", c.RedisHost, c.RedisPort, c.RedisDB)
+	return url
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func getStringSlice(v *viper.Viper, key string) []string {
+	raw := v.GetStringSlice(key)
+	if len(raw) != 1 || !strings.Contains(raw[0], ",") {
+		return raw
+	}
+
+	parts := strings.Split(raw[0], ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
 }

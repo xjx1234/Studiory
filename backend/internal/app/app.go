@@ -1,0 +1,121 @@
+package app
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"backend/internal/auth"
+	"backend/internal/config"
+	internalhttp "backend/internal/http"
+	"backend/internal/repo/pg"
+	authservice "backend/internal/service/auth"
+	todoservice "backend/internal/service/todo"
+	userservice "backend/internal/service/user"
+	"backend/internal/store"
+	pkgvalidator "backend/pkg/validator"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+// App 是进程内的应用容器，负责持有所有需要关闭的资源。
+type App struct {
+	Cfg    *config.Config
+	Logger *zap.Logger
+
+	PGPool *pgxpool.Pool
+	Redis  redis.UniversalClient
+
+	Store *pg.Store
+
+	HTTP   *internalhttp.Deps
+	Router *gin.Engine
+	Server *http.Server
+}
+
+// New 装配整个应用：连接 PG/Redis → 创建 Repo → 创建 Service → 构建路由。
+func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, error) {
+	pkgvalidator.Init()
+	if cfg.IsProd() {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	auth.InitToken(cfg.JWTSecret, cfg.JWTAccessTokenTTL, cfg.JWTRefreshTokenTTL)
+
+	pool, err := store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{
+		MaxConns:    cfg.DBMaxConns,
+		MinConns:    cfg.DBMinConns,
+		MaxConnIdle: cfg.DBMaxConnIdle,
+		MaxConnLife: cfg.DBMaxConnLife,
+	}, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	rdb, err := store.NewRedis(ctx, cfg.RedisURL, store.RedisOptions{
+		PoolSize: cfg.RedisPoolSize,
+	}, logger)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+
+	pgStore := pg.NewStore(pool)
+
+	deps := &internalhttp.Deps{
+		Cfg:    cfg,
+		Logger: logger,
+		Store:  pgStore,
+		Redis:  rdb,
+
+		AuthService: authservice.New(pgStore.Users(), rdb,
+			authservice.WithOAuthRepo(pgStore.OAuth()),
+			authservice.WithCodePrefix(cfg.RedisKeyPrefix),
+			authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
+			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
+			authservice.WithOAuthProviders(cfg.OAuthProviders),
+		),
+		UserService: userservice.New(pgStore.Users()),
+		TodoService: todoservice.New(pgStore.Todos()),
+	}
+
+	router := internalhttp.NewRouter(deps)
+
+	server := &http.Server{
+		Addr:              cfg.ServerAddr,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	return &App{
+		Cfg:    cfg,
+		Logger: logger,
+		PGPool: pool,
+		Redis:  rdb,
+		Store:  pgStore,
+		HTTP:   deps,
+		Router: router,
+		Server: server,
+	}, nil
+}
+
+// Shutdown 优雅关闭：先停 HTTP Server，再关闭数据库与缓存。
+func (a *App) Shutdown(ctx context.Context) {
+	if a.Server != nil {
+		_ = a.Server.Shutdown(ctx)
+	}
+	a.Close()
+}
+
+// Close 关闭基础资源（PG、Redis）。
+func (a *App) Close() {
+	if a.PGPool != nil {
+		a.PGPool.Close()
+	}
+	if a.Redis != nil {
+		_ = a.Redis.Close()
+	}
+}

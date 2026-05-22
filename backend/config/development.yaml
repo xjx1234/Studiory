@@ -1,0 +1,7 @@
+# 开发环境覆盖
+app:
+  env: development
+
+log:
+  level: debug
+  format: console

@@ -10,4 +10,3 @@ import (
 func RequestID() gin.HandlerFunc {
 	return requestid.New()
 }
-

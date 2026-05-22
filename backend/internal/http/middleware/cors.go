@@ -7,11 +7,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type CORSOptions struct {
+	AllowOrigins     []string
+	AllowCredentials bool
+}
+
 // CORS 返回跨域中间件。
-// 开发环境允许所有来源；生产环境通过配置 AllowOrigins 收紧。
-func CORS() gin.HandlerFunc {
+func CORS(opts CORSOptions) gin.HandlerFunc {
+	allowOrigins := opts.AllowOrigins
+	if len(allowOrigins) == 0 {
+		allowOrigins = []string{"http://localhost:5173", "http://localhost:3000"}
+	}
+
 	return cors.New(cors.Config{
-		AllowOrigins: []string{"*"},
+		AllowOrigins: allowOrigins,
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{
 			"Origin",
@@ -20,7 +29,7 @@ func CORS() gin.HandlerFunc {
 			"X-Requested-With",
 		},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
+		AllowCredentials: opts.AllowCredentials,
 		MaxAge:           12 * time.Hour,
 	})
 }

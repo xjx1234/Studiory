@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const ContextKeyUserID   = "userID"
+const ContextKeyUserID = "userID"
 const ContextKeyUserRole = "userRole"
 
 // Auth 验证请求头中的 JWT Access Token，将用户信息注入 Gin Context。
@@ -37,6 +37,35 @@ func Auth() gin.HandlerFunc {
 
 		c.Set(ContextKeyUserID, claims.UserID)
 		c.Set(ContextKeyUserRole, claims.Role)
+		c.Next()
+	}
+}
+
+// RequireRole 要求当前用户具备指定角色之一。
+// 必须挂在 Auth() 之后，否则上下文中不会存在 userRole。
+func RequireRole(roles ...string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(roles))
+	for _, role := range roles {
+		allowed[role] = struct{}{}
+	}
+
+	return func(c *gin.Context) {
+		rawRole, exists := c.Get(ContextKeyUserRole)
+		if !exists {
+			resp.Fail(c, errcode.ErrUnauthorized)
+			return
+		}
+
+		role, ok := rawRole.(string)
+		if !ok {
+			resp.Fail(c, errcode.ErrForbidden)
+			return
+		}
+		if _, ok := allowed[role]; !ok {
+			resp.Fail(c, errcode.ErrForbidden)
+			return
+		}
+
 		c.Next()
 	}
 }

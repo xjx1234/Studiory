@@ -1,0 +1,30 @@
+# 生产环境覆盖（敏感值通过环境变量或 local.yaml 注入，不在此处填写）
+app:
+  env: production
+
+database:
+  ssl_mode: require
+  pool:
+    max_conns: 50
+    min_conns: 5
+
+log:
+  level: info
+  format: json               # 生产环境使用 JSON 格式，便于日志采集
+
+rate_limit:
+  per_minute: 60             # 生产环境更严格
+
+auth:
+  mock_code_enabled: false
+
+oauth:
+  dev_mode: false
+  providers:
+    - wechat
+    - apple
+    - google
+
+cors:
+  allow_origins: []           # 生产环境必须通过环境变量或 local.yaml 显式配置
+  allow_credentials: true

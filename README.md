@@ -1,60 +1,100 @@
-# 拾习社（Shixi Club）
+# Go API 脚手架
 
-一个面向中小学的学习工具库项目，支持多学科、多种练习形式，目标是将核心能力封装为统一 API，并逐步接入 Web、微信小程序和 App 等多端。
+一套可复用的多端项目骨架：统一 HTTP API 入口 + 可选 Node/Python 子服务 + Vue 前端。技术栈固定，**不包含具体业务**，新项目克隆后按模块扩展即可。
 
 ## 顶层结构
 
 ```text
 .
-├── backend/          # Golang 主后端（统一 API 入口，独立服务）
-│   ├── cmd/          # 可执行入口（将来拆分多个服务）
-│   ├── internal/     # 业务内部实现（学科、工具、题库、用户等）
-│   ├── pkg/          # 可复用的公共库（工具函数、中间件等）
-│   └── main.go       # 当前的简易主服务入口（后续会迁移到 cmd）
+├── backend/          # Golang 主后端（统一 API，独立部署）
+│   ├── config/       # 分层 YAML 配置
+│   ├── migrations/   # PostgreSQL 迁移
+│   ├── internal/     # 业务实现（分层见 docs/architecture.md）
+│   ├── pkg/          # 可复用公共库
+│   └── main.go
 ├── apps/
-│   ├── node/         # Node 子服务（BFF / 实时能力 / 网关辅助等）
-│   └── python/       # Python 子服务（算法、AI、题目生成等）
-├── frontend/         # Vue 前端（PC + Mobile 响应式 Web，独立应用）
-└── docs/             # 文档（接口设计、需求说明等）
+│   ├── node/         # Node 子服务（BFF / WebSocket / 第三方适配）
+│   └── python/       # Python 子服务（算法 / AI / 批处理）
+├── frontend/         # Vue Web（PC + Mobile 响应式）
+└── docs/             # 架构说明、Redis 键规范、示例 API 等
 ```
 
-## 目录设计说明
+## 后端分层（概要）
 
-- **backend/**（后端服务，独立运行）
-  - 作为整个系统的统一 HTTP API 入口，对外暴露 REST/JSON 接口。
-  - Node、Python 子服务通过 RPC/HTTP 调用方式挂载在该层后面，对前端透明。
-  - 可以单独启动、单独部署，不依赖 `frontend`。
-- **apps/node/**
-  - 适合承载：
-    - 与前端强相关的 BFF（Backend For Frontend）逻辑。
-    - WebSocket/实时推送等能力。
-    - 对第三方服务的适配层（如即时翻译服务等）。
-- **apps/python/**
-  - 适合承载：
-    - 英语单词工具的智能出题、难度评估。
-    - 语文文本分析、错题推荐等算法类功能。
-- **frontend/**（前端应用，独立开发）
-  - 使用 Vue 构建一个响应式 Web 应用，同时适配 PC 和 Mobile。
-  - 只通过 HTTP 调用 `backend` 暴露的 API，不直接依赖后端代码。
-  - 可以单独启动（本地开发服务器）、单独构建和部署。
-  - 后续可以将组件逻辑抽象出来，迁移/复用到微信小程序或其他端。
+| 层 | 目录 | 职责 |
+|----|------|------|
+| 入口 | `main.go` | 日志、配置、信号、启停 |
+| 装配 | `internal/app` | 连接 PG/Redis，注入 Service，挂路由 |
+| HTTP | `internal/http` | 路由、中间件、Handler（薄层） |
+| 业务 | `internal/service/*` | 用例逻辑，编排 repo |
+| 数据 | `internal/repo` | 接口 + `pg` 实现 + `sqlc` 生成 |
+| 基础设施 | `internal/auth`、`internal/store`、`pkg/*` | JWT、连接池、统一响应等 |
 
-## 英文单词工具（第一期目标）
+**开箱即用能力**：健康检查、就绪检查、注册/登录/验证码/刷新/登出、用户资料、角色权限中间件。
 
-第一期将围绕「英文单词工具」设计和实现一组稳定的 API，包括但不限于：
+**示例模块**：Todo CRUD（`/api/v1/user/todos`），演示完整分层，见 [docs/examples/todo-module.md](docs/examples/todo-module.md)。
 
-- 获取练习配置、模式列表（听写、拼写、词义等）。
-- 拉取一组待练习的单词。
-- 提交作答并返回判分、解析和错题记录。
+详细约定与「如何加一个新模块」见 [docs/architecture.md](docs/architecture.md)。
 
-> 当前阶段优先打牢项目结构和接口设计，具体业务逻辑与题型细节后续逐步补充。
+## 快速开始
+
+```bash
+# 1. 配置（config.Load 会自动加载 backend/.env）
+cp backend/.env.example backend/.env
+# 编辑 DATABASE_URL、REDIS_URL、JWT_SECRET
+
+# 2. 启动本地依赖
+make compose-up
+
+# 3. 数据库迁移
+make migrate-up
+
+# 4. 启动后端
+make run
+```
+
+开发环境默认启用固定验证码 `123456`（`AUTH_MOCK_CODE_ENABLED=true`）。生产环境会禁止启用该开关，并要求替换默认 `JWT_SECRET`。
+
+常用命令：
+
+```bash
+make test        # go test ./...
+make build       # 构建后端
+make sqlc        # 生成 sqlc 代码
+make migrate-up  # 执行迁移
+```
 
 ## 数据库与 Redis
 
-- **PostgreSQL**：主库，存用户、学科/工具、单词集与单词、练习会话与答题记录。迁移文件在 `backend/migrations/`，使用 [golang-migrate](https://github.com/golang-migrate/migrate) 执行：
-  ```bash
-  migrate -path backend/migrations -database "postgres://user:pass@localhost:5432/shixishe?sslmode=disable" up
-  ```
-- **Redis**：验证码（短信/邮件）、Refresh Token 黑名单、限流与缓存。键规范见 `docs/redis-keys.md`。
-- 后端通过环境变量连接：`DATABASE_URL`、`REDIS_URL`（示例见 `backend/internal/config`）。
+- **PostgreSQL**：`users`、`user_oauth`，以及示例表 `todos`。新业务表通过新 migration 添加。
+- **sqlc**：`backend/sqlc.yaml`，查询写在 `internal/repo/sqlc/query/`，生成到 `gen/`。说明见 `backend/docs/sqlc.md`。
+- **Redis**：验证码、Refresh Token 黑名单等，键前缀由 `REDIS_KEY_PREFIX` 控制，见 [docs/redis-keys.md](docs/redis-keys.md)。
 
+## 健康检查与权限
+
+- `GET /health`：进程存活检查，不访问外部依赖。
+- `GET /ready`：检查 PostgreSQL 与 Redis，可用于容器 readiness。
+- `GET /api/v1/admin/ping`：admin 权限示例，需 JWT 且 `role=admin`。
+
+## 常用业务 API
+
+- `GET /api/v1/user/profile`：获取当前登录用户资料
+- `PATCH /api/v1/user/profile`：更新当前登录用户资料
+- `GET /api/v1/user/todos?page=&page_size=`：待办列表（分页）
+- `POST /api/v1/auth/login`（`grant_type=oauth`）：第三方登录骨架（开发模式需 `OAUTH_DEV_MODE=true`）
+
+## 示例文档
+
+`docs/examples/` 存放**参考用**的业务 API 设计（非脚手架内置），例如历史上的英文单词工具接口草案。
+
+- OpenAPI：`docs/api/openapi.yaml`
+- 错误码：`docs/api/errcode.md`
+
+## 新项目 checklist
+
+1. 改 `backend/go.mod` 的 module 名与 import 路径。
+2. 改 `config/base.yaml`、`backend/.env` 中的库名、JWT 密钥。
+3. 改 `REDIS_KEY_PREFIX`、`CORS_ALLOW_ORIGINS`，避免多项目互相影响。
+4. 按需调整 `users.role` 枚举（migration）。
+5. 按 [docs/architecture.md](docs/architecture.md) 增加 migration → sqlc → repo → service → http。
+6. 初始化 `frontend/`、`apps/node/`、`apps/python/`（目录预留，按项目填充）。

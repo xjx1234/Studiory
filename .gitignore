@@ -1,0 +1,20 @@
+.DS_Store
+
+# Local env
+.env
+backend/.env
+backend/config/local.yaml
+
+# Build outputs
+bin/
+dist/
+tmp/
+*.exe
+*.test
+
+# Docker volumes / local data
+.data/
+
+# IDE
+.idea/
+.vscode/

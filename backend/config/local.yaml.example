@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# 本地私有配置模板（复制为 local.yaml 后填写真实值）
+# local.yaml 已加入 .gitignore，不会提交到版本控制
+# ─────────────────────────────────────────────────────────────────────────────
+
+database:
+  password: your_postgres_password
+
+redis:
+  password: ""               # 本地 Redis 通常无密码
+  key_prefix: app
+
+jwt:
+  secret: "your-local-dev-secret-at-least-32-chars"
+
+auth:
+  mock_code_enabled: true
+
+oauth:
+  dev_mode: true
+  providers:
+    - wechat
+    - apple
+    - google
+
+cors:
+  allow_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"

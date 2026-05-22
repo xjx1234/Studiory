@@ -1,0 +1,11 @@
+# 本地私有配置（含密钥，不提交）
+.env
+config/local.yaml
+
+# 编译产物
+/backend
+*.exe
+*.test
+
+# Go 工具链缓存
+vendor/

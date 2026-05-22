@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# API 脚手架 - 基础配置（所有环境共用的默认值）
+# 加载顺序：base.yaml → {env}.yaml → local.yaml → 环境变量
+# ─────────────────────────────────────────────────────────────────────────────
+
+app:
+  env: development           # 由具体环境配置文件覆盖
+  server_addr: ":8080"
+
+database:
+  url: ""                    # 非空则优先使用，忽略以下分项
+  host: localhost
+  port: 5432
+  user: postgres
+  password: ""
+  name: app
+  ssl_mode: disable          # disable | require | verify-full
+  pool:
+    max_conns: 20
+    min_conns: 2
+    max_conn_idle: 10m       # Go duration 格式
+    max_conn_life: 1h
+
+redis:
+  url: ""                    # 非空则优先使用，忽略以下分项
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+  key_prefix: app
+
+jwt:
+  secret: "dev-secret-change-in-production"
+  access_ttl: 2h
+  refresh_ttl: 168h          # 7天
+
+auth:
+  mock_code_enabled: true     # 仅开发环境使用固定验证码 123456
+
+oauth:
+  dev_mode: true              # 开发模式：直接用 provider + open_id 登录（不校验第三方 token）
+  providers:
+    - wechat
+    - apple
+    - google
+
+log:
+  level: info                # debug | info | warn | error
+  format: console            # console | json
+
+rate_limit:
+  per_minute: 120
+
+cors:
+  allow_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+  allow_credentials: true

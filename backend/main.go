@@ -2,73 +2,88 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
+	"backend/internal/app"
 	"backend/internal/config"
-	internalhttp "backend/internal/http"
-	"backend/internal/store"
-	pkgvalidator "backend/pkg/validator"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 func main() {
-	logger := initLogger()
+	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "配置错误: %v\n", err)
+		os.Exit(1)
+	}
+
+	logger := initLogger(cfg)
 	defer logger.Sync()
 	zap.ReplaceGlobals(logger)
 
-	cfg := config.Load()
+	zap.L().Info("配置加载完成",
+		zap.String("env", cfg.AppEnv),
+		zap.String("addr", cfg.ServerAddr),
+	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// PostgreSQL
-	pool, err := store.NewPostgres(ctx, cfg.DatabaseURL, zap.L())
+	a, err := app.New(ctx, cfg, zap.L())
 	if err != nil {
-		zap.L().Fatal("PostgreSQL 连接失败", zap.Error(err))
+		zap.L().Fatal("应用初始化失败", zap.Error(err))
 	}
-	defer pool.Close()
 
-	// Redis
-	rdb, err := store.NewRedis(ctx, cfg.RedisURL, zap.L())
-	if err != nil {
-		zap.L().Fatal("Redis 连接失败", zap.Error(err))
-	}
-	defer rdb.Close()
+	zap.L().Info("API 服务启动", zap.String("addr", cfg.ServerAddr))
 
-	// 初始化参数校验器（注册 zh/en 翻译 + 自定义规则）
-	pkgvalidator.Init()
+	// 非阻塞启动 HTTP Server，让主 goroutine 等待退出信号
+	go func() {
+		if err := a.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			zap.L().Fatal("服务器启动失败", zap.Error(err))
+		}
+	}()
 
-	// 后续可将 pool、rdb 注入到 router 或 handler 中使用
-	_ = pool
-	_ = rdb
+	// 等待退出信号（Ctrl+C 或 SIGTERM）
+	<-ctx.Done()
+	zap.L().Info("收到退出信号，开始优雅停机")
 
-	r := internalhttp.NewRouter()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	a.Shutdown(shutdownCtx)
 
-	zap.L().Info("拾习社主后端启动", zap.String("addr", cfg.ServerAddr))
-
-	if err := r.Run(cfg.ServerAddr); err != nil {
-		zap.L().Fatal("服务器启动失败", zap.Error(err))
-	}
+	zap.L().Info("服务已安全退出")
 }
 
-// initLogger 初始化 Zap。
-// 开发环境用彩色控制台输出；生产环境通过 APP_ENV=production 切换为 JSON 格式。
-func initLogger() *zap.Logger {
+// initLogger 根据配置初始化 Zap Logger。
+func initLogger(cfg *config.Config) *zap.Logger {
 	var (
 		logger *zap.Logger
 		err    error
 	)
 
-	if os.Getenv("APP_ENV") == "production" {
-		cfg := zap.NewProductionConfig()
-		cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-		logger, err = cfg.Build()
-	} else {
-		logger, err = zap.NewDevelopment()
+	level := zap.NewAtomicLevel()
+	if err := level.UnmarshalText([]byte(strings.ToLower(cfg.LogLevel))); err != nil {
+		level.SetLevel(zap.InfoLevel)
+	}
+
+	switch cfg.LogFormat {
+	case "json":
+		zapCfg := zap.NewProductionConfig()
+		zapCfg.Level = level
+		zapCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+		logger, err = zapCfg.Build()
+	default:
+		zapCfg := zap.NewDevelopmentConfig()
+		zapCfg.Level = level
+		logger, err = zapCfg.Build()
 	}
 
 	if err != nil {
