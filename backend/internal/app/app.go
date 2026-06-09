@@ -43,7 +43,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	auth.InitToken(cfg.JWTSecret, cfg.JWTAccessTokenTTL, cfg.JWTRefreshTokenTTL)
+	tokenIssuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTAccessTokenTTL, cfg.JWTRefreshTokenTTL)
 
 	pool, err := store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{
 		MaxConns:    cfg.DBMaxConns,
@@ -66,12 +66,14 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 	pgStore := pg.NewStore(pool)
 
 	deps := &internalhttp.Deps{
-		Cfg:    cfg,
-		Logger: logger,
-		Store:  pgStore,
-		Redis:  rdb,
+		Cfg:         cfg,
+		Logger:      logger,
+		Store:       pgStore,
+		Redis:       rdb,
+		TokenIssuer: tokenIssuer,
 
 		AuthService: authservice.New(pgStore.Users(), rdb,
+			authservice.WithTokenIssuer(tokenIssuer),
 			authservice.WithOAuthRepo(pgStore.OAuth()),
 			authservice.WithUserOAuthTxRunner(pgStore),
 			authservice.WithLogger(logger),
@@ -80,11 +82,16 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
 			authservice.WithOAuthProviders(cfg.OAuthProviders),
 		),
-		UserService: userservice.New(pgStore.Users()),
-		TodoService: todoservice.New(pgStore.Todos()),
+		UserService: userservice.New(pgStore.Users(), userservice.WithLogger(logger)),
+		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
 	}
 
-	router := internalhttp.NewRouter(deps)
+	router, err := internalhttp.NewRouter(deps)
+	if err != nil {
+		pool.Close()
+		_ = rdb.Close()
+		return nil, err
+	}
 
 	server := &http.Server{
 		Addr:              cfg.ServerAddr,

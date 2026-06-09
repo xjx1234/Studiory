@@ -14,9 +14,9 @@ import (
 // NewRouter 构建 Gin 路由，挂载全局中间件与所有路由分组。
 //
 // 中间件顺序：RequestID → I18n → Zap日志 → Recovery → Safe → RateLimit → CORS
-func NewRouter(deps *Deps) *gin.Engine {
+func NewRouter(deps *Deps) (*gin.Engine, error) {
 	if err := validateDeps(deps); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	r := gin.New()
@@ -38,20 +38,23 @@ func NewRouter(deps *Deps) *gin.Engine {
 	{
 		registerAuthRoutes(v1, deps)
 
-		user := v1.Group("/user", middleware.Auth())
+		user := v1.Group("/user", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix))
 		registerUserProfileRoutes(user, deps)
 		registerUserTodoRoutes(user, deps)
 
-		admin := v1.Group("/admin", middleware.Auth(), middleware.RequireRole("admin"))
+		admin := v1.Group("/admin", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix), middleware.RequireRole("admin"))
 		registerAdminRoutes(admin, deps)
 	}
 
-	return r
+	return r, nil
 }
 
 func validateDeps(deps *Deps) error {
 	if deps == nil {
 		return errors.New("http deps is nil")
+	}
+	if deps.TokenIssuer == nil {
+		return errors.New("TokenIssuer is required")
 	}
 	if deps.AuthService == nil {
 		return errors.New("AuthService is required")

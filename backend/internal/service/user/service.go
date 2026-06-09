@@ -8,6 +8,7 @@ import (
 	"backend/pkg/errcode"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // ProfileResult 用户资料（对外输出结构）。
@@ -33,12 +34,25 @@ type Service interface {
 }
 
 type userServiceImpl struct {
-	users repo.UserRepo
+	users  repo.UserRepo
+	logger *zap.Logger
 }
 
+type Option func(*userServiceImpl)
+
 // New 创建 UserService。
-func New(users repo.UserRepo) Service {
-	return &userServiceImpl{users: users}
+func New(users repo.UserRepo, opts ...Option) Service {
+	s := &userServiceImpl{users: users}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+func WithLogger(logger *zap.Logger) Option {
+	return func(s *userServiceImpl) {
+		s.logger = logger
+	}
 }
 
 func (s *userServiceImpl) GetProfile(ctx context.Context, userID string) (*ProfileResult, *errcode.Error) {
@@ -52,6 +66,7 @@ func (s *userServiceImpl) GetProfile(ctx context.Context, userID string) (*Profi
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
+		s.logInternal("GetProfile lookup user", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -72,6 +87,7 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
+		s.logInternal("UpdateProfile lookup user", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -89,9 +105,16 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
+		s.logInternal("UpdateProfile update user", err)
 		return nil, errcode.ErrInternal
 	}
 	return toProfileResult(updated), nil
+}
+
+func (s *userServiceImpl) logInternal(op string, err error) {
+	if s.logger != nil && err != nil {
+		s.logger.Error(op, zap.Error(err))
+	}
 }
 
 func toProfileResult(u *repo.User) *ProfileResult {

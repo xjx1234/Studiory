@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"backend/internal/auth"
@@ -8,6 +10,7 @@ import (
 	"backend/pkg/resp"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 const ContextKeyUserID = "userID"
@@ -15,7 +18,7 @@ const ContextKeyUserRole = "userRole"
 
 // Auth 验证请求头中的 JWT Access Token，将用户信息注入 Gin Context。
 // 验证失败时直接返回 401，不继续执行后续 Handler。
-func Auth() gin.HandlerFunc {
+func Auth(issuer *auth.TokenIssuer, rdb redis.UniversalClient, keyPrefix string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("Authorization")
 		if raw == "" {
@@ -29,8 +32,13 @@ func Auth() gin.HandlerFunc {
 			return
 		}
 
-		claims, err := auth.ParseAccessToken(parts[1])
+		claims, err := issuer.ParseAccessToken(parts[1])
 		if err != nil {
+			resp.Fail(c, errcode.ErrInvalidToken)
+			return
+		}
+
+		if isAccessTokenRevoked(c.Request.Context(), rdb, keyPrefix, claims) {
 			resp.Fail(c, errcode.ErrInvalidToken)
 			return
 		}
@@ -39,6 +47,19 @@ func Auth() gin.HandlerFunc {
 		c.Set(ContextKeyUserRole, claims.Role)
 		c.Next()
 	}
+}
+
+func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPrefix string, claims *auth.Claims) bool {
+	if rdb == nil || claims == nil || claims.IssuedAt == nil {
+		return false
+	}
+
+	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", keyPrefix, claims.UserID)
+	revokeAt, err := rdb.Get(ctx, revokeKey).Int64()
+	if err != nil {
+		return false
+	}
+	return claims.IssuedAt.Time.Unix() <= revokeAt
 }
 
 // RequireRole 要求当前用户具备指定角色之一。

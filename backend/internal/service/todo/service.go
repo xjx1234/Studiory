@@ -9,6 +9,7 @@ import (
 	"backend/pkg/pagination"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // Item 对外返回的待办结构。
@@ -41,11 +42,24 @@ type Service interface {
 }
 
 type serviceImpl struct {
-	todos repo.TodoRepo
+	todos  repo.TodoRepo
+	logger *zap.Logger
 }
 
-func New(todos repo.TodoRepo) Service {
-	return &serviceImpl{todos: todos}
+type Option func(*serviceImpl)
+
+func New(todos repo.TodoRepo, opts ...Option) Service {
+	s := &serviceImpl{todos: todos}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+func WithLogger(logger *zap.Logger) Option {
+	return func(s *serviceImpl) {
+		s.logger = logger
+	}
 }
 
 func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Query) (pagination.List[Item], *errcode.Error) {
@@ -56,6 +70,7 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 
 	total, err := s.todos.CountByUserID(ctx, uid)
 	if err != nil {
+		s.logInternal("List count todos", err)
 		return pagination.List[Item]{}, errcode.ErrInternal
 	}
 
@@ -63,6 +78,7 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 	offset := int32(page.Offset())
 	rows, err := s.todos.ListByUserIDPaginated(ctx, uid, limit, offset)
 	if err != nil {
+		s.logInternal("List todos", err)
 		return pagination.List[Item]{}, errcode.ErrInternal
 	}
 
@@ -85,6 +101,7 @@ func (s *serviceImpl) Get(ctx context.Context, userID, todoID string) (*Item, *e
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
+		s.logInternal("Get todo", err)
 		return nil, errcode.ErrInternal
 	}
 	item := toItem(row)
@@ -102,6 +119,7 @@ func (s *serviceImpl) Create(ctx context.Context, userID string, in *CreateInput
 
 	row, err := s.todos.Create(ctx, uid, in.Title)
 	if err != nil {
+		s.logInternal("Create todo", err)
 		return nil, errcode.ErrInternal
 	}
 	item := toItem(row)
@@ -122,6 +140,7 @@ func (s *serviceImpl) Update(ctx context.Context, userID, todoID string, in *Upd
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
+		s.logInternal("Update todo", err)
 		return nil, errcode.ErrInternal
 	}
 	item := toItem(row)
@@ -139,9 +158,16 @@ func (s *serviceImpl) Delete(ctx context.Context, userID, todoID string) *errcod
 		if errors.Is(err, repo.ErrNotFound) {
 			return errcode.ErrNotFound
 		}
+		s.logInternal("Delete todo", err)
 		return errcode.ErrInternal
 	}
 	return nil
+}
+
+func (s *serviceImpl) logInternal(op string, err error) {
+	if s.logger != nil && err != nil {
+		s.logger.Error(op, zap.Error(err))
+	}
 }
 
 func parseIDs(userID, todoID string) (uuid.UUID, uuid.UUID, *errcode.Error) {

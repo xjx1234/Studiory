@@ -3,7 +3,6 @@ package authservice
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -13,9 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestMain(m *testing.M) {
-	auth.InitToken("test-secret-key-for-unit-tests", time.Hour, time.Hour)
-	os.Exit(m.Run())
+func testTokenIssuer() *auth.TokenIssuer {
+	return auth.NewTokenIssuer("test-secret-key-for-unit-tests", time.Hour, time.Hour)
 }
 
 type fakeUserRepo struct {
@@ -107,6 +105,7 @@ func TestLoginWithOAuthCreatesUserOnFirstLogin(t *testing.T) {
 	oauthRepo := newFakeOAuthRepo()
 
 	svc := New(users, nil,
+		WithTokenIssuer(testTokenIssuer()),
 		WithOAuthRepo(oauthRepo),
 		WithOAuthDevMode(true),
 	)
@@ -144,6 +143,7 @@ func TestLoginWithOAuthCreatesUserOnFirstLogin(t *testing.T) {
 
 func TestLoginWithOAuthRejectsUnknownProvider(t *testing.T) {
 	svc := New(newFakeUserRepo(), nil,
+		WithTokenIssuer(testTokenIssuer()),
 		WithOAuthRepo(newFakeOAuthRepo()),
 		WithOAuthDevMode(true),
 	)
@@ -160,6 +160,7 @@ func TestLoginWithOAuthRejectsUnknownProvider(t *testing.T) {
 
 func TestLoginWithOAuthRequiresDevMode(t *testing.T) {
 	svc := New(newFakeUserRepo(), nil,
+		WithTokenIssuer(testTokenIssuer()),
 		WithOAuthRepo(newFakeOAuthRepo()),
 		WithOAuthDevMode(false),
 	)

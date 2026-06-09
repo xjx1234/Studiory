@@ -2,8 +2,6 @@ package auth
 
 import (
 	"errors"
-	"os"
-	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -23,56 +21,35 @@ type TokenPair struct {
 	ExpiresIn    int64  `json:"expires_in"` // Access Token 有效秒数
 }
 
-// tokenConfig 是运行时可配置的 token 参数，通过 InitToken 注入。
-type tokenConfig struct {
+// TokenIssuer 负责 JWT 签发与解析，通过依赖注入传入各层。
+type TokenIssuer struct {
 	secret          []byte
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
 }
 
-var (
-	globalTokenCfg     tokenConfig
-	globalTokenCfgOnce sync.Once
-)
-
-// InitToken 在程序启动时（app.New 之前）注入 JWT 配置。
-// 若未调用，则退回到从环境变量读取的默认值。
-func InitToken(secret string, accessTTL, refreshTTL time.Duration) {
-	globalTokenCfgOnce.Do(func() {
-		globalTokenCfg = tokenConfig{
-			secret:          []byte(secret),
-			accessTokenTTL:  accessTTL,
-			refreshTokenTTL: refreshTTL,
-		}
-	})
+// NewTokenIssuer 创建 TokenIssuer。
+func NewTokenIssuer(secret string, accessTTL, refreshTTL time.Duration) *TokenIssuer {
+	return &TokenIssuer{
+		secret:          []byte(secret),
+		accessTokenTTL:  accessTTL,
+		refreshTokenTTL: refreshTTL,
+	}
 }
 
-func getCfg() tokenConfig {
-	// 如果 InitToken 未被调用，从环境变量读取兜底
-	if len(globalTokenCfg.secret) == 0 {
-		secret := os.Getenv("JWT_SECRET")
-		if secret == "" {
-			secret = "dev-secret-change-in-production"
-		}
-		return tokenConfig{
-			secret:          []byte(secret),
-			accessTokenTTL:  2 * time.Hour,
-			refreshTokenTTL: 7 * 24 * time.Hour,
-		}
-	}
-	return globalTokenCfg
+// AccessTokenTTL 返回 Access Token 有效期。
+func (t *TokenIssuer) AccessTokenTTL() time.Duration {
+	return t.accessTokenTTL
 }
 
 // IssueTokenPair 为指定用户颁发一对 Access + Refresh Token。
-func IssueTokenPair(userID, role string) (*TokenPair, error) {
-	cfg := getCfg()
-
-	access, err := signToken(userID, role, "access", cfg.accessTokenTTL, cfg.secret)
+func (t *TokenIssuer) IssueTokenPair(userID, role string) (*TokenPair, error) {
+	access, err := signToken(userID, role, "access", t.accessTokenTTL, t.secret)
 	if err != nil {
 		return nil, err
 	}
 
-	refresh, err := signToken(userID, role, "refresh", cfg.refreshTokenTTL, cfg.secret)
+	refresh, err := signToken(userID, role, "refresh", t.refreshTokenTTL, t.secret)
 	if err != nil {
 		return nil, err
 	}
@@ -80,18 +57,18 @@ func IssueTokenPair(userID, role string) (*TokenPair, error) {
 	return &TokenPair{
 		AccessToken:  access,
 		RefreshToken: refresh,
-		ExpiresIn:    int64(cfg.accessTokenTTL.Seconds()),
+		ExpiresIn:    int64(t.accessTokenTTL.Seconds()),
 	}, nil
 }
 
 // ParseAccessToken 解析并校验 Access Token。
-func ParseAccessToken(tokenStr string) (*Claims, error) {
-	return parseToken(tokenStr, "access", getCfg().secret)
+func (t *TokenIssuer) ParseAccessToken(tokenStr string) (*Claims, error) {
+	return parseToken(tokenStr, "access", t.secret)
 }
 
 // ParseRefreshToken 解析并校验 Refresh Token。
-func ParseRefreshToken(tokenStr string) (*Claims, error) {
-	return parseToken(tokenStr, "refresh", getCfg().secret)
+func (t *TokenIssuer) ParseRefreshToken(tokenStr string) (*Claims, error) {
+	return parseToken(tokenStr, "refresh", t.secret)
 }
 
 func signToken(userID, role, tokenType string, ttl time.Duration, secret []byte) (string, error) {

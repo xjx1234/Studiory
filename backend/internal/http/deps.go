@@ -1,6 +1,7 @@
 package http
 
 import (
+	"backend/internal/auth"
 	"backend/internal/config"
 	"backend/internal/repo/pg"
 	authservice "backend/internal/service/auth"
@@ -22,6 +23,7 @@ type Deps struct {
 	Store  *pg.Store
 	Redis  redis.UniversalClient
 
+	TokenIssuer *auth.TokenIssuer
 	AuthService authservice.Service
 	UserService userservice.Service
 

@@ -22,6 +22,19 @@ const (
 	codeSendCooldown    = 60 * time.Second
 	refreshBlacklistTTL = 7 * 24 * time.Hour
 	bcryptCost          = bcrypt.DefaultCost
+
+	// verifyCodeLua 原子校验验证码：匹配则删除并返回 1；key 不存在返回 -1；不匹配返回 0。
+	verifyCodeLua = `
+local val = redis.call('GET', KEYS[1])
+if not val then
+    return -1
+end
+if val == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+    return 1
+end
+return 0
+`
 )
 
 // Service 定义认证业务入口。
@@ -38,6 +51,7 @@ type AuthServiceImpl struct {
 	users                 repo.UserRepo
 	oauth                 repo.OAuthRepo
 	oauthTx               repo.UserOAuthTxRunner
+	tokens                *auth.TokenIssuer
 	rdb                   redis.UniversalClient
 	logger                *zap.Logger
 	codePrefix            string
@@ -101,6 +115,12 @@ func WithUserOAuthTxRunner(runner repo.UserOAuthTxRunner) Option {
 func WithLogger(logger *zap.Logger) Option {
 	return func(s *AuthServiceImpl) {
 		s.logger = logger
+	}
+}
+
+func WithTokenIssuer(issuer *auth.TokenIssuer) Option {
+	return func(s *AuthServiceImpl) {
+		s.tokens = issuer
 	}
 }
 
@@ -388,19 +408,19 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 		return nil, errcode.ErrInvalidToken
 	}
 
-	claims, parseErr := auth.ParseRefreshToken(refreshToken)
+	claims, parseErr := s.tokens.ParseRefreshToken(refreshToken)
 	if parseErr != nil {
 		return nil, errcode.ErrInvalidToken
 	}
 
-	pair, issueErr := auth.IssueTokenPair(claims.UserID, claims.Role)
-	if issueErr != nil {
-		s.logInternal("Refresh issue token pair", issueErr)
+	if err := s.rdb.Set(ctx, blackKey, "1", refreshBlacklistTTL).Err(); err != nil {
+		s.logInternal("Refresh blacklist old token", err)
 		return nil, errcode.ErrInternal
 	}
 
-	if err := s.rdb.Set(ctx, blackKey, "1", refreshBlacklistTTL).Err(); err != nil {
-		s.logInternal("Refresh blacklist old token", err)
+	pair, issueErr := s.tokens.IssueTokenPair(claims.UserID, claims.Role)
+	if issueErr != nil {
+		s.logInternal("Refresh issue token pair", issueErr)
 		return nil, errcode.ErrInternal
 	}
 
@@ -416,7 +436,18 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 
 	// 将 refresh token 加入 Redis 黑名单，TTL 等于 refresh token 有效期
 	key := s.blacklistKey(refreshToken)
-	_ = s.rdb.Set(ctx, key, "1", refreshBlacklistTTL)
+	if err := s.rdb.Set(ctx, key, "1", refreshBlacklistTTL).Err(); err != nil {
+		s.logInternal("Logout blacklist refresh token", err)
+	}
+
+	if claims, err := s.tokens.ParseRefreshToken(refreshToken); err == nil {
+		revokeKey := s.revokeUserKey(claims.UserID)
+		revokeTTL := s.tokens.AccessTokenTTL()
+		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), revokeTTL).Err(); err != nil {
+			s.logInternal("Logout revoke access tokens", err)
+		}
+	}
+
 	return nil
 }
 
@@ -427,18 +458,19 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 // 验证成功后删除 key，确保一次有效。
 func (s *AuthServiceImpl) verifyCode(ctx context.Context, codeType, target, code string) bool {
 	key := s.codeRedisKey(codeType, target)
-	stored, err := s.rdb.Get(ctx, key).Result()
-	if err == redis.Nil {
-		return s.allowMockCodeFallback && code == MockVerificationCode
-	}
+	result, err := s.rdb.Eval(ctx, verifyCodeLua, []string{key}, code).Int()
 	if err != nil {
 		return false
 	}
-	if stored == code {
-		_ = s.rdb.Del(ctx, key)
+
+	switch result {
+	case 1:
 		return true
+	case -1:
+		return s.allowMockCodeFallback && code == MockVerificationCode
+	default:
+		return false
 	}
-	return false
 }
 
 // findUserByAccount 按优先级查找用户：phone → email → account（自动识别）。
@@ -504,7 +536,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 
 // issueResult 颁发 Token 并组装登录结果。
 func (s *AuthServiceImpl) issueResult(user *repo.User) (*auth.LoginResult, *errcode.Error) {
-	pair, err := auth.IssueTokenPair(user.ID.String(), user.Role)
+	pair, err := s.tokens.IssueTokenPair(user.ID.String(), user.Role)
 	if err != nil {
 		s.logInternal("issueResult issue token pair", err)
 		return nil, errcode.ErrInternal
@@ -547,6 +579,10 @@ func (s *AuthServiceImpl) codeCooldownKey(codeType, target string) string {
 func (s *AuthServiceImpl) blacklistKey(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return fmt.Sprintf("%s:blacklist:refresh:%x", s.codePrefix, h)
+}
+
+func (s *AuthServiceImpl) revokeUserKey(userID string) string {
+	return fmt.Sprintf("%s:revoke:uid:%s", s.codePrefix, userID)
 }
 
 func (s *AuthServiceImpl) logInternal(op string, err error) {
