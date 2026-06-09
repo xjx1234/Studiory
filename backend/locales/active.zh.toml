@@ -42,6 +42,9 @@ other = "请求过于频繁，请稍后再试"
 [err_not_found]
 other = "资源不存在"
 
+[err_user_not_found]
+other = "用户不存在"
+
 [err_already_exists]
 other = "资源已存在"
 

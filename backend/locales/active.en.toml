@@ -42,6 +42,9 @@ other = "Too many requests, please try again later"
 [err_not_found]
 other = "Resource not found"
 
+[err_user_not_found]
+other = "User not found"
+
 [err_already_exists]
 other = "Resource already exists"
 
