@@ -3,7 +3,6 @@ package http
 import (
 	"backend/internal/auth"
 	authservice "backend/internal/service/auth"
-	"backend/pkg/errcode"
 	"backend/pkg/request"
 	"backend/pkg/resp"
 
@@ -80,11 +79,6 @@ type LogoutReq struct {
 
 // Register 注册（密码注册 或 验证码注册）。
 func (h *AuthHandler) Register(c *gin.Context) {
-	if h.deps.AuthService == nil {
-		resp.Fail(c, errcode.ErrInternal)
-		return
-	}
-
 	var req RegisterReq
 	if !request.Bind(c, &req) {
 		return
@@ -109,11 +103,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 // Login 统一登录入口，通过 grant_type 路由到对应策略。
 func (h *AuthHandler) Login(c *gin.Context) {
-	if h.deps.AuthService == nil {
-		resp.Fail(c, errcode.ErrInternal)
-		return
-	}
-
 	var req LoginReq
 	if !request.Bind(c, &req) {
 		return
@@ -139,11 +128,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 // SendCode 发送短信/邮件验证码。
 func (h *AuthHandler) SendCode(c *gin.Context) {
-	if h.deps.AuthService == nil {
-		resp.Fail(c, errcode.ErrInternal)
-		return
-	}
-
 	var req SendCodeReq
 	if !request.Bind(c, &req) {
 		return
@@ -160,11 +144,6 @@ func (h *AuthHandler) SendCode(c *gin.Context) {
 
 // Refresh 使用 Refresh Token 换取新的 Access Token。
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	if h.deps.AuthService == nil {
-		resp.Fail(c, errcode.ErrInternal)
-		return
-	}
-
 	var req RefreshReq
 	if !request.Bind(c, &req) {
 		return
@@ -181,11 +160,6 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 // Logout 登出，将 refresh token 加入黑名单。
 func (h *AuthHandler) Logout(c *gin.Context) {
-	if h.deps.AuthService == nil {
-		resp.OK(c, nil)
-		return
-	}
-
 	var req LogoutReq
 	if !request.Bind(c, &req) {
 		return

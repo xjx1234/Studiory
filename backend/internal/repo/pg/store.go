@@ -39,6 +39,13 @@ func (s *Store) Todos() repo.TodoRepo {
 	return &todoRepo{q: s.q}
 }
 
+// WithUserOAuthTx 在事务内执行 fn，成功 commit，失败 rollback。
+func (s *Store) WithUserOAuthTx(ctx context.Context, fn func(repo.UserRepo, repo.OAuthRepo) error) error {
+	return s.WithinTx(ctx, func(txStore *Store) error {
+		return fn(txStore.Users(), txStore.OAuth())
+	})
+}
+
 func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
 }

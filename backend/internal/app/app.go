@@ -73,6 +73,8 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 
 		AuthService: authservice.New(pgStore.Users(), rdb,
 			authservice.WithOAuthRepo(pgStore.OAuth()),
+			authservice.WithUserOAuthTxRunner(pgStore),
+			authservice.WithLogger(logger),
 			authservice.WithCodePrefix(cfg.RedisKeyPrefix),
 			authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
 			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
@@ -105,7 +107,9 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 // Shutdown 优雅关闭：先停 HTTP Server，再关闭数据库与缓存。
 func (a *App) Shutdown(ctx context.Context) {
 	if a.Server != nil {
-		_ = a.Server.Shutdown(ctx)
+		if err := a.Server.Shutdown(ctx); err != nil {
+			a.Logger.Warn("HTTP server shutdown failed", zap.Error(err))
+		}
 	}
 	a.Close()
 }

@@ -1,6 +1,8 @@
 package http
 
 import (
+	"errors"
+
 	"backend/internal/http/middleware"
 	"time"
 
@@ -13,6 +15,10 @@ import (
 //
 // 中间件顺序：RequestID → I18n → Zap日志 → Recovery → Safe → RateLimit → CORS
 func NewRouter(deps *Deps) *gin.Engine {
+	if err := validateDeps(deps); err != nil {
+		panic(err)
+	}
+
 	r := gin.New()
 
 	r.Use(middleware.RequestID())
@@ -41,4 +47,20 @@ func NewRouter(deps *Deps) *gin.Engine {
 	}
 
 	return r
+}
+
+func validateDeps(deps *Deps) error {
+	if deps == nil {
+		return errors.New("http deps is nil")
+	}
+	if deps.AuthService == nil {
+		return errors.New("AuthService is required")
+	}
+	if deps.UserService == nil {
+		return errors.New("UserService is required")
+	}
+	if deps.TodoService == nil {
+		return errors.New("TodoService is required")
+	}
+	return nil
 }

@@ -32,11 +32,6 @@ type updateProfileReq struct {
 
 // GetProfile 获取当前登录用户的个人资料。
 func (h *UserProfileHandler) GetProfile(c *gin.Context) {
-	if h.deps.UserService == nil {
-		resp.Fail(c, errcode.ErrInternal)
-		return
-	}
-
 	userID, exists := c.Get(middleware.ContextKeyUserID)
 	if !exists {
 		resp.Fail(c, errcode.ErrUnauthorized)
@@ -54,11 +49,6 @@ func (h *UserProfileHandler) GetProfile(c *gin.Context) {
 
 // UpdateProfile PATCH /api/v1/user/profile
 func (h *UserProfileHandler) UpdateProfile(c *gin.Context) {
-	if h.deps.UserService == nil {
-		resp.Fail(c, errcode.ErrInternal)
-		return
-	}
-
 	userID, exists := c.Get(middleware.ContextKeyUserID)
 	if !exists {
 		resp.Fail(c, errcode.ErrUnauthorized)

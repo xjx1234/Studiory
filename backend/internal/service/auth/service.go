@@ -2,6 +2,7 @@ package authservice
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,11 +13,13 @@ import (
 	"backend/pkg/errcode"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
 	codeExpiry          = 5 * time.Minute
+	codeSendCooldown    = 60 * time.Second
 	refreshBlacklistTTL = 7 * 24 * time.Hour
 	bcryptCost          = bcrypt.DefaultCost
 )
@@ -34,7 +37,9 @@ type Service interface {
 type AuthServiceImpl struct {
 	users                 repo.UserRepo
 	oauth                 repo.OAuthRepo
+	oauthTx               repo.UserOAuthTxRunner
 	rdb                   redis.UniversalClient
+	logger                *zap.Logger
 	codePrefix            string
 	allowMockCodeFallback bool
 	oauthDevMode          bool
@@ -84,6 +89,18 @@ func WithMockCodeFallback(enabled bool) Option {
 func WithOAuthRepo(oauth repo.OAuthRepo) Option {
 	return func(s *AuthServiceImpl) {
 		s.oauth = oauth
+	}
+}
+
+func WithUserOAuthTxRunner(runner repo.UserOAuthTxRunner) Option {
+	return func(s *AuthServiceImpl) {
+		s.oauthTx = runner
+	}
+}
+
+func WithLogger(logger *zap.Logger) Option {
+	return func(s *AuthServiceImpl) {
+		s.logger = logger
 	}
 }
 
@@ -165,6 +182,7 @@ func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, c
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound.WithMessage("err_user_not_found")
 		}
+		s.logInternal("loginWithCode lookup user", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -194,25 +212,62 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 		return s.issueResult(user)
 	}
 	if !errors.Is(err, repo.ErrNotFound) {
+		s.logInternal("loginWithOAuth lookup user", err)
 		return nil, errcode.ErrInternal
 	}
 
 	nickname := oauthDefaultNickname(provider, openID)
-	created, createErr := s.users.Create(ctx, nil, nil, nil, nickname, "", RoleStudent)
+	created, createErr := s.createOAuthUser(ctx, nickname, provider, openID)
 	if createErr != nil {
+		s.logInternal("loginWithOAuth create user", createErr)
 		return nil, errcode.ErrInternal
 	}
 
-	if _, bindErr := s.oauth.CreateOAuth(ctx, created.ID, provider, openID); bindErr != nil {
+	return s.issueResult(created)
+}
+
+func (s *AuthServiceImpl) createOAuthUser(ctx context.Context, nickname, provider, openID string) (*repo.User, error) {
+	createAndBind := func(users repo.UserRepo, oauthRepo repo.OAuthRepo) (*repo.User, error) {
+		created, err := users.Create(ctx, nil, nil, nil, nickname, "", RoleStudent)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := oauthRepo.CreateOAuth(ctx, created.ID, provider, openID); err != nil {
+			return nil, err
+		}
+		return created, nil
+	}
+
+	if s.oauthTx != nil {
+		var created *repo.User
+		txErr := s.oauthTx.WithUserOAuthTx(ctx, func(users repo.UserRepo, oauthRepo repo.OAuthRepo) error {
+			u, err := createAndBind(users, oauthRepo)
+			if err != nil {
+				return err
+			}
+			created = u
+			return nil
+		})
+		if txErr == nil {
+			return created, nil
+		}
 		// 并发注册时可能已被其他请求绑定，回查一次。
 		existing, lookupErr := s.oauth.GetUserByOAuth(ctx, provider, openID)
 		if lookupErr != nil {
-			return nil, errcode.ErrInternal
+			return nil, txErr
 		}
-		return s.issueResult(existing)
+		return existing, nil
 	}
 
-	return s.issueResult(created)
+	created, createErr := createAndBind(s.users, s.oauth)
+	if createErr == nil {
+		return created, nil
+	}
+	existing, lookupErr := s.oauth.GetUserByOAuth(ctx, provider, openID)
+	if lookupErr != nil {
+		return nil, createErr
+	}
+	return existing, nil
 }
 
 func (s *AuthServiceImpl) isAllowedOAuthProvider(provider string) bool {
@@ -253,6 +308,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcryptCost)
 	if err != nil {
+		s.logInternal("registerWithPassword hash password", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -260,6 +316,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 	nickname := s.defaultNickname(input)
 	user, createErr := s.users.Create(ctx, nullableStr(input.Phone), nullableStr(input.Email), &hashStr, nickname, "", RoleStudent)
 	if createErr != nil {
+		s.logInternal("registerWithPassword create user", createErr)
 		return nil, errcode.ErrInternal
 	}
 
@@ -287,6 +344,7 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 	nickname := s.defaultNickname(input)
 	user, createErr := s.users.Create(ctx, nullableStr(input.Phone), nullableStr(input.Email), nil, nickname, "", RoleStudent)
 	if createErr != nil {
+		s.logInternal("registerWithCode create user", createErr)
 		return nil, errcode.ErrInternal
 	}
 
@@ -302,8 +360,19 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 		return errcode.ErrBadRequest
 	}
 
+	cooldownKey := s.codeCooldownKey(codeType, target)
+	ok, err := s.rdb.SetNX(ctx, cooldownKey, "1", codeSendCooldown).Result()
+	if err != nil {
+		s.logInternal("SendCode set cooldown", err)
+		return errcode.ErrInternal
+	}
+	if !ok {
+		return errcode.ErrTooManyRequests
+	}
+
 	key := s.codeRedisKey(codeType, target)
 	if err := s.rdb.Set(ctx, key, MockVerificationCode, codeExpiry).Err(); err != nil {
+		s.logInternal("SendCode set code", err)
 		return errcode.ErrInternal
 	}
 	return nil
@@ -326,6 +395,12 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 
 	pair, issueErr := auth.IssueTokenPair(claims.UserID, claims.Role)
 	if issueErr != nil {
+		s.logInternal("Refresh issue token pair", issueErr)
+		return nil, errcode.ErrInternal
+	}
+
+	if err := s.rdb.Set(ctx, blackKey, "1", refreshBlacklistTTL).Err(); err != nil {
+		s.logInternal("Refresh blacklist old token", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -393,6 +468,7 @@ func (s *AuthServiceImpl) findUserByAccount(ctx context.Context, phone, email, a
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrInvalidCredentials
 		}
+		s.logInternal("findUserByAccount lookup user", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -407,6 +483,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 			return errcode.ErrAlreadyExists
 		}
 		if !errors.Is(err, repo.ErrNotFound) {
+			s.logInternal("checkAccountExists lookup phone", err)
 			return errcode.ErrInternal
 		}
 	}
@@ -417,6 +494,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 			return errcode.ErrAlreadyExists
 		}
 		if !errors.Is(err, repo.ErrNotFound) {
+			s.logInternal("checkAccountExists lookup email", err)
 			return errcode.ErrInternal
 		}
 	}
@@ -428,6 +506,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 func (s *AuthServiceImpl) issueResult(user *repo.User) (*auth.LoginResult, *errcode.Error) {
 	pair, err := auth.IssueTokenPair(user.ID.String(), user.Role)
 	if err != nil {
+		s.logInternal("issueResult issue token pair", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -461,12 +540,19 @@ func (s *AuthServiceImpl) codeRedisKey(codeType, target string) string {
 	return fmt.Sprintf("%s:%s:%s", s.codePrefix, codeType, target)
 }
 
+func (s *AuthServiceImpl) codeCooldownKey(codeType, target string) string {
+	return fmt.Sprintf("%s:%s:cooldown:%s", s.codePrefix, codeType, target)
+}
+
 func (s *AuthServiceImpl) blacklistKey(token string) string {
-	// 用 token 前64字节作 key，避免 key 过长
-	if len(token) > 64 {
-		token = token[:64]
+	h := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%s:blacklist:refresh:%x", s.codePrefix, h)
+}
+
+func (s *AuthServiceImpl) logInternal(op string, err error) {
+	if s.logger != nil && err != nil {
+		s.logger.Error(op, zap.Error(err))
 	}
-	return fmt.Sprintf("%s:blacklist:refresh:%s", s.codePrefix, token)
 }
 
 // looksLikePhone 简单判断字符串是否看起来像手机号（全数字且长度在10-15之间）。
