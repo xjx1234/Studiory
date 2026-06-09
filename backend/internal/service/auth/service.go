@@ -434,10 +434,13 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 		return nil
 	}
 
+	var logoutErr *errcode.Error
+
 	// 将 refresh token 加入 Redis 黑名单，TTL 等于 refresh token 有效期
 	key := s.blacklistKey(refreshToken)
 	if err := s.rdb.Set(ctx, key, "1", refreshBlacklistTTL).Err(); err != nil {
 		s.logInternal("Logout blacklist refresh token", err)
+		logoutErr = errcode.ErrInternal
 	}
 
 	if claims, err := s.tokens.ParseRefreshToken(refreshToken); err == nil {
@@ -445,10 +448,11 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 		revokeTTL := s.tokens.AccessTokenTTL()
 		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), revokeTTL).Err(); err != nil {
 			s.logInternal("Logout revoke access tokens", err)
+			logoutErr = errcode.ErrInternal
 		}
 	}
 
-	return nil
+	return logoutErr
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────────────────

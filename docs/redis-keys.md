@@ -25,6 +25,8 @@
 | `app:revoke:uid:{user_id}` | string（Unix 时间戳） | 与 Access Token 有效期一致 | 登出后吊销该用户此前签发的 access token |
 
 - 登出时写入当前时间戳；`Auth` 中间件校验 token 的 `iat` 是否早于该时间戳。
+- **全端登出**：吊销键按 `user_id` 维度存储，任意设备登出会使该用户所有设备上、登出时刻之前签发的 access token 失效（教育类等单账号场景通常可接受）。若需「仅当前设备登出」，应改为 per-token 黑名单并随请求携带 access token。
+- Redis 不可用时吊销检查 **fail-open**（放行并打 Warn 日志），优先保证可用性；高安全场景可自行改为 fail-closed。
 - 仅覆盖登出场景；修改密码等需另行接入（可在改密后同样写入 revoke key）。
 
 ---

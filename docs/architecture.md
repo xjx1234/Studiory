@@ -118,6 +118,19 @@ cd backend && sqlc generate
 
 启动时会执行安全校验：生产环境禁止默认 `JWT_SECRET`，禁止启用固定验证码/OAuth 开发模式，且必须显式配置 CORS 来源。
 
+## 登出与会话语义
+
+`POST /api/v1/auth/logout` 需提交 `refresh_token`，服务端会：
+
+1. 将 refresh token 写入 Redis 黑名单（后续 Refresh 拒绝）。
+2. 按 `user_id` 写入 access token 吊销时间戳（`Auth` 中间件比对 `iat`）。
+
+**行为约定：**
+
+- **全端登出**：任意设备登出会使该账号在所有设备上、登出时刻之前签发的 access token 失效。适合教育类等「单账号」场景；多设备独立会话需改为 per-token 吊销。
+- **失败即报错**：Redis 写入失败时 service 返回 `ErrInternal`，HTTP 层不再静默返回 200。
+- **吊销检查 fail-open**：Redis 宕机时 access token 吊销检查放行并打 Warn 日志，避免 Redis 故障拖垮全站鉴权；极高安全需求可自行改为 fail-closed。
+
 ## OAuth（骨架）
 
 开发模式（`oauth.dev_mode=true`）下，`POST /api/v1/auth/login` 支持：

@@ -38,11 +38,11 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	{
 		registerAuthRoutes(v1, deps)
 
-		user := v1.Group("/user", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix))
+		user := v1.Group("/user", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix, deps.Logger))
 		registerUserProfileRoutes(user, deps)
 		registerUserTodoRoutes(user, deps)
 
-		admin := v1.Group("/admin", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix), middleware.RequireRole("admin"))
+		admin := v1.Group("/admin", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix, deps.Logger), middleware.RequireRole("admin"))
 		registerAdminRoutes(admin, deps)
 	}
 

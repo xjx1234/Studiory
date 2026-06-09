@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 const ContextKeyUserID = "userID"
@@ -18,7 +20,7 @@ const ContextKeyUserRole = "userRole"
 
 // Auth 验证请求头中的 JWT Access Token，将用户信息注入 Gin Context。
 // 验证失败时直接返回 401，不继续执行后续 Handler。
-func Auth(issuer *auth.TokenIssuer, rdb redis.UniversalClient, keyPrefix string) gin.HandlerFunc {
+func Auth(issuer *auth.TokenIssuer, rdb redis.UniversalClient, keyPrefix string, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("Authorization")
 		if raw == "" {
@@ -38,7 +40,7 @@ func Auth(issuer *auth.TokenIssuer, rdb redis.UniversalClient, keyPrefix string)
 			return
 		}
 
-		if isAccessTokenRevoked(c.Request.Context(), rdb, keyPrefix, claims) {
+		if isAccessTokenRevoked(c.Request.Context(), rdb, keyPrefix, claims, logger) {
 			resp.Fail(c, errcode.ErrInvalidToken)
 			return
 		}
@@ -49,7 +51,7 @@ func Auth(issuer *auth.TokenIssuer, rdb redis.UniversalClient, keyPrefix string)
 	}
 }
 
-func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPrefix string, claims *auth.Claims) bool {
+func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPrefix string, claims *auth.Claims, logger *zap.Logger) bool {
 	if rdb == nil || claims == nil || claims.IssuedAt == nil {
 		return false
 	}
@@ -57,6 +59,12 @@ func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPre
 	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", keyPrefix, claims.UserID)
 	revokeAt, err := rdb.Get(ctx, revokeKey).Int64()
 	if err != nil {
+		if !errors.Is(err, redis.Nil) && logger != nil {
+			logger.Warn("access token revoke check unavailable, failing open",
+				zap.Error(err),
+				zap.String("userID", claims.UserID),
+			)
+		}
 		return false
 	}
 	return claims.IssuedAt.Time.Unix() <= revokeAt

@@ -165,6 +165,9 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	_ = h.deps.AuthService.Logout(c.Request.Context(), req.RefreshToken)
+	if e := h.deps.AuthService.Logout(c.Request.Context(), req.RefreshToken); e != nil {
+		resp.Fail(c, e)
+		return
+	}
 	resp.OK(c, nil)
 }
