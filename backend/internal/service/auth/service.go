@@ -248,7 +248,10 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 
 func (s *AuthServiceImpl) createOAuthUser(ctx context.Context, nickname, provider, openID string) (*repo.User, error) {
 	createAndBind := func(users repo.UserRepo, oauthRepo repo.OAuthRepo) (*repo.User, error) {
-		created, err := users.Create(ctx, nil, nil, nil, nickname, "", RoleStudent)
+		created, err := users.Create(ctx, &repo.CreateUserParams{
+			Nickname: nickname,
+			Role:     RoleStudent,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -334,7 +337,13 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 
 	hashStr := string(hash)
 	nickname := s.defaultNickname(input)
-	user, createErr := s.users.Create(ctx, nullableStr(input.Phone), nullableStr(input.Email), &hashStr, nickname, "", RoleStudent)
+	user, createErr := s.users.Create(ctx, &repo.CreateUserParams{
+		Phone:        nullableStr(input.Phone),
+		Email:        nullableStr(input.Email),
+		PasswordHash: &hashStr,
+		Nickname:     nickname,
+		Role:         RoleStudent,
+	})
 	if createErr != nil {
 		s.logInternal("registerWithPassword create user", createErr)
 		return nil, errcode.ErrInternal
@@ -362,7 +371,12 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 	}
 
 	nickname := s.defaultNickname(input)
-	user, createErr := s.users.Create(ctx, nullableStr(input.Phone), nullableStr(input.Email), nil, nickname, "", RoleStudent)
+	user, createErr := s.users.Create(ctx, &repo.CreateUserParams{
+		Phone:    nullableStr(input.Phone),
+		Email:    nullableStr(input.Email),
+		Nickname: nickname,
+		Role:     RoleStudent,
+	})
 	if createErr != nil {
 		s.logInternal("registerWithCode create user", createErr)
 		return nil, errcode.ErrInternal

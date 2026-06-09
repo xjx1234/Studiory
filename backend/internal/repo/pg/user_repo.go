@@ -40,14 +40,17 @@ func (r *userRepo) GetByEmail(ctx context.Context, email string) (*repo.User, er
 	return userFromRow(row), nil
 }
 
-func (r *userRepo) Create(ctx context.Context, phone, email, passwordHash *string, nickname, avatar, role string) (*repo.User, error) {
+func (r *userRepo) Create(ctx context.Context, in *repo.CreateUserParams) (*repo.User, error) {
+	if in == nil {
+		return nil, errors.New("create user params is nil")
+	}
 	params := &sqlcgen.CreateUserParams{
-		Phone:        textFromPtr(phone),
-		Email:        textFromPtr(email),
-		PasswordHash: textFromPtr(passwordHash),
-		Nickname:     nickname,
-		Avatar:       avatar,
-		Role:         role,
+		Phone:        textFromPtr(in.Phone),
+		Email:        textFromPtr(in.Email),
+		PasswordHash: textFromPtr(in.PasswordHash),
+		Nickname:     in.Nickname,
+		Avatar:       in.Avatar,
+		Role:         in.Role,
 	}
 	row, err := r.q.CreateUser(ctx, params)
 	if err != nil {

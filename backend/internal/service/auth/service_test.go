@@ -40,12 +40,15 @@ func (r *fakeUserRepo) GetByEmail(context.Context, string) (*repo.User, error) {
 	return nil, repo.ErrNotFound
 }
 
-func (r *fakeUserRepo) Create(_ context.Context, _, _, _ *string, nickname, avatar, role string) (*repo.User, error) {
+func (r *fakeUserRepo) Create(_ context.Context, params *repo.CreateUserParams) (*repo.User, error) {
+	if params == nil {
+		return nil, errors.New("create user params is nil")
+	}
 	u := &repo.User{
 		ID:       uuid.New(),
-		Nickname: nickname,
-		Avatar:   avatar,
-		Role:     role,
+		Nickname: params.Nickname,
+		Avatar:   params.Avatar,
+		Role:     params.Role,
 	}
 	r.users[u.ID] = u
 	r.created = append(r.created, u)

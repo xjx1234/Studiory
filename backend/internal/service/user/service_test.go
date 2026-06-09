@@ -28,7 +28,7 @@ func (r *fakeUserRepo) GetByEmail(context.Context, string) (*repo.User, error) {
 	return nil, repo.ErrNotFound
 }
 
-func (r *fakeUserRepo) Create(context.Context, *string, *string, *string, string, string, string) (*repo.User, error) {
+func (r *fakeUserRepo) Create(context.Context, *repo.CreateUserParams) (*repo.User, error) {
 	return nil, repo.ErrNotFound
 }
 
