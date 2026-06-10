@@ -82,7 +82,10 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
 			authservice.WithOAuthProviders(cfg.OAuthProviders),
 		),
-		UserService: userservice.New(pgStore.Users(), userservice.WithLogger(logger)),
+		UserService: userservice.New(pgStore.Users(),
+			userservice.WithLogger(logger),
+			userservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
+		),
 		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
 	}
 

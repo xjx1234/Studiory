@@ -1,7 +1,7 @@
 BACKEND_DIR := backend
 DATABASE_URL ?= postgres://postgres:password@localhost:5432/app?sslmode=disable
 
-.PHONY: help run build test sqlc migrate-up migrate-down compose-up compose-down fmt tidy
+.PHONY: help run build test sqlc migrate-up migrate-down compose-up compose-down fmt tidy seed
 
 help:
 	@echo "Available targets:"
@@ -10,6 +10,7 @@ help:
 	@echo "  make migrate-up    Run database migrations"
 	@echo "  make migrate-down  Roll back one migration"
 	@echo "  make sqlc          Generate sqlc code"
+	@echo "  make seed          Init admin user (set SEED_ADMIN_* env vars)"
 	@echo "  make run           Run backend"
 	@echo "  make build         Build backend"
 	@echo "  make test          Run Go tests"
@@ -45,3 +46,6 @@ fmt:
 
 tidy:
 	cd $(BACKEND_DIR) && go mod tidy
+
+seed:
+	cd $(BACKEND_DIR) && go run ./cmd/seed

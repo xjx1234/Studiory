@@ -10,6 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type changePasswordReq struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,strong_password"`
+}
+
 type UserProfileHandler struct {
 	deps *Deps
 }
@@ -23,6 +28,7 @@ func registerUserProfileRoutes(rg *gin.RouterGroup, deps *Deps) {
 
 	rg.GET("/profile", h.GetProfile)
 	rg.PATCH("/profile", h.UpdateProfile)
+	rg.PATCH("/password", h.ChangePassword)
 }
 
 type updateProfileReq struct {
@@ -74,4 +80,29 @@ func (h *UserProfileHandler) UpdateProfile(c *gin.Context) {
 	}
 
 	resp.OK(c, profile)
+}
+
+// ChangePassword PATCH /api/v1/user/password
+func (h *UserProfileHandler) ChangePassword(c *gin.Context) {
+	userID, exists := c.Get(middleware.ContextKeyUserID)
+	if !exists {
+		resp.Fail(c, errcode.ErrUnauthorized)
+		return
+	}
+
+	var req changePasswordReq
+	if !request.Bind(c, &req) {
+		return
+	}
+
+	e := h.deps.UserService.ChangePassword(c.Request.Context(), userID.(string), &userservice.ChangePasswordInput{
+		OldPassword: req.OldPassword,
+		NewPassword: req.NewPassword,
+	})
+	if e != nil {
+		resp.Fail(c, e)
+		return
+	}
+
+	resp.OK(c, nil)
 }

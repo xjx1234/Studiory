@@ -17,6 +17,9 @@ other = "Token has expired, please login again"
 [err_invalid_credentials]
 other = "Invalid account or password"
 
+[err_wrong_password]
+other = "Old password is incorrect"
+
 [err_invalid_code]
 other = "Invalid or expired verification code"
 
