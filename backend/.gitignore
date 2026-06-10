@@ -4,6 +4,7 @@ config/local.yaml
 
 # 编译产物
 /backend
+/seed
 *.exe
 *.test
 
