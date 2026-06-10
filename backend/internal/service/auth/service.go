@@ -11,6 +11,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/repo"
 	"backend/pkg/errcode"
+	"backend/pkg/strutil"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -338,8 +339,8 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 	hashStr := string(hash)
 	nickname := s.defaultNickname(input)
 	user, createErr := s.users.Create(ctx, &repo.CreateUserParams{
-		Phone:        nullableStr(input.Phone),
-		Email:        nullableStr(input.Email),
+		Phone:        strutil.NullableStr(input.Phone),
+		Email:        strutil.NullableStr(input.Email),
 		PasswordHash: &hashStr,
 		Nickname:     nickname,
 		Role:         RoleStudent,
@@ -372,8 +373,8 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 
 	nickname := s.defaultNickname(input)
 	user, createErr := s.users.Create(ctx, &repo.CreateUserParams{
-		Phone:    nullableStr(input.Phone),
-		Email:    nullableStr(input.Email),
+		Phone:    strutil.NullableStr(input.Phone),
+		Email:    strutil.NullableStr(input.Email),
 		Nickname: nickname,
 		Role:     RoleStudent,
 	})
@@ -622,10 +623,3 @@ func looksLikePhone(s string) bool {
 	return true
 }
 
-// nullableStr 将非空字符串转为指针，空字符串返回 nil。
-func nullableStr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}

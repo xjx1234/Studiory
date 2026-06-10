@@ -13,13 +13,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"backend/internal/config"
 	"backend/internal/repo"
 	"backend/internal/repo/pg"
 	"backend/internal/store"
+	"backend/pkg/strutil"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -42,6 +42,10 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if cfg.DatabaseURL == "" {
+		fmt.Fprintln(os.Stderr, "错误：DATABASE_URL 未配置，请检查 .env 或环境变量")
+		os.Exit(1)
+	}
 
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
@@ -61,9 +65,15 @@ func main() {
 	pgStore := pg.NewStore(pool)
 	users := pgStore.Users()
 
-	// 检查是否已存在
-	existing, lookupErr := findAdminUser(ctx, users, *phone, *email)
+	// 检查账号是否已存在
+	existing, lookupErr := findUser(ctx, users, *phone, *email)
 	if lookupErr == nil {
+		if existing.Role != "admin" {
+			fmt.Fprintf(os.Stderr,
+				"错误：账号已存在但角色为 %q（非 admin），请手动将其升级或换一个账号\n  ID: %s\n",
+				existing.Role, existing.ID)
+			os.Exit(1)
+		}
 		fmt.Printf("✓ admin 用户已存在，跳过创建\n  ID: %s\n  昵称: %s\n  角色: %s\n",
 			existing.ID, existing.Nickname, existing.Role)
 		return
@@ -80,8 +90,8 @@ func main() {
 	hashStr := string(hash)
 
 	created, err := users.Create(ctx, &repo.CreateUserParams{
-		Phone:        nullableStr(*phone),
-		Email:        nullableStr(*email),
+		Phone:        strutil.NullableStr(*phone),
+		Email:        strutil.NullableStr(*email),
 		PasswordHash: &hashStr,
 		Nickname:     *nickname,
 		Role:         "admin",
@@ -94,7 +104,8 @@ func main() {
 		created.ID, created.Nickname, created.Role)
 }
 
-func findAdminUser(ctx context.Context, users repo.UserRepo, phone, email string) (*repo.User, error) {
+// findUser 按 phone/email 查找用户，不校验角色。
+func findUser(ctx context.Context, users repo.UserRepo, phone, email string) (*repo.User, error) {
 	if phone != "" {
 		u, err := users.GetByPhone(ctx, phone)
 		if err == nil {
@@ -112,14 +123,6 @@ func findAdminUser(ctx context.Context, users repo.UserRepo, phone, email string
 		return nil, err
 	}
 	return nil, repo.ErrNotFound
-}
-
-func nullableStr(s string) *string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 func envOr(key, fallback string) string {

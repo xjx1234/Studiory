@@ -20,6 +20,9 @@ other = "Invalid account or password"
 [err_wrong_password]
 other = "Old password is incorrect"
 
+[err_same_password]
+other = "New password must be different from the old one"
+
 [err_invalid_code]
 other = "Invalid or expired verification code"
 

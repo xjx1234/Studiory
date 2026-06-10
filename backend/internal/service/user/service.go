@@ -160,6 +160,10 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		return errcode.ErrWrongPassword
 	}
 
+	if in.NewPassword == in.OldPassword {
+		return errcode.ErrSamePassword
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		s.logInternal("ChangePassword hash new password", err)
