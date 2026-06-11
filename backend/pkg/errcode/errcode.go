@@ -32,6 +32,7 @@ var (
 	ErrInvalidCredentials = &Error{Code: 10004, MsgID: "err_invalid_credentials", HTTPStatus: http.StatusUnauthorized}
 	ErrWrongPassword      = &Error{Code: 10008, MsgID: "err_wrong_password", HTTPStatus: http.StatusUnauthorized}
 	ErrSamePassword       = &Error{Code: 10009, MsgID: "err_same_password", HTTPStatus: http.StatusBadRequest}
+	ErrAccountLocked      = &Error{Code: 10010, MsgID: "err_account_locked", HTTPStatus: http.StatusTooManyRequests}
 	ErrInvalidCode        = &Error{Code: 10005, MsgID: "err_invalid_code", HTTPStatus: http.StatusBadRequest}
 	ErrUnsupportedGrant   = &Error{Code: 10006, MsgID: "err_unsupported_grant", HTTPStatus: http.StatusBadRequest}
 	ErrForbidden          = &Error{Code: 10007, MsgID: "err_forbidden", HTTPStatus: http.StatusForbidden}

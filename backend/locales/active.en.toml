@@ -23,6 +23,9 @@ other = "Old password is incorrect"
 [err_same_password]
 other = "New password must be different from the old one"
 
+[err_account_locked]
+other = "Account temporarily locked due to too many failed login attempts, please try again later"
+
 [err_invalid_code]
 other = "Invalid or expired verification code"
 
