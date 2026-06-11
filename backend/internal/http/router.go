@@ -13,7 +13,7 @@ import (
 
 // NewRouter 构建 Gin 路由，挂载全局中间件与所有路由分组。
 //
-// 中间件顺序：RequestID → I18n → Zap日志 → Recovery → Safe → RateLimit → CORS
+// 中间件顺序：RequestID → SecurityHeaders → I18n → Zap日志 → Recovery → Safe → RateLimit → CORS
 func NewRouter(deps *Deps) (*gin.Engine, error) {
 	if err := validateDeps(deps); err != nil {
 		return nil, err
@@ -22,6 +22,7 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	r := gin.New()
 
 	r.Use(middleware.RequestID())
+	r.Use(middleware.SecurityHeaders(deps.Cfg.IsProd()))
 	r.Use(middleware.I18n())
 	r.Use(ginzap.Ginzap(zap.L(), time.RFC3339, true))
 	r.Use(ginzap.RecoveryWithZap(zap.L(), true))
