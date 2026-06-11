@@ -1,9 +1,7 @@
 package http
 
 import (
-	"backend/internal/http/middleware"
 	todoservice "backend/internal/service/todo"
-	"backend/pkg/errcode"
 	"backend/pkg/pagination"
 	"backend/pkg/request"
 	"backend/pkg/resp"
@@ -39,18 +37,10 @@ type todoIDParam struct {
 	ID string `uri:"id" binding:"required,uuid"`
 }
 
-func (h *UserTodoHandler) currentUserID(c *gin.Context) (string, bool) {
-	userID, exists := c.Get(middleware.ContextKeyUserID)
-	if !exists {
-		resp.Fail(c, errcode.ErrUnauthorized)
-		return "", false
-	}
-	return userID.(string), true
-}
 
 // List GET /api/v1/user/todos
 func (h *UserTodoHandler) List(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
+	userID, ok := mustUserID(c)
 	if !ok {
 		return
 	}
@@ -66,7 +56,7 @@ func (h *UserTodoHandler) List(c *gin.Context) {
 
 // Create POST /api/v1/user/todos
 func (h *UserTodoHandler) Create(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
+	userID, ok := mustUserID(c)
 	if !ok {
 		return
 	}
@@ -88,7 +78,7 @@ func (h *UserTodoHandler) Create(c *gin.Context) {
 
 // Get GET /api/v1/user/todos/:id
 func (h *UserTodoHandler) Get(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
+	userID, ok := mustUserID(c)
 	if !ok {
 		return
 	}
@@ -108,7 +98,7 @@ func (h *UserTodoHandler) Get(c *gin.Context) {
 
 // Update PATCH /api/v1/user/todos/:id
 func (h *UserTodoHandler) Update(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
+	userID, ok := mustUserID(c)
 	if !ok {
 		return
 	}
@@ -136,7 +126,7 @@ func (h *UserTodoHandler) Update(c *gin.Context) {
 
 // Delete DELETE /api/v1/user/todos/:id
 func (h *UserTodoHandler) Delete(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
+	userID, ok := mustUserID(c)
 	if !ok {
 		return
 	}

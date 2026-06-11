@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 
 	"backend/pkg/errcode"
@@ -17,22 +18,21 @@ const (
 
 // Safe 注册通用安全规则：
 //  1. 限制请求体大小，防止超大 payload 打爆内存
-//  2. 强制 Content-Type 检查（JSON API 场景）
 func Safe() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 限制 Body 大小
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, defaultMaxBodyBytes)
 
 		c.Next()
 
-		// 若 Gin 读取 body 时触发 MaxBytesReader 限制，会在 ShouldBind 里报错；
-		// 这里捕获已被写入但未终止的情况（理论上 ShouldBind 已处理，此处做兜底）
-		if len(c.Errors) > 0 {
-			for _, e := range c.Errors {
-				if e.Error() == "http: request body too large" {
-					resp.Fail(c, errcode.ErrBadRequest.WithMessage("err_body_too_large"))
-					return
-				}
+		// Gin 在 ShouldBind/ShouldBindJSON 解析时若触发 MaxBytesReader 限制，
+		// 会返回 *http.MaxBytesError（Go 1.19+）。
+		// 遍历 c.Errors，以标准 errors.As 检测，不依赖错误字符串。
+		for _, ginErr := range c.Errors {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(ginErr.Err, &maxBytesErr) {
+				c.Abort()
+				resp.Fail(c, errcode.ErrBadRequest.WithMessage("err_body_too_large"))
+				return
 			}
 		}
 	}

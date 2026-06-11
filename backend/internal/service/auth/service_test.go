@@ -8,6 +8,7 @@ import (
 
 	"backend/internal/auth"
 	"backend/internal/repo"
+	"backend/internal/testutil"
 
 	"github.com/google/uuid"
 )
@@ -16,53 +17,7 @@ func testTokenIssuer() *auth.TokenIssuer {
 	return auth.NewTokenIssuer("test-secret-key-for-unit-tests", time.Hour, time.Hour)
 }
 
-type fakeUserRepo struct {
-	users   map[uuid.UUID]*repo.User
-	created []*repo.User
-}
-
-func newFakeUserRepo() *fakeUserRepo {
-	return &fakeUserRepo{users: make(map[uuid.UUID]*repo.User)}
-}
-
-func (r *fakeUserRepo) GetByID(_ context.Context, id uuid.UUID) (*repo.User, error) {
-	if u, ok := r.users[id]; ok {
-		return u, nil
-	}
-	return nil, repo.ErrNotFound
-}
-
-func (r *fakeUserRepo) GetByPhone(context.Context, string) (*repo.User, error) {
-	return nil, repo.ErrNotFound
-}
-
-func (r *fakeUserRepo) GetByEmail(context.Context, string) (*repo.User, error) {
-	return nil, repo.ErrNotFound
-}
-
-func (r *fakeUserRepo) Create(_ context.Context, params *repo.CreateUserParams) (*repo.User, error) {
-	if params == nil {
-		return nil, errors.New("create user params is nil")
-	}
-	u := &repo.User{
-		ID:       uuid.New(),
-		Nickname: params.Nickname,
-		Avatar:   params.Avatar,
-		Role:     params.Role,
-	}
-	r.users[u.ID] = u
-	r.created = append(r.created, u)
-	return u, nil
-}
-
-func (r *fakeUserRepo) UpdatePassword(context.Context, uuid.UUID, string) (*repo.User, error) {
-	return nil, repo.ErrNotFound
-}
-
-func (r *fakeUserRepo) UpdateProfile(context.Context, uuid.UUID, string, string) (*repo.User, error) {
-	return nil, repo.ErrNotFound
-}
-
+// fakeOAuthRepo 是 OAuth repo 的内存实现，仅用于 auth service 测试。
 type fakeOAuthRepo struct {
 	byKey map[string]*repo.User
 }
@@ -104,7 +59,7 @@ func (r *fakeOAuthRepo) bind(user *repo.User, provider, openID string) {
 }
 
 func TestLoginWithOAuthCreatesUserOnFirstLogin(t *testing.T) {
-	users := newFakeUserRepo()
+	users := testutil.NewFakeUserRepo()
 	oauthRepo := newFakeOAuthRepo()
 
 	svc := New(users, nil,
@@ -124,12 +79,12 @@ func TestLoginWithOAuthCreatesUserOnFirstLogin(t *testing.T) {
 	if result == nil || result.Tokens == nil || result.User == nil {
 		t.Fatal("expected login result with tokens and user")
 	}
-	if len(users.created) != 1 {
-		t.Fatalf("expected 1 created user, got %d", len(users.created))
+	if len(users.Created) != 1 {
+		t.Fatalf("expected 1 created user, got %d", len(users.Created))
 	}
 
 	// 绑定后再次登录应直接返回同一用户
-	oauthRepo.bind(users.created[0], "wechat", "wx_openid_001")
+	oauthRepo.bind(users.Created[0], "wechat", "wx_openid_001")
 
 	result2, e2 := svc.Login(context.Background(), &auth.LoginRequest{
 		GrantType: auth.GrantTypeOAuth,
@@ -145,7 +100,7 @@ func TestLoginWithOAuthCreatesUserOnFirstLogin(t *testing.T) {
 }
 
 func TestLoginWithOAuthRejectsUnknownProvider(t *testing.T) {
-	svc := New(newFakeUserRepo(), nil,
+	svc := New(testutil.NewFakeUserRepo(), nil,
 		WithTokenIssuer(testTokenIssuer()),
 		WithOAuthRepo(newFakeOAuthRepo()),
 		WithOAuthDevMode(true),
@@ -162,7 +117,7 @@ func TestLoginWithOAuthRejectsUnknownProvider(t *testing.T) {
 }
 
 func TestLoginWithOAuthRequiresDevMode(t *testing.T) {
-	svc := New(newFakeUserRepo(), nil,
+	svc := New(testutil.NewFakeUserRepo(), nil,
 		WithTokenIssuer(testTokenIssuer()),
 		WithOAuthRepo(newFakeOAuthRepo()),
 		WithOAuthDevMode(false),

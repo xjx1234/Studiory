@@ -1,7 +1,6 @@
 package http
 
 import (
-	"backend/internal/http/middleware"
 	userservice "backend/internal/service/user"
 	"backend/pkg/errcode"
 	"backend/pkg/request"
@@ -38,13 +37,12 @@ type updateProfileReq struct {
 
 // GetProfile 获取当前登录用户的个人资料。
 func (h *UserProfileHandler) GetProfile(c *gin.Context) {
-	userID, exists := c.Get(middleware.ContextKeyUserID)
-	if !exists {
-		resp.Fail(c, errcode.ErrUnauthorized)
+	userID, ok := mustUserID(c)
+	if !ok {
 		return
 	}
 
-	profile, e := h.deps.UserService.GetProfile(c.Request.Context(), userID.(string))
+	profile, e := h.deps.UserService.GetProfile(c.Request.Context(), userID)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -55,9 +53,8 @@ func (h *UserProfileHandler) GetProfile(c *gin.Context) {
 
 // UpdateProfile PATCH /api/v1/user/profile
 func (h *UserProfileHandler) UpdateProfile(c *gin.Context) {
-	userID, exists := c.Get(middleware.ContextKeyUserID)
-	if !exists {
-		resp.Fail(c, errcode.ErrUnauthorized)
+	userID, ok := mustUserID(c)
+	if !ok {
 		return
 	}
 
@@ -70,7 +67,7 @@ func (h *UserProfileHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	profile, e := h.deps.UserService.UpdateProfile(c.Request.Context(), userID.(string), &userservice.UpdateProfileInput{
+	profile, e := h.deps.UserService.UpdateProfile(c.Request.Context(), userID, &userservice.UpdateProfileInput{
 		Nickname: req.Nickname,
 		Avatar:   req.Avatar,
 	})
@@ -84,9 +81,8 @@ func (h *UserProfileHandler) UpdateProfile(c *gin.Context) {
 
 // ChangePassword PATCH /api/v1/user/password
 func (h *UserProfileHandler) ChangePassword(c *gin.Context) {
-	userID, exists := c.Get(middleware.ContextKeyUserID)
-	if !exists {
-		resp.Fail(c, errcode.ErrUnauthorized)
+	userID, ok := mustUserID(c)
+	if !ok {
 		return
 	}
 
@@ -95,7 +91,7 @@ func (h *UserProfileHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	e := h.deps.UserService.ChangePassword(c.Request.Context(), userID.(string), &userservice.ChangePasswordInput{
+	e := h.deps.UserService.ChangePassword(c.Request.Context(), userID, &userservice.ChangePasswordInput{
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
 	})
