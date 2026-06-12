@@ -9,7 +9,6 @@ import (
 	"backend/pkg/errcode"
 	"backend/pkg/pagination"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -65,9 +64,9 @@ func WithLogger(logger *zap.Logger) Option {
 }
 
 func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Query) (pagination.List[Item], *errcode.Error) {
-	uid, err := uuid.Parse(userID)
-	if err != nil {
-		return pagination.List[Item]{}, errcode.ErrBadRequest
+	uid, e := baseservice.ParseUUID(userID)
+	if e != nil {
+		return pagination.List[Item]{}, e
 	}
 
 	total, err := s.todos.CountByUserID(ctx, uid)
@@ -93,7 +92,7 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 }
 
 func (s *serviceImpl) Get(ctx context.Context, userID, todoID string) (*Item, *errcode.Error) {
-	uid, tid, e := parseIDs(userID, todoID)
+	uid, tid, e := baseservice.ParseUUIDPair(userID, todoID)
 	if e != nil {
 		return nil, e
 	}
@@ -111,9 +110,9 @@ func (s *serviceImpl) Get(ctx context.Context, userID, todoID string) (*Item, *e
 }
 
 func (s *serviceImpl) Create(ctx context.Context, userID string, in *CreateInput) (*Item, *errcode.Error) {
-	uid, err := uuid.Parse(userID)
-	if err != nil {
-		return nil, errcode.ErrBadRequest
+	uid, e := baseservice.ParseUUID(userID)
+	if e != nil {
+		return nil, e
 	}
 	if in == nil || in.Title == "" {
 		return nil, errcode.ErrValidation
@@ -129,7 +128,7 @@ func (s *serviceImpl) Create(ctx context.Context, userID string, in *CreateInput
 }
 
 func (s *serviceImpl) Update(ctx context.Context, userID, todoID string, in *UpdateInput) (*Item, *errcode.Error) {
-	uid, tid, e := parseIDs(userID, todoID)
+	uid, tid, e := baseservice.ParseUUIDPair(userID, todoID)
 	if e != nil {
 		return nil, e
 	}
@@ -150,7 +149,7 @@ func (s *serviceImpl) Update(ctx context.Context, userID, todoID string, in *Upd
 }
 
 func (s *serviceImpl) Delete(ctx context.Context, userID, todoID string) *errcode.Error {
-	uid, tid, e := parseIDs(userID, todoID)
+	uid, tid, e := baseservice.ParseUUIDPair(userID, todoID)
 	if e != nil {
 		return e
 	}
@@ -164,18 +163,6 @@ func (s *serviceImpl) Delete(ctx context.Context, userID, todoID string) *errcod
 		return errcode.ErrInternal
 	}
 	return nil
-}
-
-func parseIDs(userID, todoID string) (uuid.UUID, uuid.UUID, *errcode.Error) {
-	uid, err := uuid.Parse(userID)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, errcode.ErrBadRequest
-	}
-	tid, err := uuid.Parse(todoID)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, errcode.ErrBadRequest
-	}
-	return uid, tid, nil
 }
 
 func toItem(t *repo.Todo) Item {

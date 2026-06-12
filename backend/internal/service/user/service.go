@@ -10,7 +10,6 @@ import (
 	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -81,9 +80,9 @@ func WithRevokeSupport(rdb redis.UniversalClient, keyPrefix string, accessTTL ti
 }
 
 func (s *userServiceImpl) GetProfile(ctx context.Context, userID string) (*ProfileResult, *errcode.Error) {
-	id, err := uuid.Parse(userID)
-	if err != nil {
-		return nil, errcode.ErrBadRequest
+	id, e := baseservice.ParseUUID(userID)
+	if e != nil {
+		return nil, e
 	}
 
 	user, err := s.users.GetByID(ctx, id)
@@ -99,9 +98,9 @@ func (s *userServiceImpl) GetProfile(ctx context.Context, userID string) (*Profi
 }
 
 func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *UpdateProfileInput) (*ProfileResult, *errcode.Error) {
-	id, err := uuid.Parse(userID)
-	if err != nil {
-		return nil, errcode.ErrBadRequest
+	id, e := baseservice.ParseUUID(userID)
+	if e != nil {
+		return nil, e
 	}
 	if in == nil {
 		return nil, errcode.ErrBadRequest
@@ -141,9 +140,9 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		return errcode.ErrBadRequest
 	}
 
-	id, err := uuid.Parse(userID)
-	if err != nil {
-		return errcode.ErrBadRequest
+	id, e := baseservice.ParseUUID(userID)
+	if e != nil {
+		return e
 	}
 
 	user, err := s.users.GetByID(ctx, id)
