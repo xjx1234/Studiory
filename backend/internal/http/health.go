@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"backend/internal/buildinfo"
 	"backend/pkg/errcode"
 	"backend/pkg/resp"
 
@@ -12,7 +13,14 @@ import (
 
 func registerHealthRoutes(r *gin.Engine, deps *Deps) {
 	r.GET("/health", func(c *gin.Context) {
-		resp.OK(c, gin.H{"status": "ok", "service": "api"})
+		info := buildinfo.Current()
+		resp.OK(c, gin.H{
+			"status":     "ok",
+			"service":    "api",
+			"version":    info.Version,
+			"commit":     info.Commit,
+			"build_time": info.BuildTime,
+		})
 	})
 
 	r.GET("/ready", func(c *gin.Context) {

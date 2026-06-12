@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"backend/internal/app"
+	"backend/internal/buildinfo"
 	"backend/internal/config"
 
 	"go.uber.org/zap"
@@ -32,6 +33,9 @@ func main() {
 	zap.L().Info("配置加载完成",
 		zap.String("env", cfg.AppEnv),
 		zap.String("addr", cfg.ServerAddr),
+		zap.String("version", buildinfo.Version),
+		zap.String("commit", buildinfo.Commit),
+		zap.String("build_time", buildinfo.BuildTime),
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

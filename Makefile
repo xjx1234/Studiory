@@ -1,5 +1,9 @@
 BACKEND_DIR := backend
 DATABASE_URL ?= postgres://postgres:password@localhost:5432/app?sslmode=disable
+VERSION ?= dev
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -s -w -X backend/internal/buildinfo.Version=$(VERSION) -X backend/internal/buildinfo.Commit=$(COMMIT) -X backend/internal/buildinfo.BuildTime=$(BUILD_TIME)
 
 .PHONY: help run build test sqlc migrate-up migrate-down compose-up compose-down fmt tidy seed
 
@@ -36,7 +40,7 @@ run:
 	cd $(BACKEND_DIR) && go run .
 
 build:
-	cd $(BACKEND_DIR) && go build -o /tmp/app-api .
+	cd $(BACKEND_DIR) && go build -trimpath -ldflags "$(LDFLAGS)" -o /tmp/app-api .
 
 test:
 	cd $(BACKEND_DIR) && go test ./...
