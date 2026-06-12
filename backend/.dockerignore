@@ -1,0 +1,22 @@
+.git
+.gitignore
+
+# Local secrets/config
+.env
+config/local.yaml
+
+# Build/test artifacts
+backend
+seed
+*.exe
+*.test
+coverage.out
+
+# Editor/system files
+.DS_Store
+.idea/
+.vscode/
+
+# Dependency/cache directories
+vendor/
+tmp/
