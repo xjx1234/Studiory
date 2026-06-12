@@ -70,8 +70,9 @@ func (r *todoRepo) Update(ctx context.Context, id, userID uuid.UUID, title strin
 }
 
 func (r *todoRepo) Delete(ctx context.Context, id, userID uuid.UUID) error {
-	return r.q.DeleteTodo(ctx, &sqlcgen.DeleteTodoParams{
+	_, err := r.q.DeleteTodo(ctx, &sqlcgen.DeleteTodoParams{
 		ID:     pgtype.UUID{Bytes: to16(id), Valid: true},
 		UserID: pgtype.UUID{Bytes: to16(userID), Valid: true},
 	})
+	return wrapErr(err)
 }

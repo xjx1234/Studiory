@@ -49,9 +49,10 @@ func (q *Queries) CreateTodo(ctx context.Context, arg *CreateTodoParams) (*Todo,
 	return &i, err
 }
 
-const deleteTodo = `-- name: DeleteTodo :exec
+const deleteTodo = `-- name: DeleteTodo :one
 DELETE FROM todos
 WHERE id = $1 AND user_id = $2
+RETURNING id
 `
 
 type DeleteTodoParams struct {
@@ -59,9 +60,11 @@ type DeleteTodoParams struct {
 	UserID pgtype.UUID `json:"user_id"`
 }
 
-func (q *Queries) DeleteTodo(ctx context.Context, arg *DeleteTodoParams) error {
-	_, err := q.db.Exec(ctx, deleteTodo, arg.ID, arg.UserID)
-	return err
+func (q *Queries) DeleteTodo(ctx context.Context, arg *DeleteTodoParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteTodo, arg.ID, arg.UserID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getTodoByIDAndUserID = `-- name: GetTodoByIDAndUserID :one

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"backend/internal/repo"
+	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
 
 	"github.com/google/uuid"
@@ -45,11 +46,12 @@ type Service interface {
 }
 
 type userServiceImpl struct {
-	users      repo.UserRepo
-	rdb        redis.UniversalClient
-	keyPrefix  string
-	accessTTL  time.Duration
-	logger     *zap.Logger
+	baseservice.LogSupport
+
+	users     repo.UserRepo
+	rdb       redis.UniversalClient
+	keyPrefix string
+	accessTTL time.Duration
 }
 
 type Option func(*userServiceImpl)
@@ -65,7 +67,7 @@ func New(users repo.UserRepo, opts ...Option) Service {
 
 func WithLogger(logger *zap.Logger) Option {
 	return func(s *userServiceImpl) {
-		s.logger = logger
+		s.SetLogger(logger)
 	}
 }
 
@@ -89,7 +91,7 @@ func (s *userServiceImpl) GetProfile(ctx context.Context, userID string) (*Profi
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.logInternal("GetProfile lookup user", err)
+		s.LogInternal("GetProfile lookup user", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -110,7 +112,7 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.logInternal("UpdateProfile lookup user", err)
+		s.LogInternal("UpdateProfile lookup user", err)
 		return nil, errcode.ErrInternal
 	}
 
@@ -128,7 +130,7 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.logInternal("UpdateProfile update user", err)
+		s.LogInternal("UpdateProfile update user", err)
 		return nil, errcode.ErrInternal
 	}
 	return toProfileResult(updated), nil
@@ -149,7 +151,7 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		if errors.Is(err, repo.ErrNotFound) {
 			return errcode.ErrNotFound
 		}
-		s.logInternal("ChangePassword lookup user", err)
+		s.LogInternal("ChangePassword lookup user", err)
 		return errcode.ErrInternal
 	}
 
@@ -166,12 +168,12 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		s.logInternal("ChangePassword hash new password", err)
+		s.LogInternal("ChangePassword hash new password", err)
 		return errcode.ErrInternal
 	}
 
 	if _, err := s.users.UpdatePassword(ctx, id, string(hash)); err != nil {
-		s.logInternal("ChangePassword update password", err)
+		s.LogInternal("ChangePassword update password", err)
 		return errcode.ErrInternal
 	}
 
@@ -179,17 +181,11 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 	if s.rdb != nil {
 		revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
 		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
-			s.logInternal("ChangePassword revoke access tokens", err)
+			s.LogInternal("ChangePassword revoke access tokens", err)
 		}
 	}
 
 	return nil
-}
-
-func (s *userServiceImpl) logInternal(op string, err error) {
-	if s.logger != nil && err != nil {
-		s.logger.Error(op, zap.Error(err))
-	}
 }
 
 func toProfileResult(u *repo.User) *ProfileResult {

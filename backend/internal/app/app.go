@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	"backend/internal/auth"
 	"backend/internal/config"
 	internalhttp "backend/internal/http"
+	"backend/internal/http/middleware"
 	"backend/internal/repo/pg"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
@@ -66,11 +68,8 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 	pgStore := pg.NewStore(pool)
 
 	deps := &internalhttp.Deps{
-		Cfg:         cfg,
-		Logger:      logger,
-		Store:       pgStore,
-		Redis:       rdb,
-		TokenIssuer: tokenIssuer,
+		Cfg:    cfg,
+		Logger: logger,
 
 		AuthService: authservice.New(pgStore.Users(), rdb,
 			authservice.WithTokenIssuer(tokenIssuer),
@@ -87,6 +86,26 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			userservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
 		),
 		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
+
+		AuthMiddleware:      middleware.Auth(tokenIssuer, rdb, cfg.RedisKeyPrefix, logger),
+		RateLimitMiddleware: middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
+		ReadyChecks: []internalhttp.ReadyCheck{
+			{
+				Name: "PostgreSQL",
+				Check: func(ctx context.Context) error {
+					if pgStore.Pool() == nil {
+						return errors.New("postgres pool is nil")
+					}
+					return pgStore.Pool().Ping(ctx)
+				},
+			},
+			{
+				Name: "Redis",
+				Check: func(ctx context.Context) error {
+					return rdb.Ping(ctx).Err()
+				},
+			},
+		},
 	}
 
 	router, err := internalhttp.NewRouter(deps)

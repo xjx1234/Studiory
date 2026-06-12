@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -54,7 +55,7 @@ func (r *userRepo) Create(ctx context.Context, in *repo.CreateUserParams) (*repo
 	}
 	row, err := r.q.CreateUser(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	return userFromRow(row), nil
 }
@@ -82,10 +83,14 @@ func (r *userRepo) UpdateProfile(ctx context.Context, id uuid.UUID, nickname, av
 	return userFromRow(row), nil
 }
 
-// wrapErr 将 pgx.ErrNoRows 统一转换为 repo.ErrNotFound，屏蔽底层 pgx 细节。
+// wrapErr 将底层 PostgreSQL/pgx 错误转换为 repo 层稳定错误。
 func wrapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return repo.ErrNotFound
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return repo.ErrAlreadyExists
 	}
 	return err
 }

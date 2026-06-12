@@ -2,9 +2,10 @@ package http
 
 import (
 	"errors"
+	"time"
 
 	"backend/internal/http/middleware"
-	"time"
+	"backend/internal/repo"
 
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,7 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	r.Use(ginzap.Ginzap(zap.L(), time.RFC3339, true))
 	r.Use(ginzap.RecoveryWithZap(zap.L(), true))
 	r.Use(middleware.Safe())
-	r.Use(middleware.RateLimit(deps.Cfg.RateLimitPerMinute, deps.Redis, deps.Cfg.RedisKeyPrefix))
+	r.Use(deps.RateLimitMiddleware)
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowOrigins:     deps.Cfg.CORSAllowOrigins,
 		AllowCredentials: deps.Cfg.CORSAllowCredentials,
@@ -39,11 +40,11 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	{
 		registerAuthRoutes(v1, deps)
 
-		user := v1.Group("/user", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix, deps.Logger))
+		user := v1.Group("/user", deps.AuthMiddleware)
 		registerUserProfileRoutes(user, deps)
 		registerUserTodoRoutes(user, deps)
 
-		admin := v1.Group("/admin", middleware.Auth(deps.TokenIssuer, deps.Redis, deps.Cfg.RedisKeyPrefix, deps.Logger), middleware.RequireRole("admin"))
+		admin := v1.Group("/admin", deps.AuthMiddleware, middleware.RequireRole(repo.RoleAdmin))
 		registerAdminRoutes(admin, deps)
 	}
 
@@ -54,9 +55,6 @@ func validateDeps(deps *Deps) error {
 	if deps == nil {
 		return errors.New("http deps is nil")
 	}
-	if deps.TokenIssuer == nil {
-		return errors.New("TokenIssuer is required")
-	}
 	if deps.AuthService == nil {
 		return errors.New("AuthService is required")
 	}
@@ -65,6 +63,15 @@ func validateDeps(deps *Deps) error {
 	}
 	if deps.TodoService == nil {
 		return errors.New("TodoService is required")
+	}
+	if deps.AuthMiddleware == nil {
+		return errors.New("AuthMiddleware is required")
+	}
+	if deps.RateLimitMiddleware == nil {
+		return errors.New("RateLimitMiddleware is required")
+	}
+	if len(deps.ReadyChecks) == 0 {
+		return errors.New("ReadyChecks is required")
 	}
 	return nil
 }

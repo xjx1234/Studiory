@@ -68,7 +68,7 @@ func main() {
 	// 检查账号是否已存在
 	existing, lookupErr := findUser(ctx, users, *phone, *email)
 	if lookupErr == nil {
-		if existing.Role != "admin" {
+		if existing.Role != repo.RoleAdmin {
 			fmt.Fprintf(os.Stderr,
 				"错误：账号已存在但角色为 %q（非 admin），请手动将其升级或换一个账号\n  ID: %s\n",
 				existing.Role, existing.ID)
@@ -94,7 +94,7 @@ func main() {
 		Email:        strutil.NullableStr(*email),
 		PasswordHash: &hashStr,
 		Nickname:     *nickname,
-		Role:         "admin",
+		Role:         repo.RoleAdmin,
 	})
 	if err != nil {
 		logger.Fatal("创建 admin 用户失败", zap.Error(err))

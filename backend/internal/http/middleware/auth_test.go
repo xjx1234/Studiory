@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"backend/internal/repo"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,8 +15,8 @@ func TestRequireRoleAllowsExpectedRole(t *testing.T) {
 
 	r := gin.New()
 	r.GET("/admin", func(c *gin.Context) {
-		c.Set(ContextKeyUserRole, "admin")
-	}, RequireRole("admin"), func(c *gin.Context) {
+		c.Set(ContextKeyUserRole, repo.RoleAdmin)
+	}, RequireRole(repo.RoleAdmin), func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
 
@@ -32,8 +34,8 @@ func TestRequireRoleRejectsUnexpectedRole(t *testing.T) {
 
 	r := gin.New()
 	r.GET("/admin", func(c *gin.Context) {
-		c.Set(ContextKeyUserRole, "student")
-	}, RequireRole("admin"), func(c *gin.Context) {
+		c.Set(ContextKeyUserRole, repo.RoleStudent)
+	}, RequireRole(repo.RoleAdmin), func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
 

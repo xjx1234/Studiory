@@ -29,6 +29,7 @@ SET title = $3,
 WHERE id = $1 AND user_id = $2
 RETURNING *;
 
--- name: DeleteTodo :exec
+-- name: DeleteTodo :one
 DELETE FROM todos
-WHERE id = $1 AND user_id = $2;
+WHERE id = $1 AND user_id = $2
+RETURNING id;

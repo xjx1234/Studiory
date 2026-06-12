@@ -27,21 +27,15 @@ func registerHealthRoutes(r *gin.Engine, deps *Deps) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 
-		if deps.Store == nil || deps.Store.Pool() == nil {
-			resp.FailWithMessage(c, errcode.ErrServiceUnavailable, "PostgreSQL 未初始化")
-			return
-		}
-		if err := deps.Store.Pool().Ping(ctx); err != nil {
-			resp.FailWithMessage(c, errcode.ErrServiceUnavailable, "PostgreSQL 不可用")
-			return
-		}
-		if deps.Redis == nil {
-			resp.FailWithMessage(c, errcode.ErrServiceUnavailable, "Redis 未初始化")
-			return
-		}
-		if err := deps.Redis.Ping(ctx).Err(); err != nil {
-			resp.FailWithMessage(c, errcode.ErrServiceUnavailable, "Redis 不可用")
-			return
+		for _, check := range deps.ReadyChecks {
+			if check.Check == nil {
+				resp.FailWithMessage(c, errcode.ErrServiceUnavailable, check.Name+" 未初始化")
+				return
+			}
+			if err := check.Check(ctx); err != nil {
+				resp.FailWithMessage(c, errcode.ErrServiceUnavailable, check.Name+" 不可用")
+				return
+			}
 		}
 
 		resp.OK(c, gin.H{"status": "ready"})

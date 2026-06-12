@@ -22,6 +22,15 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
+// 用户角色常量（与 users.role 字段保持一致）。
+const (
+	RoleAdmin   = "admin"
+	RoleParent  = "parent"
+	RoleStudent = "student"
+	RoleTeacher = "teacher"
+	RoleOther   = "other"
+)
+
 type UserOAuth struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID

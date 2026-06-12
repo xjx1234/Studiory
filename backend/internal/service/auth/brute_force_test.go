@@ -25,7 +25,11 @@ func newTestRDB(t *testing.T) (*miniredis.Miniredis, redis.UniversalClient) {
 
 func bfSvc(t *testing.T, repo *testutil.FakeUserRepo, rdb redis.UniversalClient) *AuthServiceImpl {
 	t.Helper()
-	return New(repo, rdb, WithTokenIssuer(testTokenIssuer()))
+	svc, ok := New(repo, rdb, WithTokenIssuer(testTokenIssuer())).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+	return svc
 }
 
 func seedUserWithPassword(fakeRepo *testutil.FakeUserRepo, phone, password string) {
@@ -38,7 +42,7 @@ func seedUserWithPassword(fakeRepo *testutil.FakeUserRepo, phone, password strin
 		Phone:        &phonePtr,
 		PasswordHash: &hashStr,
 		Nickname:     "测试用户",
-		Role:         "student",
+		Role:         repo.RoleStudent,
 	}
 }
 

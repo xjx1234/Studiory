@@ -1,14 +1,5 @@
 package authservice
 
-// 用户角色常量（与数据库 role 字段保持一致）
-const (
-	RoleAdmin   = "admin"
-	RoleParent  = "parent"
-	RoleStudent = "student"
-	RoleTeacher = "teacher"
-	RoleOther   = "other"
-)
-
 // MockVerificationCode 是开发阶段固定的验证码，生产环境接入真实短信/邮件服务后替换。
 const MockVerificationCode = "123456"
 

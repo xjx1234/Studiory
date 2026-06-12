@@ -32,7 +32,7 @@ func (r *oauthRepo) CreateOAuth(ctx context.Context, userID uuid.UUID, provider,
 		OpenID:   openID,
 	})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	return oauthFromRow(row), nil
 }
