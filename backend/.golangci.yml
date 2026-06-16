@@ -1,0 +1,20 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # standard 已包含 errcheck / govet / ineffassign / staticcheck / unused
+  default: standard
+  enable:
+    - bodyclose   # 检测未关闭的 HTTP response body
+    - misspell    # 检测英文拼写错误（注释/字符串）
+  exclusions:
+    # sqlc 生成代码不参与 lint
+    paths:
+      - internal/repo/sqlc/gen
+    rules:
+      # 测试文件放宽 errcheck（断言/清理代码常忽略错误）
+      - path: _test\.go
+        linters:
+          - errcheck

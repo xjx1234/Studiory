@@ -5,7 +5,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X backend/internal/buildinfo.Version=$(VERSION) -X backend/internal/buildinfo.Commit=$(COMMIT) -X backend/internal/buildinfo.BuildTime=$(BUILD_TIME)
 
-.PHONY: help up down logs run build test sqlc migrate-up migrate-down compose-up compose-down fmt tidy seed
+.PHONY: help up down logs run build test cover lint vuln sqlc migrate-up migrate-down compose-up compose-down fmt tidy seed
 
 help:
 	@echo "Available targets:"
@@ -21,6 +21,9 @@ help:
 	@echo "  make run           Run backend"
 	@echo "  make build         Build backend"
 	@echo "  make test          Run Go tests"
+	@echo "  make cover         Run tests with coverage summary"
+	@echo "  make lint          Run golangci-lint (install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)"
+	@echo "  make vuln          Run govulncheck (install: go install golang.org/x/vuln/cmd/govulncheck@latest)"
 	@echo "  make fmt           Format Go code"
 	@echo "  make tidy          Tidy Go modules"
 
@@ -57,6 +60,15 @@ build:
 
 test:
 	cd $(BACKEND_DIR) && go test ./...
+
+cover:
+	cd $(BACKEND_DIR) && go test -race -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1
+
+lint:
+	cd $(BACKEND_DIR) && golangci-lint run ./...
+
+vuln:
+	cd $(BACKEND_DIR) && govulncheck ./...
 
 fmt:
 	cd $(BACKEND_DIR) && gofmt -w .

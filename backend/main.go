@@ -27,7 +27,7 @@ func main() {
 	}
 
 	logger := initLogger(cfg)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 	zap.ReplaceGlobals(logger)
 
 	zap.L().Info("配置加载完成",

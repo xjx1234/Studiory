@@ -67,7 +67,7 @@ func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPre
 		}
 		return false
 	}
-	return claims.IssuedAt.Time.Unix() <= revokeAt
+	return claims.IssuedAt.Unix() <= revokeAt
 }
 
 // RequireRole 要求当前用户具备指定角色之一。
