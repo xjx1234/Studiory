@@ -27,7 +27,7 @@
 - 登出时写入当前时间戳；`Auth` 中间件校验 token 的 `iat` 是否早于该时间戳。
 - **全端登出**：吊销键按 `user_id` 维度存储，任意设备登出会使该用户所有设备上、登出时刻之前签发的 access token 失效（教育类等单账号场景通常可接受）。若需「仅当前设备登出」，应改为 per-token 黑名单并随请求携带 access token。
 - Redis 不可用时吊销检查 **fail-open**（放行并打 Warn 日志），优先保证可用性；高安全场景可自行改为 fail-closed。
-- 仅覆盖登出场景；修改密码等需另行接入（可在改密后同样写入 revoke key）。
+- 登出与**修改密码**均会写入该 revoke key：改密成功后同样按 `user_id` 维度吊销此前签发的 access token。
 
 ---
 
@@ -43,7 +43,22 @@
 
 ---
 
-## 4. 限流
+## 4. 登录暴力破解防护（密码登录）
+
+| 键格式 | 类型 | TTL | 说明 |
+|--------|------|-----|------|
+| `app:login:fail:{sha256_hex}` | string（计数器） | 10 分钟 | 账号维度的连续登录失败计数 |
+| `app:login:lock:{sha256_hex}` | string | 15 分钟 | 账号被锁定标记，存在即拒绝密码登录 |
+
+- 键后缀为「账号标识（手机号/邮箱/account，统一小写去空格）」的 SHA-256 十六进制摘要，不存明文账号。
+- 仅作用于**密码登录**路径：失败（含「用户不存在」，防止时序枚举账号）时原子递增 `fail` 计数；达到 **5 次/10 分钟** 阈值时写入 `lock` 键锁定 **15 分钟**。计数与锁定写入由同一段 Redis Lua 脚本原子完成。
+- 登录成功立即删除 `fail` 计数（`lock` 键自然过期）。
+- Redis 不可用时 **fail-open**（放行并打 Warn 日志），避免缓存故障完全阻断登录。
+- 阈值/窗口/锁定时长为 `service/auth/service.go` 中常量（`loginMaxFailAttempts`、`loginFailWindow`、`loginLockDuration`），命中锁定返回错误码 `10010`（`err_account_locked`，HTTP 429）。
+
+---
+
+## 5. 限流
 
 当前使用 Redis 分布式 store（`ulule/limiter`）。键前缀由 `REDIS_KEY_PREFIX` 控制：
 
@@ -53,7 +68,7 @@
 
 ---
 
-## 5. 业务扩展
+## 6. 业务扩展
 
 按模块自行约定，建议继续带项目前缀，例如：
 

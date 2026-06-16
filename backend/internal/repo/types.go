@@ -24,11 +24,8 @@ type User struct {
 
 // 用户角色常量（与 users.role 字段保持一致）。
 const (
-	RoleAdmin   = "admin"
-	RoleParent  = "parent"
-	RoleStudent = "student"
-	RoleTeacher = "teacher"
-	RoleOther   = "other"
+	RoleAdmin = "admin"
+	RoleUser  = "user"
 )
 
 type UserOAuth struct {

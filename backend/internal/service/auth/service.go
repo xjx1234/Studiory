@@ -289,7 +289,7 @@ func (s *AuthServiceImpl) createOAuthUser(ctx context.Context, nickname, provide
 	createAndBind := func(users repo.UserRepo, oauthRepo repo.OAuthRepo) (*repo.User, error) {
 		created, err := users.Create(ctx, &repo.CreateUserParams{
 			Nickname: nickname,
-			Role:     repo.RoleStudent,
+			Role:     repo.RoleUser,
 		})
 		if err != nil {
 			return nil, err
@@ -387,7 +387,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 		Email:        strutil.NullableStr(input.Email),
 		PasswordHash: &hashStr,
 		Nickname:     nickname,
-		Role:         repo.RoleStudent,
+		Role:         repo.RoleUser,
 	})
 	if createErr != nil {
 		if errors.Is(createErr, repo.ErrAlreadyExists) {
@@ -423,7 +423,7 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 		Phone:    strutil.NullableStr(input.Phone),
 		Email:    strutil.NullableStr(input.Email),
 		Nickname: nickname,
-		Role:     repo.RoleStudent,
+		Role:     repo.RoleUser,
 	})
 	if createErr != nil {
 		if errors.Is(createErr, repo.ErrAlreadyExists) {

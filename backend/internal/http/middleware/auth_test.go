@@ -34,7 +34,7 @@ func TestRequireRoleRejectsUnexpectedRole(t *testing.T) {
 
 	r := gin.New()
 	r.GET("/admin", func(c *gin.Context) {
-		c.Set(ContextKeyUserRole, repo.RoleStudent)
+		c.Set(ContextKeyUserRole, repo.RoleUser)
 	}, RequireRole(repo.RoleAdmin), func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})

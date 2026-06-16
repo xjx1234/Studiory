@@ -30,6 +30,9 @@
 | 10005 | `err_invalid_code` | 400 |
 | 10006 | `err_unsupported_grant` | 400 |
 | 10007 | `err_forbidden` | 403 |
+| 10008 | `err_wrong_password` | 401 |
+| 10009 | `err_same_password` | 400 |
+| 10010 | `err_account_locked` | 429 |
 | 20001 | `err_bad_request` | 400 |
 | 20002 | `err_validation` | 400 |
 | 20003 | `err_too_many_requests` | 429 |

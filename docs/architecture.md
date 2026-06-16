@@ -190,4 +190,4 @@ CI 位于 `.github/workflows/ci.yml`，会校验 sqlc 生成代码、运行测�
 
 ## 与具体项目的关系
 
-本仓库**不绑定**某一产品名或学科。历史业务 API 设计放在 `docs/examples/`，实现时按上文步骤新建 `internal/service/{yourmodule}`，不要修改脚手架已有的 auth/user 核心表语义，除非你有意升级全平台用户模型。
+本仓库**不绑定**某一产品名或学科。实现时按上文步骤新建 `internal/service/{yourmodule}`，不要修改脚手架已有的 auth/user 核心表语义，除非你有意升级全平台用户模型。

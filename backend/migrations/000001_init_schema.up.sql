@@ -8,8 +8,8 @@ CREATE TABLE users (
     password_hash VARCHAR(255),
     nickname      VARCHAR(100) NOT NULL DEFAULT '',
     avatar        VARCHAR(500) NOT NULL DEFAULT '',
-    role          VARCHAR(20) NOT NULL DEFAULT 'student'
-        CHECK (role IN ('admin', 'parent', 'student', 'teacher', 'other')),
+    role          VARCHAR(20) NOT NULL DEFAULT 'user'
+        CHECK (role IN ('admin', 'user')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );

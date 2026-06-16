@@ -5,11 +5,14 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X backend/internal/buildinfo.Version=$(VERSION) -X backend/internal/buildinfo.Commit=$(COMMIT) -X backend/internal/buildinfo.BuildTime=$(BUILD_TIME)
 
-.PHONY: help run build test sqlc migrate-up migrate-down compose-up compose-down fmt tidy seed
+.PHONY: help up down logs run build test sqlc migrate-up migrate-down compose-up compose-down fmt tidy seed
 
 help:
 	@echo "Available targets:"
-	@echo "  make compose-up    Start PostgreSQL and Redis"
+	@echo "  make up            Start full stack (API + PostgreSQL + Redis + auto migrate)"
+	@echo "  make down          Stop full stack"
+	@echo "  make logs          Tail API container logs"
+	@echo "  make compose-up    Start only PostgreSQL and Redis (for local 'make run')"
 	@echo "  make compose-down  Stop local services"
 	@echo "  make migrate-up    Run database migrations"
 	@echo "  make migrate-down  Roll back one migration"
@@ -20,6 +23,16 @@ help:
 	@echo "  make test          Run Go tests"
 	@echo "  make fmt           Format Go code"
 	@echo "  make tidy          Tidy Go modules"
+
+# 全栈一键启动：构建 API 镜像、自动跑迁移、启动 API+PG+Redis
+up:
+	docker compose --profile full up -d --build
+
+down:
+	docker compose --profile full down
+
+logs:
+	docker compose logs -f api
 
 compose-up:
 	docker compose up -d postgres redis

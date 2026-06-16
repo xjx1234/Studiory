@@ -17,7 +17,7 @@ func TestUpdateProfile(t *testing.T) {
 		ID:       id,
 		Nickname: "旧昵称",
 		Avatar:   "",
-		Role:     repo.RoleStudent,
+		Role:     repo.RoleUser,
 	}
 
 	svc := New(fakeRepo)

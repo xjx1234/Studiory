@@ -42,7 +42,7 @@ func seedUserWithPassword(fakeRepo *testutil.FakeUserRepo, phone, password strin
 		Phone:        &phonePtr,
 		PasswordHash: &hashStr,
 		Nickname:     "测试用户",
-		Role:         repo.RoleStudent,
+		Role:         repo.RoleUser,
 	}
 }
 

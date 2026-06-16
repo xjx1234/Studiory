@@ -215,6 +215,16 @@ components:
           maxLength: 500
           nullable: true
 
+    ChangePasswordReq:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+        new_password:
+          type: string
+          description: 需满足强密码规则（strong_password），且不能与原密码相同
+
     CreateTodoReq:
       type: object
       required: [title]
@@ -301,6 +311,20 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/LoginResult'
+        '401':
+          description: 账号或密码错误（code 10004 err_invalid_credentials）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '429':
+          description: |
+            密码登录连续失败过多，账号被临时锁定（code 10010 err_account_locked）。
+            默认 5 次失败/10 分钟触发，锁定 15 分钟。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
 
   /api/v1/auth/send-code:
     post:
@@ -397,6 +421,41 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/UserProfile'
+
+  /api/v1/user/password:
+    patch:
+      tags: [user]
+      summary: 修改密码
+      description: |
+        校验原密码后更新为新密码。新密码需满足强密码规则，且不能与原密码相同。
+        改密成功后会按 user_id 维度吊销此前签发的 access token。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordReq'
+      responses:
+        '200':
+          description: 修改成功（data 为 null）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '400':
+          description: 参数错误，或新密码与原密码相同（code 10009 err_same_password）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '401':
+          description: 未授权，或原密码错误（code 10008 err_wrong_password）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
 
   /api/v1/user/todos:
     get:
