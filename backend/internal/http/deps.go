@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"net/http"
 
 	"backend/internal/config"
 	authservice "backend/internal/service/auth"
@@ -37,4 +38,9 @@ type Deps struct {
 	AuthMiddleware      gin.HandlerFunc
 	RateLimitMiddleware gin.HandlerFunc
 	ReadyChecks         []ReadyCheck
+
+	// MetricsMiddleware / MetricsHandler 为可选项（metrics.enabled=false 时为 nil）。
+	// 由 app 层装配：handler 不直接持有基础设施，仅挂载 Prometheus 暴露端点。
+	MetricsMiddleware gin.HandlerFunc
+	MetricsHandler    http.Handler
 }

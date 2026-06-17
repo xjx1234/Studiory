@@ -23,6 +23,9 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	r := gin.New()
 
 	r.Use(middleware.RequestID())
+	if deps.MetricsMiddleware != nil {
+		r.Use(deps.MetricsMiddleware)
+	}
 	r.Use(middleware.SecurityHeaders(deps.Cfg.IsProd()))
 	r.Use(middleware.I18n())
 	r.Use(ginzap.Ginzap(zap.L(), time.RFC3339, true))
@@ -35,6 +38,10 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	}))
 
 	registerHealthRoutes(r, deps)
+
+	if deps.MetricsHandler != nil {
+		r.GET("/metrics", gin.WrapH(deps.MetricsHandler))
+	}
 
 	v1 := r.Group("/api/v1")
 	{

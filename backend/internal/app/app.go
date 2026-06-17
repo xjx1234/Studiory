@@ -10,6 +10,7 @@ import (
 	"backend/internal/config"
 	internalhttp "backend/internal/http"
 	"backend/internal/http/middleware"
+	"backend/internal/metrics"
 	"backend/internal/repo/pg"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
@@ -67,6 +68,19 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 
 	pgStore := pg.NewStore(pool)
 
+	// 可观测：装配 Prometheus 指标（在 app 层注册 collector，保持 handler 不碰基础设施）。
+	var metricsMiddleware gin.HandlerFunc
+	var metricsHandler http.Handler
+	if cfg.MetricsEnabled {
+		m := metrics.New()
+		m.Registerer().MustRegister(
+			metrics.NewPgxPoolCollector(pool),
+			metrics.NewRedisCollector(rdb),
+		)
+		metricsMiddleware = m.Middleware()
+		metricsHandler = m.Handler()
+	}
+
 	deps := &internalhttp.Deps{
 		Cfg:    cfg,
 		Logger: logger,
@@ -89,6 +103,8 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 
 		AuthMiddleware:      middleware.Auth(tokenIssuer, rdb, cfg.RedisKeyPrefix, logger),
 		RateLimitMiddleware: middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
+		MetricsMiddleware:   metricsMiddleware,
+		MetricsHandler:      metricsHandler,
 		ReadyChecks: []internalhttp.ReadyCheck{
 			{
 				Name: "PostgreSQL",

@@ -52,6 +52,9 @@ log:
 rate_limit:
   per_minute: 120
 
+metrics:
+  enabled: true              # 暴露 Prometheus /metrics 端点（生产可按需关闭或用网络层保护）
+
 cors:
   allow_origins:
     - "http://localhost:5173"

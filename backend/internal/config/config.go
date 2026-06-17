@@ -64,6 +64,9 @@ type Config struct {
 	// ── 限流 ──────────────────────────────────────────────────────────────
 	RateLimitPerMinute int
 
+	// ── 可观测 ────────────────────────────────────────────────────────────
+	MetricsEnabled bool
+
 	// ── CORS ──────────────────────────────────────────────────────────────
 	CORSAllowOrigins     []string
 	CORSAllowCredentials bool
@@ -108,6 +111,8 @@ func Load() *Config {
 		LogFormat: v.GetString("log.format"),
 
 		RateLimitPerMinute: v.GetInt("rate_limit.per_minute"),
+
+		MetricsEnabled: v.GetBool("metrics.enabled"),
 
 		CORSAllowOrigins:     getStringSlice(v, "cors.allow_origins"),
 		CORSAllowCredentials: v.GetBool("cors.allow_credentials"),
@@ -254,6 +259,7 @@ func bindEnvs(v *viper.Viper) {
 		"log.level":                   "LOG_LEVEL",
 		"log.format":                  "LOG_FORMAT",
 		"rate_limit.per_minute":       "RATE_LIMIT_PER_MINUTE",
+		"metrics.enabled":             "METRICS_ENABLED",
 		"cors.allow_origins":          "CORS_ALLOW_ORIGINS",
 		"cors.allow_credentials":      "CORS_ALLOW_CREDENTIALS",
 	}
