@@ -12,6 +12,7 @@ import (
 	"backend/internal/http/middleware"
 	"backend/internal/metrics"
 	"backend/internal/repo/pg"
+	"backend/internal/sender"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
@@ -92,6 +93,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithLogger(logger),
 			authservice.WithCodePrefix(cfg.RedisKeyPrefix),
 			authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
+			authservice.WithCodeSender(buildCodeSender(cfg, logger)),
 			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
 			authservice.WithOAuthProviders(cfg.OAuthProviders),
 		),
@@ -147,6 +149,33 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		Router: router,
 		Server: server,
 	}, nil
+}
+
+// buildCodeSender 按配置装配验证码下发器。
+//
+// 接入更多服务商（如阿里云/腾讯云短信）：实现 sender.Provider，按渠道追加到 providers，
+// NewRouter 会在同一渠道内按注册顺序做故障转移。
+func buildCodeSender(cfg *config.Config, logger *zap.Logger) sender.Sender {
+	var providers []sender.Provider
+
+	// 邮件：配置了 SMTP 即启用真实邮件下发
+	if cfg.SMTPHost != "" {
+		providers = append(providers, sender.NewSMTPProvider(
+			cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom,
+		))
+	}
+
+	// 短信：示例脚手架未内置真实运营商，按上方注释接入后追加到 providers。
+
+	// 兜底：开发模式或未配置任何真实 Provider 时，用 mock（仅日志）保证流程可跑通。
+	if cfg.AuthMockCodeEnabled || len(providers) == 0 {
+		if !cfg.AuthMockCodeEnabled {
+			logger.Warn("未配置真实验证码服务商，回退到 mock（仅日志，生产环境请接入真实短信/邮件服务）")
+		}
+		providers = append(providers, sender.NewMockProvider(logger))
+	}
+
+	return sender.NewRouter(logger, providers...)
 }
 
 // Shutdown 优雅关闭：先停 HTTP Server，再关闭数据库与缓存。

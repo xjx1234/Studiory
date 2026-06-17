@@ -38,6 +38,15 @@ jwt:
 auth:
   mock_code_enabled: true     # 仅开发环境使用固定验证码 123456
 
+# 验证码下发（SMTP 邮件，可选）。host 为空则不启用，回退到 mock。
+# 短信运营商在 internal/app/app.go 的 buildCodeSender 中按需接入。
+smtp:
+  host: ""
+  port: 587
+  username: ""
+  password: ""
+  from: "no-reply@example.com"
+
 oauth:
   dev_mode: true              # 开发模式：直接用 provider + open_id 登录（不校验第三方 token）
   providers:

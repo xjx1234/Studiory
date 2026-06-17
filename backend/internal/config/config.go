@@ -53,6 +53,14 @@ type Config struct {
 	// ── Auth ──────────────────────────────────────────────────────────────
 	AuthMockCodeEnabled bool
 
+	// ── 验证码下发（SMTP 邮件，可选）────────────────────────────────────────
+	// SMTPHost 为空时不启用 SMTP Provider；短信服务商按需在 app 层接入。
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+
 	// ── OAuth ─────────────────────────────────────────────────────────────
 	OAuthDevMode   bool
 	OAuthProviders []string
@@ -103,6 +111,12 @@ func Load() *Config {
 		JWTRefreshTokenTTL: v.GetDuration("jwt.refresh_ttl"),
 
 		AuthMockCodeEnabled: v.GetBool("auth.mock_code_enabled"),
+
+		SMTPHost:     v.GetString("smtp.host"),
+		SMTPPort:     v.GetInt("smtp.port"),
+		SMTPUsername: v.GetString("smtp.username"),
+		SMTPPassword: v.GetString("smtp.password"),
+		SMTPFrom:     v.GetString("smtp.from"),
 
 		OAuthDevMode:   v.GetBool("oauth.dev_mode"),
 		OAuthProviders: getStringSlice(v, "oauth.providers"),
@@ -254,6 +268,11 @@ func bindEnvs(v *viper.Viper) {
 		"jwt.access_ttl":              "JWT_ACCESS_TTL",
 		"jwt.refresh_ttl":             "JWT_REFRESH_TTL",
 		"auth.mock_code_enabled":      "AUTH_MOCK_CODE_ENABLED",
+		"smtp.host":                   "SMTP_HOST",
+		"smtp.port":                   "SMTP_PORT",
+		"smtp.username":               "SMTP_USERNAME",
+		"smtp.password":               "SMTP_PASSWORD",
+		"smtp.from":                   "SMTP_FROM",
 		"oauth.dev_mode":              "OAUTH_DEV_MODE",
 		"oauth.providers":             "OAUTH_PROVIDERS",
 		"log.level":                   "LOG_LEVEL",

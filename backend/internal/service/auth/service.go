@@ -2,14 +2,17 @@ package authservice
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
 	"backend/internal/auth"
 	"backend/internal/repo"
+	"backend/internal/sender"
 	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
 	"backend/pkg/strutil"
@@ -78,6 +81,7 @@ type AuthServiceImpl struct {
 	oauthTx               repo.UserOAuthTxRunner
 	tokens                *auth.TokenIssuer
 	rdb                   redis.UniversalClient
+	codeSender            sender.Sender
 	codePrefix            string
 	allowMockCodeFallback bool
 	oauthDevMode          bool
@@ -121,6 +125,14 @@ func WithCodePrefix(prefix string) Option {
 func WithMockCodeFallback(enabled bool) Option {
 	return func(s *AuthServiceImpl) {
 		s.allowMockCodeFallback = enabled
+	}
+}
+
+// WithCodeSender 注入验证码下发器（多服务商路由）。
+// 未注入时 SendCode 仅写入 Redis 而不真正下发（兼容无下发渠道的本地调试）。
+func WithCodeSender(snd sender.Sender) Option {
+	return func(s *AuthServiceImpl) {
+		s.codeSender = snd
 	}
 }
 
@@ -438,8 +450,10 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 
 // ── SendCode ──────────────────────────────────────────────────────────────────
 
-// SendCode 发送验证码。
-// 开发阶段固定存储 MockVerificationCode（"123456"），生产环境接入真实 SMS/Email 服务后替换此方法内部实现。
+// SendCode 生成验证码、写入 Redis，并通过下发器（多服务商路由）发送。
+//
+// 流程：冷却限频 → 生成验证码 → 写 Redis → 经 codeSender 下发。
+// 下发失败时清除冷却键，允许用户立即重试。
 func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string) *errcode.Error {
 	if codeType == "" || target == "" {
 		return errcode.ErrBadRequest
@@ -455,12 +469,50 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 		return errcode.ErrTooManyRequests
 	}
 
+	code := s.generateCode()
+
 	key := s.codeRedisKey(codeType, target)
-	if err := s.rdb.Set(ctx, key, MockVerificationCode, codeExpiry).Err(); err != nil {
+	if err := s.rdb.Set(ctx, key, code, codeExpiry).Err(); err != nil {
 		s.LogInternal("SendCode set code", err)
+		_ = s.rdb.Del(ctx, cooldownKey).Err()
 		return errcode.ErrInternal
 	}
+
+	if s.codeSender != nil {
+		if err := s.codeSender.Send(ctx, sender.Message{
+			Channel: sender.Channel(codeType),
+			Target:  target,
+			Code:    code,
+		}); err != nil {
+			s.LogInternal("SendCode dispatch", err)
+			// 下发失败：回滚冷却与验证码，便于用户重试
+			_ = s.rdb.Del(ctx, cooldownKey, key).Err()
+			return errcode.ErrInternal
+		}
+	}
+
 	return nil
+}
+
+// generateCode 生成验证码。
+// 开发模式（allowMockCodeFallback）下返回固定的 MockVerificationCode 便于联调；
+// 否则生成 6 位随机数字验证码。
+func (s *AuthServiceImpl) generateCode() string {
+	if s.allowMockCodeFallback {
+		return MockVerificationCode
+	}
+	const digits = "0123456789"
+	b := make([]byte, 6)
+	for i := range b {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
+		if err != nil {
+			// crypto/rand 失败极罕见，退回固定码以不阻塞流程（已写日志）
+			s.LogInternal("generateCode rand", err)
+			return MockVerificationCode
+		}
+		b[i] = digits[n.Int64()]
+	}
+	return string(b)
 }
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
