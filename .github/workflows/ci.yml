@@ -44,6 +44,25 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
+  integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # ubuntu-latest 自带 Docker，testcontainers 直接可用
+      - name: Integration tests (repo layer)
+        run: go test -tags=integration ./internal/repo/pg/...
+
   backend:
     runs-on: ubuntu-latest
     defaults:
