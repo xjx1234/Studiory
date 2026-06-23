@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"backend/internal/auth"
+	adminservice "backend/internal/service/admin"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
@@ -108,6 +109,45 @@ func (f *fakeUserService) ChangePassword(ctx context.Context, userID string, in 
 		return f.changePasswordFn(ctx, userID, in)
 	}
 	return nil
+}
+
+// ── fakeAdminService ──────────────────────────────────────────────────────────
+
+type fakeAdminService struct {
+	listFn       func(ctx context.Context, in adminservice.ListInput, page pagination.Query) (pagination.List[adminservice.UserItem], *errcode.Error)
+	getFn        func(ctx context.Context, userID string) (*adminservice.UserItem, *errcode.Error)
+	updateRoleFn func(ctx context.Context, actingUserID, targetUserID, role string) (*adminservice.UserItem, *errcode.Error)
+	setStatusFn  func(ctx context.Context, actingUserID, targetUserID, status string) (*adminservice.UserItem, *errcode.Error)
+}
+
+var _ adminservice.Service = (*fakeAdminService)(nil)
+
+func (f *fakeAdminService) ListUsers(ctx context.Context, in adminservice.ListInput, page pagination.Query) (pagination.List[adminservice.UserItem], *errcode.Error) {
+	if f.listFn != nil {
+		return f.listFn(ctx, in, page)
+	}
+	return pagination.List[adminservice.UserItem]{Items: []adminservice.UserItem{}, Total: 0}, nil
+}
+
+func (f *fakeAdminService) GetUser(ctx context.Context, userID string) (*adminservice.UserItem, *errcode.Error) {
+	if f.getFn != nil {
+		return f.getFn(ctx, userID)
+	}
+	return &adminservice.UserItem{ID: userID, Nickname: "tester", Role: "user", Status: "active"}, nil
+}
+
+func (f *fakeAdminService) UpdateRole(ctx context.Context, actingUserID, targetUserID, role string) (*adminservice.UserItem, *errcode.Error) {
+	if f.updateRoleFn != nil {
+		return f.updateRoleFn(ctx, actingUserID, targetUserID, role)
+	}
+	return &adminservice.UserItem{ID: targetUserID, Role: role, Status: "active"}, nil
+}
+
+func (f *fakeAdminService) SetStatus(ctx context.Context, actingUserID, targetUserID, status string) (*adminservice.UserItem, *errcode.Error) {
+	if f.setStatusFn != nil {
+		return f.setStatusFn(ctx, actingUserID, targetUserID, status)
+	}
+	return &adminservice.UserItem{ID: targetUserID, Role: "user", Status: status}, nil
 }
 
 // ── fakeTodoService ───────────────────────────────────────────────────────────

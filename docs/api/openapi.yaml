@@ -89,6 +89,65 @@ components:
         role:
           type: string
 
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        nickname:
+          type: string
+        avatar:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        status:
+          type: string
+          enum: [active, disabled]
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    AdminUserListData:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUser'
+        page:
+          type: integer
+          format: int32
+        page_size:
+          type: integer
+          format: int32
+        total:
+          type: integer
+          format: int64
+
+    UpdateRoleReq:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, user]
+
+    SetStatusReq:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, disabled]
+
     TodoItem:
       type: object
       properties:
@@ -576,6 +635,164 @@ paths:
       responses:
         '200':
           description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+
+  /api/v1/admin/users:
+    get:
+      tags: [admin]
+      summary: 用户列表（分页 + 过滤，需 admin 角色）
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: keyword
+          description: 对 phone / email / nickname 模糊匹配
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, disabled]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/UnifiedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUserListData'
+        '403':
+          description: 非 admin 角色（code 10007 err_forbidden）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+
+  /api/v1/admin/users/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [admin]
+      summary: 用户详情（需 admin 角色）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/UnifiedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUser'
+        '404':
+          description: 用户不存在（code 30001 err_not_found）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+
+  /api/v1/admin/users/{id}/role:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [admin]
+      summary: 修改用户角色（需 admin 角色）
+      description: 不允许管理员修改自己的角色（code 10012 err_cannot_modify_self）。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleReq'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/UnifiedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUser'
+        '400':
+          description: 角色非法，或对自己操作（code 10012 err_cannot_modify_self）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+
+  /api/v1/admin/users/{id}/status:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [admin]
+      summary: 启用 / 禁用用户（需 admin 角色）
+      description: |
+        status=disabled 时立即吊销该用户已签发的 access token，且其无法用 refresh token 续期
+        （Refresh / 登录返回 code 10011 err_account_disabled）。不允许管理员禁用自己。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetStatusReq'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/UnifiedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminUser'
+        '400':
+          description: 状态非法，或禁用自己（code 10012 err_cannot_modify_self）
           content:
             application/json:
               schema:

@@ -26,6 +26,12 @@ other = "New password must be different from the old one"
 [err_account_locked]
 other = "Account temporarily locked due to too many failed login attempts, please try again later"
 
+[err_account_disabled]
+other = "Account is disabled, please contact the administrator"
+
+[err_cannot_modify_self]
+other = "You cannot perform this operation on yourself"
+
 [err_invalid_code]
 other = "Invalid or expired verification code"
 

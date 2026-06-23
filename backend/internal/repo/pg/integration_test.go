@@ -210,6 +210,95 @@ func TestUserRepo_GetByID_NotFound(t *testing.T) {
 	}
 }
 
+func TestUserRepo_DefaultStatusActive(t *testing.T) {
+	u := createTestUser(t, repo.RoleUser)
+	if u.Status != repo.StatusActive {
+		t.Errorf("new user status = %q, want %q", u.Status, repo.StatusActive)
+	}
+}
+
+func TestUserRepo_UpdateRoleAndStatus(t *testing.T) {
+	ctx := context.Background()
+	users := testStore.Users()
+	u := createTestUser(t, repo.RoleUser)
+
+	roleUpdated, err := users.UpdateRole(ctx, u.ID, repo.RoleAdmin)
+	if err != nil {
+		t.Fatalf("UpdateRole: %v", err)
+	}
+	if roleUpdated.Role != repo.RoleAdmin {
+		t.Errorf("role = %q, want admin", roleUpdated.Role)
+	}
+
+	statusUpdated, err := users.UpdateStatus(ctx, u.ID, repo.StatusDisabled)
+	if err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if statusUpdated.Status != repo.StatusDisabled {
+		t.Errorf("status = %q, want disabled", statusUpdated.Status)
+	}
+
+	if _, err := users.UpdateRole(ctx, uuid.New(), repo.RoleAdmin); !errors.Is(err, repo.ErrNotFound) {
+		t.Errorf("UpdateRole(random) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUserRepo_ListAndCount_KeywordAndStatusFilter(t *testing.T) {
+	ctx := context.Background()
+	users := testStore.Users()
+
+	marker := uuid.NewString()[0:8]
+	nick := "list-" + marker
+	// 两个 active、一个 disabled，昵称含唯一 marker 便于过滤定位
+	for i := 0; i < 2; i++ {
+		if _, err := users.Create(ctx, &repo.CreateUserParams{
+			Phone:    strPtr(uniquePhone()),
+			Nickname: nick,
+			Role:     repo.RoleUser,
+		}); err != nil {
+			t.Fatalf("create active user: %v", err)
+		}
+	}
+	disabled, err := users.Create(ctx, &repo.CreateUserParams{
+		Phone:    strPtr(uniquePhone()),
+		Nickname: nick,
+		Role:     repo.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create user to disable: %v", err)
+	}
+	if _, err := users.UpdateStatus(ctx, disabled.ID, repo.StatusDisabled); err != nil {
+		t.Fatalf("disable user: %v", err)
+	}
+
+	// 关键字过滤：应命中 3 个
+	total, err := users.Count(ctx, nick, "")
+	if err != nil {
+		t.Fatalf("Count(keyword): %v", err)
+	}
+	if total != 3 {
+		t.Errorf("Count(keyword) = %d, want 3", total)
+	}
+
+	// 关键字 + 状态过滤：disabled 只有 1 个
+	disabledTotal, err := users.Count(ctx, nick, repo.StatusDisabled)
+	if err != nil {
+		t.Fatalf("Count(keyword,disabled): %v", err)
+	}
+	if disabledTotal != 1 {
+		t.Errorf("Count(keyword,disabled) = %d, want 1", disabledTotal)
+	}
+
+	// 分页：page_size=2 应返回 2 条
+	list, err := users.List(ctx, &repo.ListUsersParams{Keyword: nick, Limit: 2, Offset: 0})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("List len = %d, want 2 (page size)", len(list))
+	}
+}
+
 func TestUserRepo_UpdatePasswordAndProfile(t *testing.T) {
 	ctx := context.Background()
 	users := testStore.Users()

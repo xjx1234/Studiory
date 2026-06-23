@@ -42,6 +42,7 @@ func userFromRow(u *sqlcgen.User) *repo.User {
 		Nickname:     u.Nickname,
 		Avatar:       u.Avatar,
 		Role:         u.Role,
+		Status:       u.Status,
 		CreatedAt:    timeFromTimestamptz(u.CreatedAt),
 		UpdatedAt:    timeFromTimestamptz(u.UpdatedAt),
 	}

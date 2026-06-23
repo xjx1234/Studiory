@@ -27,7 +27,7 @@
 - 登出时写入当前时间戳；`Auth` 中间件校验 token 的 `iat` 是否早于该时间戳。
 - **全端登出**：吊销键按 `user_id` 维度存储，任意设备登出会使该用户所有设备上、登出时刻之前签发的 access token 失效（教育类等单账号场景通常可接受）。若需「仅当前设备登出」，应改为 per-token 黑名单并随请求携带 access token。
 - Redis 不可用时吊销检查 **fail-open**（放行并打 Warn 日志），优先保证可用性；高安全场景可自行改为 fail-closed。
-- 登出与**修改密码**均会写入该 revoke key：改密成功后同样按 `user_id` 维度吊销此前签发的 access token。
+- 登出、**修改密码**与**后台禁用账号**均会写入该 revoke key：禁用用户（`PATCH /api/v1/admin/users/{id}/status` status=disabled）后同样按 `user_id` 维度吊销此前签发的 access token，使其在线会话即时失效。
 
 ---
 

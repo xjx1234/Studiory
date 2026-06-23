@@ -13,6 +13,7 @@ import (
 	"backend/internal/metrics"
 	"backend/internal/repo/pg"
 	"backend/internal/sender"
+	adminservice "backend/internal/service/admin"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
@@ -100,6 +101,10 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		UserService: userservice.New(pgStore.Users(),
 			userservice.WithLogger(logger),
 			userservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
+		),
+		AdminService: adminservice.New(pgStore.Users(),
+			adminservice.WithLogger(logger),
+			adminservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
 		),
 		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
 

@@ -13,6 +13,7 @@ import (
 	"backend/internal/config"
 	"backend/internal/http/middleware"
 	"backend/internal/repo"
+	adminservice "backend/internal/service/admin"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
 	"backend/pkg/errcode"
@@ -38,9 +39,10 @@ type apiResponse struct {
 
 // testServer 持有可在每个用例中覆写的 fake service。
 type testServer struct {
-	auth *fakeAuthService
-	user *fakeUserService
-	todo *fakeTodoService
+	auth  *fakeAuthService
+	user  *fakeUserService
+	todo  *fakeTodoService
+	admin *fakeAdminService
 }
 
 // fakeAuthMiddleware 模拟鉴权：读取测试头 X-Test-UserID / X-Test-Role。
@@ -64,9 +66,10 @@ func newTestServer(t *testing.T) (*gin.Engine, *testServer) {
 	t.Helper()
 
 	ts := &testServer{
-		auth: &fakeAuthService{},
-		user: &fakeUserService{},
-		todo: &fakeTodoService{},
+		auth:  &fakeAuthService{},
+		user:  &fakeUserService{},
+		todo:  &fakeTodoService{},
+		admin: &fakeAdminService{},
 	}
 
 	deps := &Deps{
@@ -74,6 +77,7 @@ func newTestServer(t *testing.T) (*gin.Engine, *testServer) {
 		AuthService:         ts.auth,
 		UserService:         ts.user,
 		TodoService:         ts.todo,
+		AdminService:        ts.admin,
 		AuthMiddleware:      fakeAuthMiddleware,
 		RateLimitMiddleware: func(c *gin.Context) { c.Next() },
 		ReadyChecks: []ReadyCheck{
@@ -330,4 +334,75 @@ func TestAdminPing_Unauthorized(t *testing.T) {
 	r, _ := newTestServer(t)
 	w, body := doJSON(t, r, http.MethodGet, "/api/v1/admin/ping", nil)
 	assertStatusCode(t, w, body, http.StatusUnauthorized, errcode.ErrUnauthorized.Code)
+}
+
+// ── 管理员用户管理 ─────────────────────────────────────────────────────────────
+
+func TestAdminListUsers_AsAdmin(t *testing.T) {
+	r, _ := newTestServer(t)
+	w, body := doJSON(t, r, http.MethodGet, "/api/v1/admin/users?page=1&page_size=10", nil, authHeaders(repo.RoleAdmin)...)
+	assertStatusCode(t, w, body, http.StatusOK, 0)
+}
+
+func TestAdminListUsers_AsUserForbidden(t *testing.T) {
+	r, _ := newTestServer(t)
+	w, body := doJSON(t, r, http.MethodGet, "/api/v1/admin/users", nil, authHeaders(repo.RoleUser)...)
+	assertStatusCode(t, w, body, http.StatusForbidden, errcode.ErrForbidden.Code)
+}
+
+func TestAdminGetUser_NotFound(t *testing.T) {
+	r, ts := newTestServer(t)
+	ts.admin.getFn = func(context.Context, string) (*adminservice.UserItem, *errcode.Error) {
+		return nil, errcode.ErrNotFound
+	}
+	w, body := doJSON(t, r, http.MethodGet,
+		"/api/v1/admin/users/11111111-1111-1111-1111-111111111111", nil, authHeaders(repo.RoleAdmin)...)
+	assertStatusCode(t, w, body, http.StatusNotFound, errcode.ErrNotFound.Code)
+}
+
+func TestAdminUpdateRole_Success(t *testing.T) {
+	r, _ := newTestServer(t)
+	w, body := doJSON(t, r, http.MethodPatch,
+		"/api/v1/admin/users/11111111-1111-1111-1111-111111111111/role",
+		gin.H{"role": "admin"}, authHeaders(repo.RoleAdmin)...)
+	assertStatusCode(t, w, body, http.StatusOK, 0)
+}
+
+func TestAdminUpdateRole_InvalidRole(t *testing.T) {
+	r, _ := newTestServer(t)
+	w, body := doJSON(t, r, http.MethodPatch,
+		"/api/v1/admin/users/11111111-1111-1111-1111-111111111111/role",
+		gin.H{"role": "superuser"}, authHeaders(repo.RoleAdmin)...)
+	assertStatusCode(t, w, body, http.StatusBadRequest, errcode.ErrValidation.Code)
+}
+
+func TestAdminSetStatus_Success(t *testing.T) {
+	r, _ := newTestServer(t)
+	w, body := doJSON(t, r, http.MethodPatch,
+		"/api/v1/admin/users/11111111-1111-1111-1111-111111111111/status",
+		gin.H{"status": "disabled"}, authHeaders(repo.RoleAdmin)...)
+	assertStatusCode(t, w, body, http.StatusOK, 0)
+}
+
+func TestAdminSetStatus_InvalidStatus(t *testing.T) {
+	r, _ := newTestServer(t)
+	w, body := doJSON(t, r, http.MethodPatch,
+		"/api/v1/admin/users/11111111-1111-1111-1111-111111111111/status",
+		gin.H{"status": "frozen"}, authHeaders(repo.RoleAdmin)...)
+	assertStatusCode(t, w, body, http.StatusBadRequest, errcode.ErrValidation.Code)
+}
+
+func TestAdminSetStatus_CannotDisableSelf(t *testing.T) {
+	r, ts := newTestServer(t)
+	ts.admin.setStatusFn = func(_ context.Context, acting, target, status string) (*adminservice.UserItem, *errcode.Error) {
+		if acting == target && status == repo.StatusDisabled {
+			return nil, errcode.ErrCannotModifySelf
+		}
+		return &adminservice.UserItem{ID: target, Status: status}, nil
+	}
+	// authedUser = "user-1"，路径里的 id 也用 user-1 触发自我禁用拦截
+	w, body := doJSON(t, r, http.MethodPatch,
+		"/api/v1/admin/users/11111111-1111-1111-1111-111111111111/status",
+		gin.H{"status": "disabled"}, "X-Test-UserID", "11111111-1111-1111-1111-111111111111", "X-Test-Role", repo.RoleAdmin)
+	assertStatusCode(t, w, body, http.StatusBadRequest, errcode.ErrCannotModifySelf.Code)
 }

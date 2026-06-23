@@ -30,7 +30,9 @@
 
 **开箱即用能力**：健康检查、就绪检查、注册/登录/验证码/刷新/登出、用户资料、角色权限中间件。
 
-**示例模块**：Todo CRUD（`/api/v1/user/todos`），演示完整分层，见 [docs/examples/todo-module.md](docs/examples/todo-module.md)。
+**示例模块**：
+- Todo CRUD（`/api/v1/user/todos`），演示完整分层，见 [docs/examples/todo-module.md](docs/examples/todo-module.md)。
+- Admin 用户管理（`/api/v1/admin/users`），演示 RBAC 后台管理与禁用即时吊销，见 [docs/examples/admin-user-management.md](docs/examples/admin-user-management.md)。
 
 详细约定与「如何加一个新模块」见 [docs/architecture.md](docs/architecture.md)。
 
@@ -102,7 +104,7 @@ make migrate-up  # 执行迁移
 
 `docs/examples/` 存放脚手架自带示例模块的说明（如 Todo CRUD）。
 
-- 示例模块：[docs/examples/todo-module.md](docs/examples/todo-module.md)
+- 示例模块：[docs/examples/todo-module.md](docs/examples/todo-module.md)、[docs/examples/admin-user-management.md](docs/examples/admin-user-management.md)
 - OpenAPI：`docs/api/openapi.yaml`
 - 错误码：`docs/api/errcode.md`
 

@@ -71,6 +71,9 @@ func validateDeps(deps *Deps) error {
 	if deps.TodoService == nil {
 		return errors.New("TodoService is required")
 	}
+	if deps.AdminService == nil {
+		return errors.New("AdminService is required")
+	}
 	if deps.AuthMiddleware == nil {
 		return errors.New("AuthMiddleware is required")
 	}

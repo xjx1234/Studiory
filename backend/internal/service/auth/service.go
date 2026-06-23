@@ -530,6 +530,22 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 		return nil, errcode.ErrInvalidToken
 	}
 
+	// 校验账号当前状态：被禁用的用户即使持有有效 refresh token 也不能换取新 token。
+	if uid, e := baseservice.ParseUUID(claims.UserID); e == nil {
+		user, lookupErr := s.users.GetByID(ctx, uid)
+		switch {
+		case lookupErr == nil:
+			if user.Status == repo.StatusDisabled {
+				return nil, errcode.ErrAccountDisabled
+			}
+		case errors.Is(lookupErr, repo.ErrNotFound):
+			return nil, errcode.ErrInvalidToken
+		default:
+			s.LogInternal("Refresh lookup user", lookupErr)
+			return nil, errcode.ErrInternal
+		}
+	}
+
 	if err := s.rdb.Set(ctx, blackKey, "1", refreshBlacklistTTL).Err(); err != nil {
 		s.LogInternal("Refresh blacklist old token", err)
 		return nil, errcode.ErrInternal
@@ -657,6 +673,10 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 
 // issueResult 颁发 Token 并组装登录结果。
 func (s *AuthServiceImpl) issueResult(user *repo.User) (*auth.LoginResult, *errcode.Error) {
+	if user.Status == repo.StatusDisabled {
+		return nil, errcode.ErrAccountDisabled
+	}
+
 	pair, err := s.tokens.IssueTokenPair(user.ID.String(), user.Role)
 	if err != nil {
 		s.LogInternal("issueResult issue token pair", err)

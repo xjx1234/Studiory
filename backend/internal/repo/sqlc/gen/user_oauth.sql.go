@@ -37,7 +37,7 @@ func (q *Queries) CreateUserOAuth(ctx context.Context, arg *CreateUserOAuthParam
 }
 
 const getUserByOAuth = `-- name: GetUserByOAuth :one
-SELECT u.id, u.phone, u.email, u.password_hash, u.nickname, u.avatar, u.role, u.created_at, u.updated_at
+SELECT u.id, u.phone, u.email, u.password_hash, u.nickname, u.avatar, u.role, u.created_at, u.updated_at, u.status
 FROM users u
 JOIN user_oauth o ON o.user_id = u.id
 WHERE o.provider = $1 AND o.open_id = $2
@@ -62,6 +62,7 @@ func (q *Queries) GetUserByOAuth(ctx context.Context, arg *GetUserByOAuthParams)
 		&i.Role,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
 	)
 	return &i, err
 }

@@ -36,3 +36,37 @@ SET nickname = $2,
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateUserRole :one
+UPDATE users
+SET role = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateUserStatus :one
+UPDATE users
+SET status = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: ListUsers :many
+SELECT *
+FROM users
+WHERE (@keyword::text = ''
+       OR phone ILIKE '%' || @keyword || '%'
+       OR email ILIKE '%' || @keyword || '%'
+       OR nickname ILIKE '%' || @keyword || '%')
+  AND (@status::text = '' OR status = @status::text)
+ORDER BY created_at DESC
+LIMIT @limit_count OFFSET @offset_count;
+
+-- name: CountUsers :one
+SELECT COUNT(*)::bigint
+FROM users
+WHERE (@keyword::text = ''
+       OR phone ILIKE '%' || @keyword || '%'
+       OR email ILIKE '%' || @keyword || '%'
+       OR nickname ILIKE '%' || @keyword || '%')
+  AND (@status::text = '' OR status = @status::text);
+

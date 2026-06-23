@@ -11,10 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countUsers = `-- name: CountUsers :one
+SELECT COUNT(*)::bigint
+FROM users
+WHERE ($1::text = ''
+       OR phone ILIKE '%' || $1 || '%'
+       OR email ILIKE '%' || $1 || '%'
+       OR nickname ILIKE '%' || $1 || '%')
+  AND ($2::text = '' OR status = $2::text)
+`
+
+type CountUsersParams struct {
+	Keyword string `json:"keyword"`
+	Status  string `json:"status"`
+}
+
+func (q *Queries) CountUsers(ctx context.Context, arg *CountUsersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsers, arg.Keyword, arg.Status)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (phone, email, password_hash, nickname, avatar, role)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at
+RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 `
 
 type CreateUserParams struct {
@@ -46,12 +68,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg *CreateUserParams) (*User,
 		&i.Role,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
 	)
 	return &i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at
+SELECT id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 FROM users
 WHERE email = $1
 LIMIT 1
@@ -70,12 +93,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email pgtype.Text) (*User,
 		&i.Role,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
 	)
 	return &i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at
+SELECT id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 FROM users
 WHERE id = $1
 LIMIT 1
@@ -94,12 +118,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (*User, error
 		&i.Role,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
 	)
 	return &i, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at
+SELECT id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 FROM users
 WHERE phone = $1
 LIMIT 1
@@ -118,8 +143,64 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone pgtype.Text) (*User,
 		&i.Role,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
 	)
 	return &i, err
+}
+
+const listUsers = `-- name: ListUsers :many
+SELECT id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
+FROM users
+WHERE ($1::text = ''
+       OR phone ILIKE '%' || $1 || '%'
+       OR email ILIKE '%' || $1 || '%'
+       OR nickname ILIKE '%' || $1 || '%')
+  AND ($2::text = '' OR status = $2::text)
+ORDER BY created_at DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListUsersParams struct {
+	Keyword     string `json:"keyword"`
+	Status      string `json:"status"`
+	OffsetCount int32  `json:"offset_count"`
+	LimitCount  int32  `json:"limit_count"`
+}
+
+func (q *Queries) ListUsers(ctx context.Context, arg *ListUsersParams) ([]*User, error) {
+	rows, err := q.db.Query(ctx, listUsers,
+		arg.Keyword,
+		arg.Status,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []*User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Phone,
+			&i.Email,
+			&i.PasswordHash,
+			&i.Nickname,
+			&i.Avatar,
+			&i.Role,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateUserPassword = `-- name: UpdateUserPassword :one
@@ -127,7 +208,7 @@ UPDATE users
 SET password_hash = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at
+RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 `
 
 type UpdateUserPasswordParams struct {
@@ -148,6 +229,7 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg *UpdateUserPasswor
 		&i.Role,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
 	)
 	return &i, err
 }
@@ -158,7 +240,7 @@ SET nickname = $2,
     avatar = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at
+RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 `
 
 type UpdateUserProfileParams struct {
@@ -180,6 +262,69 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg *UpdateUserProfileP
 		&i.Role,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Status,
+	)
+	return &i, err
+}
+
+const updateUserRole = `-- name: UpdateUserRole :one
+UPDATE users
+SET role = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
+`
+
+type UpdateUserRoleParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Role string      `json:"role"`
+}
+
+func (q *Queries) UpdateUserRole(ctx context.Context, arg *UpdateUserRoleParams) (*User, error) {
+	row := q.db.QueryRow(ctx, updateUserRole, arg.ID, arg.Role)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Phone,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Nickname,
+		&i.Avatar,
+		&i.Role,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Status,
+	)
+	return &i, err
+}
+
+const updateUserStatus = `-- name: UpdateUserStatus :one
+UPDATE users
+SET status = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
+`
+
+type UpdateUserStatusParams struct {
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
+}
+
+func (q *Queries) UpdateUserStatus(ctx context.Context, arg *UpdateUserStatusParams) (*User, error) {
+	row := q.db.QueryRow(ctx, updateUserStatus, arg.ID, arg.Status)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Phone,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Nickname,
+		&i.Avatar,
+		&i.Role,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Status,
 	)
 	return &i, err
 }

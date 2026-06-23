@@ -83,6 +83,59 @@ func (r *userRepo) UpdateProfile(ctx context.Context, id uuid.UUID, nickname, av
 	return userFromRow(row), nil
 }
 
+func (r *userRepo) List(ctx context.Context, params *repo.ListUsersParams) ([]*repo.User, error) {
+	if params == nil {
+		return nil, errors.New("list users params is nil")
+	}
+	rows, err := r.q.ListUsers(ctx, &sqlcgen.ListUsersParams{
+		Keyword:     params.Keyword,
+		Status:      params.Status,
+		LimitCount:  params.Limit,
+		OffsetCount: params.Offset,
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	users := make([]*repo.User, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, userFromRow(row))
+	}
+	return users, nil
+}
+
+func (r *userRepo) Count(ctx context.Context, keyword, status string) (int64, error) {
+	n, err := r.q.CountUsers(ctx, &sqlcgen.CountUsersParams{
+		Keyword: keyword,
+		Status:  status,
+	})
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return n, nil
+}
+
+func (r *userRepo) UpdateRole(ctx context.Context, id uuid.UUID, role string) (*repo.User, error) {
+	row, err := r.q.UpdateUserRole(ctx, &sqlcgen.UpdateUserRoleParams{
+		ID:   pgtype.UUID{Bytes: to16(id), Valid: true},
+		Role: role,
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	return userFromRow(row), nil
+}
+
+func (r *userRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*repo.User, error) {
+	row, err := r.q.UpdateUserStatus(ctx, &sqlcgen.UpdateUserStatusParams{
+		ID:     pgtype.UUID{Bytes: to16(id), Valid: true},
+		Status: status,
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	return userFromRow(row), nil
+}
+
 // wrapErr 将底层 PostgreSQL/pgx 错误转换为 repo 层稳定错误。
 func wrapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

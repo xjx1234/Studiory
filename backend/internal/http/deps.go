@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"backend/internal/config"
+	adminservice "backend/internal/service/admin"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
@@ -31,6 +32,9 @@ type Deps struct {
 
 	AuthService authservice.Service
 	UserService userservice.Service
+
+	// AdminService 后台用户管理示例模块
+	AdminService adminservice.Service
 
 	// TodoService 示例模块（可复制此模式添加真实业务）
 	TodoService todoservice.Service

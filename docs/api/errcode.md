@@ -33,6 +33,8 @@
 | 10008 | `err_wrong_password` | 401 |
 | 10009 | `err_same_password` | 400 |
 | 10010 | `err_account_locked` | 429 |
+| 10011 | `err_account_disabled` | 403 |
+| 10012 | `err_cannot_modify_self` | 400 |
 | 20001 | `err_bad_request` | 400 |
 | 20002 | `err_validation` | 400 |
 | 20003 | `err_too_many_requests` | 429 |

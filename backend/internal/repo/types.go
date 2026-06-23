@@ -18,6 +18,7 @@ type User struct {
 	Nickname     string
 	Avatar       string
 	Role         string
+	Status       string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -26,6 +27,12 @@ type User struct {
 const (
 	RoleAdmin = "admin"
 	RoleUser  = "user"
+)
+
+// 用户状态常量（与 users.status 字段保持一致）。
+const (
+	StatusActive   = "active"
+	StatusDisabled = "disabled"
 )
 
 type UserOAuth struct {

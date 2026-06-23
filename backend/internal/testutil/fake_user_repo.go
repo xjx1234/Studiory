@@ -4,6 +4,8 @@ package testutil
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 
 	"backend/internal/repo"
 
@@ -58,6 +60,7 @@ func (r *FakeUserRepo) Create(_ context.Context, params *repo.CreateUserParams) 
 		Nickname:     params.Nickname,
 		Avatar:       params.Avatar,
 		Role:         params.Role,
+		Status:       repo.StatusActive,
 	}
 	r.Users[u.ID] = u
 	r.Created = append(r.Created, u)
@@ -80,5 +83,79 @@ func (r *FakeUserRepo) UpdateProfile(_ context.Context, id uuid.UUID, nickname, 
 	}
 	u.Nickname = nickname
 	u.Avatar = avatar
+	return u, nil
+}
+
+func (r *FakeUserRepo) matches(u *repo.User, keyword, status string) bool {
+	if status != "" && u.Status != status {
+		return false
+	}
+	if keyword == "" {
+		return true
+	}
+	kw := strings.ToLower(keyword)
+	if u.Phone != nil && strings.Contains(strings.ToLower(*u.Phone), kw) {
+		return true
+	}
+	if u.Email != nil && strings.Contains(strings.ToLower(*u.Email), kw) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(u.Nickname), kw)
+}
+
+func (r *FakeUserRepo) List(_ context.Context, params *repo.ListUsersParams) ([]*repo.User, error) {
+	if params == nil {
+		return nil, errors.New("list users params is nil")
+	}
+	var filtered []*repo.User
+	for _, u := range r.Users {
+		if r.matches(u, params.Keyword, params.Status) {
+			filtered = append(filtered, u)
+		}
+	}
+	// 与 SQL 一致：按创建时间倒序（同刻退化用 ID 保证稳定排序）
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].CreatedAt.Equal(filtered[j].CreatedAt) {
+			return filtered[i].ID.String() > filtered[j].ID.String()
+		}
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+
+	offset := int(params.Offset)
+	if offset >= len(filtered) {
+		return []*repo.User{}, nil
+	}
+	end := offset + int(params.Limit)
+	if params.Limit <= 0 || end > len(filtered) {
+		end = len(filtered)
+	}
+	return filtered[offset:end], nil
+}
+
+func (r *FakeUserRepo) Count(_ context.Context, keyword, status string) (int64, error) {
+	var n int64
+	for _, u := range r.Users {
+		if r.matches(u, keyword, status) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (r *FakeUserRepo) UpdateRole(_ context.Context, id uuid.UUID, role string) (*repo.User, error) {
+	u, ok := r.Users[id]
+	if !ok {
+		return nil, repo.ErrNotFound
+	}
+	u.Role = role
+	return u, nil
+}
+
+func (r *FakeUserRepo) UpdateStatus(_ context.Context, id uuid.UUID, status string) (*repo.User, error) {
+	u, ok := r.Users[id]
+	if !ok {
+		return nil, repo.ErrNotFound
+	}
+	u.Status = status
 	return u, nil
 }
