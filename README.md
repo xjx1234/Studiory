@@ -98,13 +98,17 @@ make migrate-up  # 执行迁移
 - `GET /api/v1/user/profile`：获取当前登录用户资料
 - `PATCH /api/v1/user/profile`：更新当前登录用户资料
 - `GET /api/v1/user/todos?page=&page_size=`：待办列表（分页）
-- `POST /api/v1/auth/login`（`grant_type=oauth`）：第三方登录骨架（开发模式需 `OAUTH_DEV_MODE=true`）
+- `POST /api/v1/auth/login`（`grant_type=oauth`）：第三方登录，见 [docs/oauth.md](docs/oauth.md)
 
 ## 示例文档
 
 `docs/examples/` 存放脚手架自带示例模块的说明（如 Todo CRUD）。
 
 - 示例模块：[docs/examples/todo-module.md](docs/examples/todo-module.md)、[docs/examples/admin-user-management.md](docs/examples/admin-user-management.md)
+- OAuth 登录：[docs/oauth.md](docs/oauth.md)
+- 多/单设备 Session：[docs/session.md](docs/session.md)
+- 验证码下发：[docs/code-sender.md](docs/code-sender.md)
+- 指标：[docs/metrics.md](docs/metrics.md)
 - OpenAPI：`docs/api/openapi.yaml`
 - 错误码：`docs/api/errcode.md`
 

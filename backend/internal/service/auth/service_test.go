@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"backend/internal/auth"
+	"backend/internal/oauth"
 	"backend/internal/repo"
 	"backend/internal/testutil"
+	"backend/pkg/errcode"
 
 	"github.com/google/uuid"
 )
@@ -116,7 +118,7 @@ func TestLoginWithOAuthRejectsUnknownProvider(t *testing.T) {
 	}
 }
 
-func TestLoginWithOAuthRequiresDevMode(t *testing.T) {
+func TestLoginWithOAuthRequiresVerifierOrDevMode(t *testing.T) {
 	svc := New(testutil.NewFakeUserRepo(), nil,
 		WithTokenIssuer(testTokenIssuer()),
 		WithOAuthRepo(newFakeOAuthRepo()),
@@ -129,6 +131,61 @@ func TestLoginWithOAuthRequiresDevMode(t *testing.T) {
 		OpenID:    "wx_openid_001",
 	})
 	if e == nil {
-		t.Fatal("expected unsupported grant when dev mode disabled")
+		t.Fatal("expected unsupported grant when dev mode disabled and no verifier")
+	}
+}
+
+type stubOAuthVerifier struct {
+	identity *oauth.Identity
+	err      error
+}
+
+func (s *stubOAuthVerifier) Verify(_ context.Context, _ oauth.VerifyRequest) (*oauth.Identity, error) {
+	return s.identity, s.err
+}
+
+func TestLoginWithOAuthVerifiesTokenInProduction(t *testing.T) {
+	users := testutil.NewFakeUserRepo()
+	oauthRepo := newFakeOAuthRepo()
+
+	svc := New(users, nil,
+		WithTokenIssuer(testTokenIssuer()),
+		WithOAuthRepo(oauthRepo),
+		WithOAuthDevMode(false),
+		WithOAuthVerifier(&stubOAuthVerifier{
+			identity: &oauth.Identity{OpenID: "verified-openid", Nickname: "OAuth用户"},
+		}),
+	)
+
+	result, e := svc.Login(context.Background(), &auth.LoginRequest{
+		GrantType:   auth.GrantTypeOAuth,
+		Provider:    "google",
+		AccessToken: "third-party-token",
+	})
+	if e != nil {
+		t.Fatalf("login failed: %+v", e)
+	}
+	if result.User.Nickname != "OAuth用户" {
+		t.Fatalf("nickname = %q", result.User.Nickname)
+	}
+	if len(users.Created) != 1 {
+		t.Fatalf("expected 1 created user, got %d", len(users.Created))
+	}
+}
+
+func TestLoginWithOAuthInvalidToken(t *testing.T) {
+	svc := New(testutil.NewFakeUserRepo(), nil,
+		WithTokenIssuer(testTokenIssuer()),
+		WithOAuthRepo(newFakeOAuthRepo()),
+		WithOAuthVerifier(&stubOAuthVerifier{err: oauth.ErrInvalidToken}),
+	)
+
+	_, e := svc.Login(context.Background(), &auth.LoginRequest{
+		GrantType: auth.GrantTypeOAuth,
+		Provider:  "google",
+		IDToken:   "bad-token",
+	})
+	if e == nil || e.Code != errcode.ErrInvalidToken.Code {
+		t.Fatalf("expected ErrInvalidToken, got %+v", e)
 	}
 }

@@ -9,8 +9,9 @@ import (
 
 // Claims 是 JWT 的自定义载荷。
 type Claims struct {
-	UserID string `json:"uid"`
-	Role   string `json:"role"`
+	UserID    string `json:"uid"`
+	Role      string `json:"role"`
+	SessionID string `json:"sid,omitempty"` // 会话 ID，用于多/单设备 session 校验
 	jwt.RegisteredClaims
 }
 
@@ -42,14 +43,20 @@ func (t *TokenIssuer) AccessTokenTTL() time.Duration {
 	return t.accessTokenTTL
 }
 
+// RefreshTokenTTL 返回 Refresh Token 有效期。
+func (t *TokenIssuer) RefreshTokenTTL() time.Duration {
+	return t.refreshTokenTTL
+}
+
 // IssueTokenPair 为指定用户颁发一对 Access + Refresh Token。
-func (t *TokenIssuer) IssueTokenPair(userID, role string) (*TokenPair, error) {
-	access, err := signToken(userID, role, "access", t.accessTokenTTL, t.secret)
+// sessionID 标识本次登录会话，用于多/单设备控制。
+func (t *TokenIssuer) IssueTokenPair(userID, role, sessionID string) (*TokenPair, error) {
+	access, err := signToken(userID, role, sessionID, "access", t.accessTokenTTL, t.secret)
 	if err != nil {
 		return nil, err
 	}
 
-	refresh, err := signToken(userID, role, "refresh", t.refreshTokenTTL, t.secret)
+	refresh, err := signToken(userID, role, sessionID, "refresh", t.refreshTokenTTL, t.secret)
 	if err != nil {
 		return nil, err
 	}
@@ -71,11 +78,12 @@ func (t *TokenIssuer) ParseRefreshToken(tokenStr string) (*Claims, error) {
 	return parseToken(tokenStr, "refresh", t.secret)
 }
 
-func signToken(userID, role, tokenType string, ttl time.Duration, secret []byte) (string, error) {
+func signToken(userID, role, sessionID, tokenType string, ttl time.Duration, secret []byte) (string, error) {
 	now := time.Now()
 	claims := &Claims{
-		UserID: userID,
-		Role:   role,
+		UserID:    userID,
+		Role:      role,
+		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			Audience:  jwt.ClaimStrings{tokenType},

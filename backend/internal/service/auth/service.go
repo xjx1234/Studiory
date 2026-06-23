@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"backend/internal/auth"
+	"backend/internal/oauth"
 	"backend/internal/repo"
 	"backend/internal/sender"
+	"backend/internal/session"
 	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
 	"backend/pkg/strutil"
@@ -81,9 +83,11 @@ type AuthServiceImpl struct {
 	oauthTx               repo.UserOAuthTxRunner
 	tokens                *auth.TokenIssuer
 	rdb                   redis.UniversalClient
+	sessions              *session.Store
 	codeSender            sender.Sender
 	codePrefix            string
 	allowMockCodeFallback bool
+	oauthVerifier         oauth.Verifier
 	oauthDevMode          bool
 	oauthProviders        map[string]struct{}
 }
@@ -160,6 +164,13 @@ func WithTokenIssuer(issuer *auth.TokenIssuer) Option {
 	}
 }
 
+// WithSessionStore 注入会话存储（多/单设备 session 管理）。
+func WithSessionStore(store *session.Store) Option {
+	return func(s *AuthServiceImpl) {
+		s.sessions = store
+	}
+}
+
 func WithOAuthDevMode(enabled bool) Option {
 	return func(s *AuthServiceImpl) {
 		s.oauthDevMode = enabled
@@ -179,6 +190,13 @@ func WithOAuthProviders(providers []string) Option {
 			}
 		}
 		s.oauthProviders = set
+	}
+}
+
+// WithOAuthVerifier 注入第三方登录 token 校验器（多平台路由）。
+func WithOAuthVerifier(v oauth.Verifier) Option {
+	return func(s *AuthServiceImpl) {
+		s.oauthVerifier = v
 	}
 }
 
@@ -228,7 +246,7 @@ func (s *AuthServiceImpl) loginWithPassword(ctx context.Context, req *auth.Login
 
 	// 登录成功，清除失败计数
 	s.clearLoginFail(ctx, account)
-	return s.issueResult(user)
+	return s.issueResult(ctx, user)
 }
 
 func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, code string) (*auth.LoginResult, *errcode.Error) {
@@ -257,7 +275,7 @@ func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, c
 		return nil, errcode.ErrInternal
 	}
 
-	return s.issueResult(user)
+	return s.issueResult(ctx, user)
 }
 
 func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginRequest) (*auth.LoginResult, *errcode.Error) {
@@ -266,35 +284,70 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(req.Provider))
-	openID := strings.TrimSpace(req.OpenID)
-	if provider == "" || openID == "" {
+	if provider == "" {
 		return nil, errcode.ErrBadRequest
 	}
 	if !s.isAllowedOAuthProvider(provider) {
 		return nil, errcode.ErrUnsupportedGrant
 	}
-	if !s.oauthDevMode {
-		// 生产环境应在此校验第三方 access_token，并解析出 open_id。
-		return nil, errcode.ErrUnsupportedGrant
+
+	openID, nickname, err := s.resolveOAuthIdentity(ctx, provider, req)
+	if err != nil {
+		if errors.Is(err, oauth.ErrInvalidToken) {
+			return nil, errcode.ErrInvalidToken
+		}
+		if errors.Is(err, oauth.ErrNoProvider) || errors.Is(err, oauth.ErrNotConfigured) {
+			return nil, errcode.ErrUnsupportedGrant
+		}
+		s.LogInternal("loginWithOAuth verify token", err)
+		return nil, errcode.ErrInternal
+	}
+	if openID == "" {
+		return nil, errcode.ErrBadRequest
 	}
 
-	user, err := s.oauth.GetUserByOAuth(ctx, provider, openID)
-	if err == nil {
-		return s.issueResult(user)
+	user, lookupErr := s.oauth.GetUserByOAuth(ctx, provider, openID)
+	if lookupErr == nil {
+		return s.issueResult(ctx, user)
 	}
-	if !errors.Is(err, repo.ErrNotFound) {
-		s.LogInternal("loginWithOAuth lookup user", err)
+	if !errors.Is(lookupErr, repo.ErrNotFound) {
+		s.LogInternal("loginWithOAuth lookup user", lookupErr)
 		return nil, errcode.ErrInternal
 	}
 
-	nickname := oauthDefaultNickname(provider, openID)
+	if nickname == "" {
+		nickname = oauthDefaultNickname(provider, openID)
+	}
 	created, createErr := s.createOAuthUser(ctx, nickname, provider, openID)
 	if createErr != nil {
 		s.LogInternal("loginWithOAuth create user", createErr)
 		return nil, errcode.ErrInternal
 	}
 
-	return s.issueResult(created)
+	return s.issueResult(ctx, created)
+}
+
+func (s *AuthServiceImpl) resolveOAuthIdentity(ctx context.Context, provider string, req *auth.LoginRequest) (openID, nickname string, err error) {
+	verifyReq := oauth.VerifyRequest{
+		Provider:    provider,
+		AccessToken: strings.TrimSpace(req.AccessToken),
+		IDToken:     strings.TrimSpace(req.IDToken),
+		OpenID:      strings.TrimSpace(req.OpenID),
+	}
+
+	if s.oauthVerifier != nil {
+		identity, verifyErr := s.oauthVerifier.Verify(ctx, verifyReq)
+		if verifyErr != nil {
+			return "", "", verifyErr
+		}
+		return identity.OpenID, identity.Nickname, nil
+	}
+
+	// 未注入 Verifier 时兼容旧测试：仅 dev_mode + open_id 直传。
+	if s.oauthDevMode && verifyReq.OpenID != "" && verifyReq.AccessToken == "" && verifyReq.IDToken == "" {
+		return verifyReq.OpenID, "", nil
+	}
+	return "", "", oauth.ErrNoProvider
 }
 
 func (s *AuthServiceImpl) createOAuthUser(ctx context.Context, nickname, provider, openID string) (*repo.User, error) {
@@ -409,7 +462,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 		return nil, errcode.ErrInternal
 	}
 
-	return s.issueResult(user)
+	return s.issueResult(ctx, user)
 }
 
 func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterInput) (*auth.LoginResult, *errcode.Error) {
@@ -445,7 +498,7 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 		return nil, errcode.ErrInternal
 	}
 
-	return s.issueResult(user)
+	return s.issueResult(ctx, user)
 }
 
 // ── SendCode ──────────────────────────────────────────────────────────────────
@@ -546,12 +599,17 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 		}
 	}
 
+	sessionID := claims.SessionID
+	if sessionID != "" && s.sessions != nil && !s.sessions.Validate(ctx, claims.UserID, sessionID) {
+		return nil, errcode.ErrInvalidToken
+	}
+
 	if err := s.rdb.Set(ctx, blackKey, "1", refreshBlacklistTTL).Err(); err != nil {
 		s.LogInternal("Refresh blacklist old token", err)
 		return nil, errcode.ErrInternal
 	}
 
-	pair, issueErr := s.tokens.IssueTokenPair(claims.UserID, claims.Role)
+	pair, issueErr := s.tokens.IssueTokenPair(claims.UserID, claims.Role, sessionID)
 	if issueErr != nil {
 		s.LogInternal("Refresh issue token pair", issueErr)
 		return nil, errcode.ErrInternal
@@ -577,11 +635,12 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 	}
 
 	if claims, err := s.tokens.ParseRefreshToken(refreshToken); err == nil {
-		revokeKey := s.revokeUserKey(claims.UserID)
-		revokeTTL := s.tokens.AccessTokenTTL()
-		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), revokeTTL).Err(); err != nil {
-			s.LogInternal("Logout revoke access tokens", err)
-			logoutErr = errcode.ErrInternal
+		// 仅吊销当前设备的 session；多设备模式下不影响其他设备。
+		if claims.SessionID != "" && s.sessions != nil {
+			if err := s.sessions.Revoke(ctx, claims.UserID, claims.SessionID); err != nil {
+				s.LogInternal("Logout revoke session", err)
+				logoutErr = errcode.ErrInternal
+			}
 		}
 	}
 
@@ -672,12 +731,20 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 }
 
 // issueResult 颁发 Token 并组装登录结果。
-func (s *AuthServiceImpl) issueResult(user *repo.User) (*auth.LoginResult, *errcode.Error) {
+func (s *AuthServiceImpl) issueResult(ctx context.Context, user *repo.User) (*auth.LoginResult, *errcode.Error) {
 	if user.Status == repo.StatusDisabled {
 		return nil, errcode.ErrAccountDisabled
 	}
 
-	pair, err := s.tokens.IssueTokenPair(user.ID.String(), user.Role)
+	sessionID := session.NewSessionID()
+	if s.sessions != nil {
+		if err := s.sessions.Register(ctx, user.ID.String(), sessionID); err != nil {
+			s.LogInternal("issueResult register session", err)
+			return nil, errcode.ErrInternal
+		}
+	}
+
+	pair, err := s.tokens.IssueTokenPair(user.ID.String(), user.Role, sessionID)
 	if err != nil {
 		s.LogInternal("issueResult issue token pair", err)
 		return nil, errcode.ErrInternal

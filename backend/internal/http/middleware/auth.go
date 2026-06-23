@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"backend/internal/auth"
+	"backend/internal/session"
 	"backend/pkg/errcode"
 	"backend/pkg/resp"
 
@@ -20,7 +21,7 @@ const ContextKeyUserRole = "userRole"
 
 // Auth 验证请求头中的 JWT Access Token，将用户信息注入 Gin Context。
 // 验证失败时直接返回 401，不继续执行后续 Handler。
-func Auth(issuer *auth.TokenIssuer, rdb redis.UniversalClient, keyPrefix string, logger *zap.Logger) gin.HandlerFunc {
+func Auth(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.UniversalClient, keyPrefix string, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("Authorization")
 		if raw == "" {
@@ -41,6 +42,11 @@ func Auth(issuer *auth.TokenIssuer, rdb redis.UniversalClient, keyPrefix string,
 		}
 
 		if isAccessTokenRevoked(c.Request.Context(), rdb, keyPrefix, claims, logger) {
+			resp.Fail(c, errcode.ErrInvalidToken)
+			return
+		}
+
+		if claims.SessionID != "" && sessions != nil && !sessions.Validate(c.Request.Context(), claims.UserID, claims.SessionID) {
 			resp.Fail(c, errcode.ErrInvalidToken)
 			return
 		}

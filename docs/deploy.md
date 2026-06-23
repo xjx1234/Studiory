@@ -52,6 +52,7 @@ SEED_ADMIN_PHONE=13800000000 SEED_ADMIN_PASSWORD=YourStrongPass make seed
 ### 说明
 
 - compose 中的 `api` 默认以 `APP_ENV=development` 运行，启用 mock 验证码（固定 `123456`）、OAuth dev 模式与默认 CORS，**开箱即用**。
+- 默认 **多设备登录**（`AUTH_MULTI_DEVICE_ENABLED=true`），同一账号可在多台设备同时保持登录。
 - `api` 与 `migrate` 服务使用 compose `profiles: ["full"]`，因此 `make compose-up` 只会启动 PostgreSQL + Redis，不会构建 API。
 - 数据库迁移**不打入** API 镜像，由独立的 `migrate` 任务执行。生产环境应改由 CI/CD 流水线或 Kubernetes Job/initContainer 执行迁移。
 
@@ -85,6 +86,40 @@ make run
 | `CORS_ALLOW_ORIGINS` | 至少配置一个来源 |
 | `RATE_LIMIT_PER_MINUTE` | 必须大于 0 |
 | `DATABASE_URL` / `REDIS_URL` | 不能为空 |
+| `AUTH_MULTI_DEVICE_ENABLED` | 按需设置（见下方「多/单设备 Session」） |
+
+### 多/单设备 Session
+
+通过 `AUTH_MULTI_DEVICE_ENABLED`（对应 `auth.multi_device_enabled`）控制同一账号是否允许多设备同时在线。详见 [session.md](session.md)。
+
+| 值 | 行为 | 适用场景 |
+|----|------|----------|
+| `true`（默认） | 多设备：手机、电脑可同时登录，登出仅影响当前设备 | 通用 C 端产品、办公协作 |
+| `false` | 单设备：新登录立即踢掉旧会话，旧设备 token 失效 | 高安全账号、单端独占 |
+
+配置方式（任选其一）：
+
+```yaml
+# config/production.yaml 或 config/local.yaml
+auth:
+  multi_device_enabled: false
+```
+
+```bash
+# 环境变量
+AUTH_MULTI_DEVICE_ENABLED=false
+```
+
+本地验证单设备模式：
+
+```bash
+# 1. 设 AUTH_MULTI_DEVICE_ENABLED=false 后启动 API
+# 2. 同一账号登录两次，分别拿到 token-A、token-B
+# 3. 用 token-A 请求 /api/v1/user/profile → 401
+# 4. 用 token-B 请求 /api/v1/user/profile → 200
+```
+
+> 改密、后台禁用账号会吊销**全部** session（与单/多设备模式无关）。Redis 键说明见 [redis-keys.md](redis-keys.md) 第 7 节。
 
 构建生产镜像（注入版本信息）：
 

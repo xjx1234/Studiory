@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/internal/repo"
+	"backend/internal/session"
 	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
 	"backend/pkg/pagination"
@@ -48,6 +49,7 @@ type adminServiceImpl struct {
 	baseservice.LogSupport
 
 	users     repo.UserRepo
+	sessions  *session.Store
 	rdb       redis.UniversalClient
 	keyPrefix string
 	accessTTL time.Duration
@@ -67,6 +69,13 @@ func New(users repo.UserRepo, opts ...Option) Service {
 func WithLogger(logger *zap.Logger) Option {
 	return func(s *adminServiceImpl) {
 		s.SetLogger(logger)
+	}
+}
+
+// WithSessionStore 注入会话存储，禁用用户时吊销全部 session。
+func WithSessionStore(store *session.Store) Option {
+	return func(s *adminServiceImpl) {
+		s.sessions = store
 	}
 }
 
@@ -187,6 +196,11 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 }
 
 func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string) {
+	if s.sessions != nil {
+		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
+			s.LogInternal("SetStatus revoke all sessions", err)
+		}
+	}
 	if s.rdb == nil {
 		return
 	}

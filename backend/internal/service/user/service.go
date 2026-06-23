@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"backend/internal/repo"
+	"backend/internal/session"
 	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
 
@@ -48,6 +49,7 @@ type userServiceImpl struct {
 	baseservice.LogSupport
 
 	users     repo.UserRepo
+	sessions  *session.Store
 	rdb       redis.UniversalClient
 	keyPrefix string
 	accessTTL time.Duration
@@ -67,6 +69,13 @@ func New(users repo.UserRepo, opts ...Option) Service {
 func WithLogger(logger *zap.Logger) Option {
 	return func(s *userServiceImpl) {
 		s.SetLogger(logger)
+	}
+}
+
+// WithSessionStore 注入会话存储，改密时吊销全部 session。
+func WithSessionStore(store *session.Store) Option {
+	return func(s *userServiceImpl) {
+		s.sessions = store
 	}
 }
 
@@ -176,7 +185,12 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		return errcode.ErrInternal
 	}
 
-	// 改密后吊销该用户所有旧 access token
+	// 改密后吊销该用户所有会话与旧 access token
+	if s.sessions != nil {
+		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
+			s.LogInternal("ChangePassword revoke all sessions", err)
+		}
+	}
 	if s.rdb != nil {
 		revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
 		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {

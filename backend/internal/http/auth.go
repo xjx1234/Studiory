@@ -57,9 +57,11 @@ type LoginReq struct {
 	// 验证码登录：phone/email + code
 	Code string `json:"code" binding:"omitempty,len=6"`
 
-	// 第三方登录：provider + open_id（开发模式 oauth.dev_mode=true 时可用）
-	Provider string `json:"provider" binding:"omitempty,oneof=wechat apple google"`
-	OpenID   string `json:"open_id"  binding:"omitempty"`
+	// 第三方登录：provider + token（生产）或 provider + open_id（oauth.dev_mode=true）
+	Provider    string `json:"provider" binding:"omitempty,oneof=wechat apple google"`
+	OpenID      string `json:"open_id" binding:"omitempty"`
+	AccessToken string `json:"access_token" binding:"omitempty"`
+	IDToken     string `json:"id_token" binding:"omitempty"`
 }
 
 type SendCodeReq struct {
@@ -109,14 +111,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	result, e := h.deps.AuthService.Login(c.Request.Context(), &auth.LoginRequest{
-		GrantType: req.GrantType,
-		Account:   req.Account,
-		Phone:     req.Phone,
-		Email:     req.Email,
-		Password:  req.Password,
-		Code:      req.Code,
-		Provider:  req.Provider,
-		OpenID:    req.OpenID,
+		GrantType:   req.GrantType,
+		Account:     req.Account,
+		Phone:       req.Phone,
+		Email:       req.Email,
+		Password:    req.Password,
+		Code:        req.Code,
+		Provider:    req.Provider,
+		OpenID:      req.OpenID,
+		AccessToken: req.AccessToken,
+		IDToken:     req.IDToken,
 	})
 	if e != nil {
 		resp.Fail(c, e)

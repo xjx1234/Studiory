@@ -237,7 +237,15 @@ components:
         open_id:
           type: string
           nullable: true
-          description: OAuth 开发模式（oauth.dev_mode=true）下直接传第三方 open_id
+          description: OAuth 开发模式（oauth.dev_mode=true）下可直接传第三方 open_id，跳过远程校验
+        access_token:
+          type: string
+          nullable: true
+          description: 第三方 OAuth access_token（微信需配合 open_id；Google 可单独使用）
+        id_token:
+          type: string
+          nullable: true
+          description: 第三方 id_token（Apple / Google Sign-In）
 
     SendCodeReq:
       type: object
@@ -380,6 +388,12 @@ paths:
           description: |
             密码登录连续失败过多，账号被临时锁定（code 10010 err_account_locked）。
             默认 5 次失败/10 分钟触发，锁定 15 分钟。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '403':
+          description: 账号已被禁用（code 10011 err_account_disabled，OAuth/刷新等场景亦可能返回）
           content:
             application/json:
               schema:

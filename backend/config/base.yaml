@@ -37,6 +37,7 @@ jwt:
 
 auth:
   mock_code_enabled: true     # 仅开发环境使用固定验证码 123456
+  multi_device_enabled: true  # true=多设备同时在线；false=单设备（新登录踢掉旧会话）
 
 # 验证码下发（SMTP 邮件，可选）。host 为空则不启用，回退到 mock。
 # 短信运营商在 internal/app/app.go 的 buildCodeSender 中按需接入。
@@ -53,6 +54,13 @@ oauth:
     - wechat
     - apple
     - google
+  wechat:
+    app_id: ""                # 微信移动应用 AppID（生产校验 userinfo 时使用）
+    app_secret: ""            # 预留：code 换 token 流程（当前骨架走 access_token+open_id）
+  apple:
+    client_id: ""             # Sign in with Apple 的 Services ID / Bundle ID
+  google:
+    client_id: ""             # Google OAuth Client ID（校验 id_token 的 aud）
 
 log:
   level: info                # debug | info | warn | error

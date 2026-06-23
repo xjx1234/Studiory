@@ -51,7 +51,8 @@ type Config struct {
 	JWTRefreshTokenTTL time.Duration
 
 	// ── Auth ──────────────────────────────────────────────────────────────
-	AuthMockCodeEnabled bool
+	AuthMockCodeEnabled  bool
+	AuthMultiDeviceEnabled bool // true=多设备同时在线；false=单设备（新登录踢掉旧会话）
 
 	// ── 验证码下发（SMTP 邮件，可选）────────────────────────────────────────
 	// SMTPHost 为空时不启用 SMTP Provider；短信服务商按需在 app 层接入。
@@ -62,8 +63,12 @@ type Config struct {
 	SMTPFrom     string
 
 	// ── OAuth ─────────────────────────────────────────────────────────────
-	OAuthDevMode   bool
-	OAuthProviders []string
+	OAuthDevMode         bool
+	OAuthProviders       []string
+	OAuthWechatAppID     string
+	OAuthWechatAppSecret string
+	OAuthAppleClientID   string
+	OAuthGoogleClientID  string
 
 	// ── 日志 ──────────────────────────────────────────────────────────────
 	LogLevel  string
@@ -110,7 +115,8 @@ func Load() *Config {
 		JWTAccessTokenTTL:  v.GetDuration("jwt.access_ttl"),
 		JWTRefreshTokenTTL: v.GetDuration("jwt.refresh_ttl"),
 
-		AuthMockCodeEnabled: v.GetBool("auth.mock_code_enabled"),
+		AuthMockCodeEnabled:  v.GetBool("auth.mock_code_enabled"),
+		AuthMultiDeviceEnabled: v.GetBool("auth.multi_device_enabled"),
 
 		SMTPHost:     v.GetString("smtp.host"),
 		SMTPPort:     v.GetInt("smtp.port"),
@@ -118,8 +124,12 @@ func Load() *Config {
 		SMTPPassword: v.GetString("smtp.password"),
 		SMTPFrom:     v.GetString("smtp.from"),
 
-		OAuthDevMode:   v.GetBool("oauth.dev_mode"),
-		OAuthProviders: getStringSlice(v, "oauth.providers"),
+		OAuthDevMode:         v.GetBool("oauth.dev_mode"),
+		OAuthProviders:       getStringSlice(v, "oauth.providers"),
+		OAuthWechatAppID:     v.GetString("oauth.wechat.app_id"),
+		OAuthWechatAppSecret: v.GetString("oauth.wechat.app_secret"),
+		OAuthAppleClientID:   v.GetString("oauth.apple.client_id"),
+		OAuthGoogleClientID:  v.GetString("oauth.google.client_id"),
 
 		LogLevel:  v.GetString("log.level"),
 		LogFormat: v.GetString("log.format"),
@@ -268,6 +278,7 @@ func bindEnvs(v *viper.Viper) {
 		"jwt.access_ttl":              "JWT_ACCESS_TTL",
 		"jwt.refresh_ttl":             "JWT_REFRESH_TTL",
 		"auth.mock_code_enabled":      "AUTH_MOCK_CODE_ENABLED",
+		"auth.multi_device_enabled":   "AUTH_MULTI_DEVICE_ENABLED",
 		"smtp.host":                   "SMTP_HOST",
 		"smtp.port":                   "SMTP_PORT",
 		"smtp.username":               "SMTP_USERNAME",
@@ -275,6 +286,10 @@ func bindEnvs(v *viper.Viper) {
 		"smtp.from":                   "SMTP_FROM",
 		"oauth.dev_mode":              "OAUTH_DEV_MODE",
 		"oauth.providers":             "OAUTH_PROVIDERS",
+		"oauth.wechat.app_id":         "OAUTH_WECHAT_APP_ID",
+		"oauth.wechat.app_secret":     "OAUTH_WECHAT_APP_SECRET",
+		"oauth.apple.client_id":       "OAUTH_APPLE_CLIENT_ID",
+		"oauth.google.client_id":      "OAUTH_GOOGLE_CLIENT_ID",
 		"log.level":                   "LOG_LEVEL",
 		"log.format":                  "LOG_FORMAT",
 		"rate_limit.per_minute":       "RATE_LIMIT_PER_MINUTE",

@@ -11,8 +11,10 @@ import (
 	internalhttp "backend/internal/http"
 	"backend/internal/http/middleware"
 	"backend/internal/metrics"
+	"backend/internal/oauth"
 	"backend/internal/repo/pg"
 	"backend/internal/sender"
+	"backend/internal/session"
 	adminservice "backend/internal/service/admin"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
@@ -70,6 +72,8 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 
 	pgStore := pg.NewStore(pool)
 
+	sessionStore := session.NewStore(rdb, cfg.RedisKeyPrefix, cfg.AuthMultiDeviceEnabled, tokenIssuer.RefreshTokenTTL())
+
 	// 可观测：装配 Prometheus 指标（在 app 层注册 collector，保持 handler 不碰基础设施）。
 	var metricsMiddleware gin.HandlerFunc
 	var metricsHandler http.Handler
@@ -97,18 +101,22 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithCodeSender(buildCodeSender(cfg, logger)),
 			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
 			authservice.WithOAuthProviders(cfg.OAuthProviders),
+			authservice.WithOAuthVerifier(buildOAuthVerifier(cfg, logger)),
+			authservice.WithSessionStore(sessionStore),
 		),
 		UserService: userservice.New(pgStore.Users(),
 			userservice.WithLogger(logger),
 			userservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
+			userservice.WithSessionStore(sessionStore),
 		),
 		AdminService: adminservice.New(pgStore.Users(),
 			adminservice.WithLogger(logger),
 			adminservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
+			adminservice.WithSessionStore(sessionStore),
 		),
 		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
 
-		AuthMiddleware:      middleware.Auth(tokenIssuer, rdb, cfg.RedisKeyPrefix, logger),
+		AuthMiddleware:      middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, logger),
 		RateLimitMiddleware: middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
 		MetricsMiddleware:   metricsMiddleware,
 		MetricsHandler:      metricsHandler,
@@ -181,6 +189,22 @@ func buildCodeSender(cfg *config.Config, logger *zap.Logger) sender.Sender {
 	}
 
 	return sender.NewRouter(logger, providers...)
+}
+
+// buildOAuthVerifier 按配置装配第三方登录 token 校验器。
+//
+// 接入更多平台：实现 oauth.Provider 并追加到 providers。
+// dev_mode=true 时 Router 允许客户端仅传 open_id 跳过远程校验（本地联调）。
+func buildOAuthVerifier(cfg *config.Config, logger *zap.Logger) oauth.Verifier {
+	var providers []oauth.Provider
+
+	providers = append(providers,
+		oauth.NewWechatProvider(oauth.WechatConfig{AppID: cfg.OAuthWechatAppID}),
+		oauth.NewAppleProvider(oauth.AppleConfig{ClientID: cfg.OAuthAppleClientID}),
+		oauth.NewGoogleProvider(oauth.GoogleConfig{ClientID: cfg.OAuthGoogleClientID}),
+	)
+
+	return oauth.NewRouter(logger, cfg.OAuthDevMode, providers...)
 }
 
 // Shutdown 优雅关闭：先停 HTTP Server，再关闭数据库与缓存。

@@ -5,13 +5,15 @@ package auth
 type LoginRequest struct {
 	GrantType string `json:"grant_type" binding:"required"`
 
-	Account  string `json:"account,omitempty"`
-	Password string `json:"password,omitempty"`
-	Phone    string `json:"phone,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Code     string `json:"code,omitempty"`
-	Provider string `json:"provider,omitempty"` // wechat / apple / google
-	OpenID   string `json:"open_id,omitempty"`
+	Account     string `json:"account,omitempty"`
+	Password    string `json:"password,omitempty"`
+	Phone       string `json:"phone,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Code        string `json:"code,omitempty"`
+	Provider    string `json:"provider,omitempty"` // wechat / apple / google
+	OpenID      string `json:"open_id,omitempty"`  // 仅 oauth.dev_mode=true 时可直接传入
+	AccessToken string `json:"access_token,omitempty"`
+	IDToken     string `json:"id_token,omitempty"`
 }
 
 // LoginResult 登录成功后的统一返回结构。

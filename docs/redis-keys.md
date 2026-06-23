@@ -18,16 +18,33 @@
 
 ---
 
-## 2. Access Token 用户级吊销（登出）
+## 2. Access Token 用户级吊销（改密 / 禁用）
 
 | 键格式 | 类型 | TTL | 说明 |
 |--------|------|-----|------|
-| `app:revoke:uid:{user_id}` | string（Unix 时间戳） | 与 Access Token 有效期一致 | 登出后吊销该用户此前签发的 access token |
+| `app:revoke:uid:{user_id}` | string（Unix 时间戳） | 与 Access Token 有效期一致 | 改密或禁用账号后，吊销该用户此前签发的 access token |
 
-- 登出时写入当前时间戳；`Auth` 中间件校验 token 的 `iat` 是否早于该时间戳。
-- **全端登出**：吊销键按 `user_id` 维度存储，任意设备登出会使该用户所有设备上、登出时刻之前签发的 access token 失效（教育类等单账号场景通常可接受）。若需「仅当前设备登出」，应改为 per-token 黑名单并随请求携带 access token。
-- Redis 不可用时吊销检查 **fail-open**（放行并打 Warn 日志），优先保证可用性；高安全场景可自行改为 fail-closed。
-- 登出、**修改密码**与**后台禁用账号**均会写入该 revoke key：禁用用户（`PATCH /api/v1/admin/users/{id}/status` status=disabled）后同样按 `user_id` 维度吊销此前签发的 access token，使其在线会话即时失效。
+- 写入当前时间戳；`Auth` 中间件校验 token 的 `iat` 是否早于该时间戳。
+- **不再用于普通登出**（登出改为按 session 吊销，见第 7 节），避免多设备模式下误伤其他设备。
+- 改密、后台禁用账号仍会写入该键，作为 access token 的兜底吊销。
+- Redis 不可用时吊销检查 **fail-open**（放行并打 Warn 日志）。
+
+---
+
+## 7. 登录会话（多设备 / 单设备）
+
+由 `auth.multi_device_enabled` 控制（环境变量 `AUTH_MULTI_DEVICE_ENABLED`）。
+
+| 键格式 | 类型 | TTL | 说明 |
+|--------|------|-----|------|
+| `app:session:{session_id}` | string（user_id） | 与 Refresh Token 有效期一致 | 单个会话是否存在 |
+| `app:sessions:uid:{user_id}` | SET（session_id…） | 与 Refresh Token 一致 | **多设备模式**：该用户全部有效 session |
+| `app:active_session:uid:{user_id}` | string（session_id） | 与 Refresh Token 一致 | **单设备模式**：当前唯一有效 session |
+
+- JWT 的 `sid` 声明与 Redis 会话一一对应。
+- **多设备模式**（`multi_device_enabled=true`，默认）：每次登录新建 session，互不影响；登出仅 `Revoke` 当前 session。
+- **单设备模式**（`multi_device_enabled=false`）：新登录前 `RevokeAll` 并写入新的 `active_session`，旧设备 token 立即失效。
+- `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 是否仍在 Redis 中有效。
 
 ---
 
@@ -73,7 +90,8 @@
 按模块自行约定，建议继续带项目前缀，例如：
 
 - `app:cache:{resource}:{id}` — 热点数据缓存
-- `app:user:{user_id}:session` — 单设备登录等
+
+会话相关键见第 7 节，不再使用笼统的 `app:user:{user_id}:session` 约定。
 
 ---
 

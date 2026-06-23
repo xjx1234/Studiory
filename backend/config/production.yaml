@@ -17,6 +17,7 @@ rate_limit:
 
 auth:
   mock_code_enabled: false
+  multi_device_enabled: true   # 高安全场景可改为 false
 
 oauth:
   dev_mode: false
@@ -24,6 +25,13 @@ oauth:
     - wechat
     - apple
     - google
+  wechat:
+    app_id: ""
+    app_secret: ""
+  apple:
+    client_id: ""
+  google:
+    client_id: ""
 
 cors:
   allow_origins: []           # 生产环境必须通过环境变量或 local.yaml 显式配置

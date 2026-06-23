@@ -15,6 +15,7 @@ jwt:
 
 auth:
   mock_code_enabled: true
+  multi_device_enabled: true   # false=单设备，新登录踢掉旧会话
 
 oauth:
   dev_mode: true
@@ -22,6 +23,13 @@ oauth:
     - wechat
     - apple
     - google
+  wechat:
+    app_id: ""
+    app_secret: ""
+  apple:
+    client_id: ""
+  google:
+    client_id: ""
 
 cors:
   allow_origins:
