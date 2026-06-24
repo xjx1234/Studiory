@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 
-ARG GO_VERSION=1.25.11
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=
 
-FROM golang:${GO_VERSION}-alpine AS builder
+# 基础镜像仅作 bootstrap；实际编译版本由 go.mod 决定（见下方 awk + GOTOOLCHAIN）。
+FROM golang:alpine AS builder
 
 WORKDIR /src
 
@@ -16,12 +16,16 @@ ARG BUILD_TIME
 RUN apk add --no-cache ca-certificates git
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN GO_VERSION=$(awk '/^go /{print $2}' go.mod) \
+    && echo "$GO_VERSION" > /.go-version \
+    && GOTOOLCHAIN=go${GO_VERSION}+auto go mod download
 
 COPY . .
 
 RUN build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
-    && CGO_ENABLED=0 GOOS=linux go build \
+    && GO_VERSION=$(cat /.go-version) \
+    && GOTOOLCHAIN=go${GO_VERSION}+auto \
+       CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
         -ldflags="-s -w \
             -X backend/internal/buildinfo.Version=${VERSION} \
