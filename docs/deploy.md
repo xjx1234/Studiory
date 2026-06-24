@@ -87,6 +87,20 @@ make run
 | `RATE_LIMIT_PER_MINUTE` | 必须大于 0 |
 | `DATABASE_URL` / `REDIS_URL` | 不能为空 |
 | `AUTH_MULTI_DEVICE_ENABLED` | 按需设置（见下方「多/单设备 Session」） |
+| HTTP 超时 | `read_timeout` ≥ `read_header_timeout`，四项均须 > 0（见下方） |
+
+### HTTP Server 超时
+
+`http.Server` 的四项超时由 `app.*_timeout` 配置（环境变量 `SERVER_*_TIMEOUT`），默认值见 `config/base.yaml`：
+
+| 配置项 | 环境变量 | 默认 | 作用 |
+|--------|----------|------|------|
+| `app.read_header_timeout` | `SERVER_READ_HEADER_TIMEOUT` | `5s` | 防 Slowloris，限制读取请求头 |
+| `app.read_timeout` | `SERVER_READ_TIMEOUT` | `15s` | 限制读取完整请求（含 body） |
+| `app.write_timeout` | `SERVER_WRITE_TIMEOUT` | `30s` | 限制写入响应 |
+| `app.idle_timeout` | `SERVER_IDLE_TIMEOUT` | `120s` | keep-alive 空闲连接存活时间 |
+
+生产环境一般保持默认即可；若后续接入大文件上传，可适当调大 `read_timeout` / `write_timeout`。
 
 ### 多/单设备 Session
 

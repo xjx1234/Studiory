@@ -22,6 +22,11 @@ type Config struct {
 	// ── 服务 ─────────────────────────────────────────────────────────────
 	AppEnv     string
 	ServerAddr string
+	// HTTP Server 超时（防 Slowloris、慢客户端与连接泄漏）
+	ServerReadHeaderTimeout time.Duration
+	ServerReadTimeout       time.Duration
+	ServerWriteTimeout      time.Duration
+	ServerIdleTimeout       time.Duration
 
 	// ── PostgreSQL ────────────────────────────────────────────────────────
 	DatabaseURL   string
@@ -92,6 +97,10 @@ func Load() *Config {
 	cfg := &Config{
 		AppEnv:     v.GetString("app.env"),
 		ServerAddr: v.GetString("app.server_addr"),
+		ServerReadHeaderTimeout: v.GetDuration("app.read_header_timeout"),
+		ServerReadTimeout:       v.GetDuration("app.read_timeout"),
+		ServerWriteTimeout:      v.GetDuration("app.write_timeout"),
+		ServerIdleTimeout:       v.GetDuration("app.idle_timeout"),
 
 		DBHost:        v.GetString("database.host"),
 		DBPort:        v.GetString("database.port"),
@@ -153,6 +162,21 @@ func Load() *Config {
 func (c *Config) Validate() error {
 	if c.ServerAddr == "" {
 		return errors.New("app.server_addr 不能为空")
+	}
+	if c.ServerReadHeaderTimeout <= 0 {
+		return errors.New("app.read_header_timeout 必须大于 0")
+	}
+	if c.ServerReadTimeout <= 0 {
+		return errors.New("app.read_timeout 必须大于 0")
+	}
+	if c.ServerWriteTimeout <= 0 {
+		return errors.New("app.write_timeout 必须大于 0")
+	}
+	if c.ServerIdleTimeout <= 0 {
+		return errors.New("app.idle_timeout 必须大于 0")
+	}
+	if c.ServerReadTimeout < c.ServerReadHeaderTimeout {
+		return errors.New("app.read_timeout 不能小于 app.read_header_timeout")
 	}
 	if c.DatabaseURL == "" {
 		return errors.New("database.url 不能为空")
@@ -256,6 +280,10 @@ func bindEnvs(v *viper.Viper) {
 	bindings := map[string]string{
 		"app.env":                     "APP_ENV",
 		"app.server_addr":             "SERVER_ADDR",
+		"app.read_header_timeout":     "SERVER_READ_HEADER_TIMEOUT",
+		"app.read_timeout":            "SERVER_READ_TIMEOUT",
+		"app.write_timeout":           "SERVER_WRITE_TIMEOUT",
+		"app.idle_timeout":            "SERVER_IDLE_TIMEOUT",
 		"database.url":                "DATABASE_URL",
 		"database.host":               "DB_HOST",
 		"database.port":               "DB_PORT",

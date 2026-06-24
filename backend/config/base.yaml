@@ -6,6 +6,10 @@
 app:
   env: development           # 由具体环境配置文件覆盖
   server_addr: ":8080"
+  read_header_timeout: 5s    # 读取请求头超时（防 Slowloris）
+  read_timeout: 15s          # 读取完整请求（含 body）
+  write_timeout: 30s         # 写入响应超时
+  idle_timeout: 120s         # keep-alive 空闲连接超时
 
 database:
   url: ""                    # 非空则优先使用，忽略以下分项

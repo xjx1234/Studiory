@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestValidateRejectsUnsafeProductionDefaults(t *testing.T) {
 	cfg := &Config{
@@ -39,17 +42,43 @@ func TestValidateRejectsOAuthDevModeInProduction(t *testing.T) {
 
 func TestValidateAcceptsDevelopmentDefaults(t *testing.T) {
 	cfg := &Config{
-		AppEnv:              "development",
-		ServerAddr:          ":8080",
-		DatabaseURL:         "postgres://postgres:password@localhost:5432/app?sslmode=disable",
-		RedisURL:            "redis://localhost:6379/0",
-		JWTSecret:           "dev-secret-change-in-production",
-		RateLimitPerMinute:  120,
-		CORSAllowOrigins:    []string{"http://localhost:5173"},
-		AuthMockCodeEnabled: true,
+		AppEnv:                  "development",
+		ServerAddr:              ":8080",
+		ServerReadHeaderTimeout: 5 * time.Second,
+		ServerReadTimeout:       15 * time.Second,
+		ServerWriteTimeout:      30 * time.Second,
+		ServerIdleTimeout:       120 * time.Second,
+		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		RedisURL:                "redis://localhost:6379/0",
+		JWTSecret:               "dev-secret-change-in-production",
+		RateLimitPerMinute:      120,
+		CORSAllowOrigins:        []string{"http://localhost:5173"},
+		AuthMockCodeEnabled:     true,
 	}
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected development config to be valid: %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidServerTimeouts(t *testing.T) {
+	base := Config{
+		AppEnv:                  "development",
+		ServerAddr:              ":8080",
+		ServerReadHeaderTimeout: 5 * time.Second,
+		ServerReadTimeout:       15 * time.Second,
+		ServerWriteTimeout:      30 * time.Second,
+		ServerIdleTimeout:       120 * time.Second,
+		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		RedisURL:                "redis://localhost:6379/0",
+		JWTSecret:               "dev-secret",
+		RateLimitPerMinute:      120,
+		CORSAllowOrigins:        []string{"http://localhost:5173"},
+	}
+
+	cfg := base
+	cfg.ServerReadTimeout = 3 * time.Second
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected read_timeout < read_header_timeout to be rejected")
 	}
 }

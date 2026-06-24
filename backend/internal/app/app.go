@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"time"
 
 	"backend/internal/auth"
 	"backend/internal/config"
@@ -149,7 +148,10 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 	server := &http.Server{
 		Addr:              cfg.ServerAddr,
 		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: cfg.ServerReadHeaderTimeout,
+		ReadTimeout:       cfg.ServerReadTimeout,
+		WriteTimeout:      cfg.ServerWriteTimeout,
+		IdleTimeout:       cfg.ServerIdleTimeout,
 	}
 
 	return &App{
