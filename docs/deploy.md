@@ -155,3 +155,80 @@ docker run --rm \
   -path /migrations \
   -database "$DATABASE_URL" up
 ```
+
+## 四、Kubernetes 部署示例
+
+示例清单位于 [`deploy/k8s/`](../deploy/k8s/)，包含 Deployment（探针 + 资源限制）、Service、迁移 Job 与 Secret 模板。
+
+### 探针约定
+
+| 探针 | 路径 | 作用 | 失败后果 |
+|------|------|------|----------|
+| **liveness** | `GET /health` | 进程是否存活（不查 PG/Redis） | kubelet **重启** Pod |
+| **readiness** | `GET /ready` | PG + Redis 是否可用 | 从 Service **摘除**流量，不重启 |
+
+与 Docker 镜像内置 `HEALTHCHECK`（仅 `/health`）一致；K8s 额外用 `/ready` 做依赖就绪判断，避免数据库未连通时仍接收请求。
+
+推荐参数（已写入 `api-deployment.yaml`，可按集群调整）：
+
+| 参数 | liveness | readiness | 说明 |
+|------|----------|-----------|------|
+| `initialDelaySeconds` | 10 | 5 | 启动宽限期 |
+| `periodSeconds` | 30 | 10 | 检查间隔 |
+| `timeoutSeconds` | 3 | 3 | 单次超时（与 `SERVER_READ_HEADER_TIMEOUT=5s` 兼容） |
+| `failureThreshold` | 3 | 3 | 连续失败次数 |
+
+> 若冷启动较慢（大镜像、节点资源紧张），可增大 `initialDelaySeconds` 或增加 `startupProbe`（先探测 `/health`，成功后再启用 liveness/readiness）。
+
+### 资源限制
+
+`api-deployment.yaml` 默认：
+
+| | CPU | 内存 |
+|---|-----|------|
+| requests | 100m | 128Mi |
+| limits | 500m | 512Mi |
+
+Go API 通常内存占用不高；高并发或大量连接时可按 Prometheus / 压测结果调高 `limits`，并同步调整 `database.pool.max_conns`、`redis.pool_size`。
+
+### 部署步骤（示例）
+
+```bash
+# 1. 构建并推送镜像
+docker build \
+  --build-arg VERSION=v1.0.0 \
+  --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t registry.example.com/studiory-api:v1.0.0 \
+  -f backend/Dockerfile backend
+docker push registry.example.com/studiory-api:v1.0.0
+
+# 2. 创建 Secret（勿提交真实 secret.yaml）
+cp deploy/k8s/secret.example.yaml secret.yaml
+# 编辑 secret.yaml 后：
+kubectl apply -f secret.yaml
+
+# 3. 迁移（先于 API 上线）
+kubectl create configmap studiory-migrations \
+  --from-file=backend/migrations/ \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f deploy/k8s/migrate-job.yaml
+kubectl wait --for=condition=complete job/studiory-migrate --timeout=120s
+
+# 4. 部署 API
+# 编辑 deploy/k8s/api-deployment.yaml 中的 image 后：
+kubectl apply -f deploy/k8s/api-service.yaml
+kubectl apply -f deploy/k8s/api-deployment.yaml
+
+# 5. 验证
+kubectl rollout status deployment/studiory-api
+kubectl port-forward svc/studiory-api 8080:80 &
+curl -s http://localhost:8080/health
+curl -s http://localhost:8080/ready
+```
+
+### 说明
+
+- PostgreSQL / Redis 需由集群内其他 Helm Chart 或托管服务提供；Secret 中的 `DATABASE_URL`、`REDIS_URL` 指向对应地址。
+- 生产务必设置 `APP_ENV=production` 及第三节所列安全项；`secret.example.yaml` 已默认关闭 mock 验证码与 OAuth dev 模式。
+- `/metrics` 默认无鉴权，生产环境通过 NetworkPolicy / 内网 ServiceMonitor 限制访问，见 [metrics.md](metrics.md)。
+- 滚动发布时，旧 Pod 在 `readinessProbe` 失败期间自动摘流；新 Pod 通过 `/ready` 后才接流量。

@@ -1,0 +1,39 @@
+# 部署前一次性执行数据库迁移（或在 CI/CD 流水线中先于 Deployment 运行）
+#
+# 1. 从仓库 migrations 创建 ConfigMap：
+#    kubectl create configmap studiory-migrations \
+#      --from-file=backend/migrations/ \
+#      --dry-run=client -o yaml | kubectl apply -f -
+#
+# 2. 确保 studiory-api-secret 已存在（含 DATABASE_URL）
+#
+# 3. 执行迁移：
+#    kubectl apply -f migrate-job.yaml
+#    kubectl wait --for=condition=complete job/studiory-migrate --timeout=120s
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: studiory-migrate
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: migrate/migrate:v4.17.0
+          command: ["sh", "-c"]
+          args:
+            - migrate -path /migrations -database "$DATABASE_URL" up
+          envFrom:
+            - secretRef:
+                name: studiory-api-secret
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: studiory-migrations

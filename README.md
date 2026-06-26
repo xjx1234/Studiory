@@ -13,6 +13,7 @@
 │   ├── pkg/          # 可复用公共库
 │   └── main.go
 ├── docs/             # 架构说明、Redis 键规范、部署、示例 API 等
+├── deploy/k8s/       # Kubernetes 示例清单（探针、资源、迁移 Job）
 ├── docker-compose.yml
 └── Makefile
 ```
