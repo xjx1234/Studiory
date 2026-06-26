@@ -13,7 +13,8 @@ log:
   format: json               # 生产环境使用 JSON 格式，便于日志采集
 
 rate_limit:
-  per_minute: 60             # 生产环境更严格
+  per_minute: 60               # 未登录/公开路由：按 IP
+  user_per_minute: 120         # 已鉴权路由：按 user_id
 
 auth:
   mock_code_enabled: false

@@ -12,8 +12,9 @@ func (l *LogSupport) SetLogger(logger *zap.Logger) {
 	l.Logger = logger
 }
 
-func (l *LogSupport) LogInternal(op string, err error) {
+func (l *LogSupport) LogInternal(op string, err error, fields ...zap.Field) {
 	if l.Logger != nil && err != nil {
-		l.Logger.Error(op, zap.Error(err))
+		fields = append(fields, zap.Error(err))
+		l.Logger.Error(op, fields...)
 	}
 }

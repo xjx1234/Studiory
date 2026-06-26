@@ -71,7 +71,8 @@ log:
   format: console            # console | json
 
 rate_limit:
-  per_minute: 120
+  per_minute: 120              # 未登录/公开路由：按客户端 IP
+  user_per_minute: 120         # 已鉴权 /user、/admin：按 user_id（同 NAT 互不干扰）
 
 metrics:
   enabled: true              # 暴露 Prometheus /metrics 端点（生产可按需关闭或用网络层保护）

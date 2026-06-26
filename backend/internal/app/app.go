@@ -115,8 +115,9 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		),
 		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
 
-		AuthMiddleware:      middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, logger),
-		RateLimitMiddleware: middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
+		AuthMiddleware:          middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, logger),
+		RateLimitMiddleware:     middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
+		UserRateLimitMiddleware: middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix),
 		MetricsMiddleware:   metricsMiddleware,
 		MetricsHandler:      metricsHandler,
 		ReadyChecks: []internalhttp.ReadyCheck{

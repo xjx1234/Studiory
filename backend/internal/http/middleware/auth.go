@@ -68,7 +68,7 @@ func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPre
 		if !errors.Is(err, redis.Nil) && logger != nil {
 			logger.Warn("access token revoke check unavailable, failing open",
 				zap.Error(err),
-				zap.String("userID", claims.UserID),
+				zap.String("user_id", claims.UserID),
 			)
 		}
 		return false

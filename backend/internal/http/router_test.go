@@ -79,7 +79,8 @@ func newTestServer(t *testing.T) (*gin.Engine, *testServer) {
 		TodoService:         ts.todo,
 		AdminService:        ts.admin,
 		AuthMiddleware:      fakeAuthMiddleware,
-		RateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		RateLimitMiddleware:     func(c *gin.Context) { c.Next() },
+		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
 		ReadyChecks: []ReadyCheck{
 			{Name: "noop", Check: func(context.Context) error { return nil }},
 		},

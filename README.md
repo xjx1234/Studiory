@@ -108,6 +108,7 @@ make migrate-up  # 执行迁移
 - OAuth 登录：[docs/oauth.md](docs/oauth.md)
 - 多/单设备 Session：[docs/session.md](docs/session.md)
 - 验证码下发：[docs/code-sender.md](docs/code-sender.md)
+- 结构化日志：[docs/logging.md](docs/logging.md)
 - 指标：[docs/metrics.md](docs/metrics.md)
 - OpenAPI：`docs/api/openapi.yaml`
 - 错误码：`docs/api/errcode.md`

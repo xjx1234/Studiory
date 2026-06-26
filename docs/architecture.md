@@ -31,7 +31,7 @@ Client
 | `/api/v1/user/*` | JWT | 面向终端用户 |
 | `/api/v1/admin/*` | JWT + `RequireRole("admin")` | 面向运营/管理 |
 
-管理端统一挂在 `router.go` 的 `admin := v1.Group("/admin", middleware.Auth(), middleware.RequireRole("admin"))`，真实业务只需要继续注册到该分组。
+管理端统一挂在 `router.go` 的 `admin := v1.Group("/admin", Auth, UserRateLimit, RequireRole("admin"))`，真实业务只需要继续注册到该分组。
 
 ### `internal/service/{module}`
 
@@ -110,46 +110,83 @@ cd backend && sqlc generate
 - PostgreSQL pool：`database.pool.*`
 - Redis pool：`redis.pool_size`
 - Redis key 前缀：`redis.key_prefix`
-- 日志：`log.level`、`log.format`
-- 限流：`rate_limit.per_minute`
+- 日志：`log.level`、`log.format`（字段规范见 [logging.md](logging.md)）
+- 限流：`rate_limit.per_minute`（IP）、`rate_limit.user_per_minute`（已鉴权 user_id）
 - CORS：`cors.allow_origins`、`cors.allow_credentials`
 - Auth 固定验证码：`auth.mock_code_enabled`
-- OAuth：`oauth.dev_mode`、`oauth.providers`
+- 多/单设备 Session：`auth.multi_device_enabled`（详见 [session.md](session.md)）
+- OAuth：`oauth.dev_mode`、`oauth.providers`（详见 [oauth.md](oauth.md)）
 
 启动时会执行安全校验：生产环境禁止默认 `JWT_SECRET`，禁止启用固定验证码/OAuth 开发模式，且必须显式配置 CORS 来源。
 
-## 登出与会话语义
+## 登出与会话
+
+会话由 `internal/session` 管理，JWT 携带 `sid`（session_id）。多/单设备行为由 `auth.multi_device_enabled` 控制，完整说明见 [session.md](session.md)。
+
+### 登录
+
+每次登录（含 OAuth）生成新的 `session_id`，写入 access / refresh token 的 `sid` 声明，并在 Redis 注册会话。
+
+| 模式 | 新登录行为 |
+|------|------------|
+| 多设备（`multi_device_enabled=true`，默认） | 新建 session，各设备互不影响 |
+| 单设备（`false`） | 新登录前 `RevokeAll` 踢掉旧会话 |
+
+### 刷新
+
+`POST /api/v1/auth/refresh` 轮换 refresh token 时**保持同一 `sid`**，不新建 session。旧 refresh token 写入黑名单。
+
+### 登出
 
 `POST /api/v1/auth/logout` 需提交 `refresh_token`，服务端会：
 
 1. 将 refresh token 写入 Redis 黑名单（后续 Refresh 拒绝）。
-2. 按 `user_id` 写入 access token 吊销时间戳（`Auth` 中间件比对 `iat`）。
+2. 吊销当前 `sid` 对应 session（**仅当前设备**；多设备下其他设备不受影响）。
 
-**行为约定：**
+### 全端吊销（改密 / 禁用）
 
-- **全端登出**：任意设备登出会使该账号在所有设备上、登出时刻之前签发的 access token 失效。适合教育类等「单账号」场景；多设备独立会话需改为 per-token 吊销。
-- **失败即报错**：Redis 写入失败时 service 返回 `ErrInternal`，HTTP 层不再静默返回 200。
-- **吊销检查 fail-open**：Redis 宕机时 access token 吊销检查放行并打 Warn 日志，避免 Redis 故障拖垮全站鉴权；极高安全需求可自行改为 fail-closed。
+改密（`PATCH /api/v1/user/password`）或后台禁用用户时：
 
-## OAuth（骨架）
+1. `RevokeAll` 吊销该用户全部 session。
+2. 写入用户级 `revoke:uid:{user_id}` 时间戳，`Auth` 中间件比对 access token 的 `iat`。
 
-开发模式（`oauth.dev_mode=true`）下，`POST /api/v1/auth/login` 支持：
+普通登出**不再**写 `revoke:uid`，避免多设备模式下误伤其他设备。
+
+### 中间件校验
+
+`Auth` 中间件依次检查：
+
+1. JWT 签名与有效期
+2. 用户级 `revoke:uid`（改密/禁用兜底）
+3. `sid` 在 Redis 中仍有效
+
+### 行为约定
+
+- **登出失败即报错**：refresh 黑名单或 session 吊销写入失败时返回 `ErrInternal`。
+- **吊销检查 fail-open**：Redis 宕机时 `revoke:uid` / session 检查放行并打 Warn 日志，避免缓存故障拖垮全站鉴权；极高安全需求可自行改为 fail-closed。
+
+Redis 键说明见 [redis-keys.md](redis-keys.md) 第 2、7 节。
+
+## OAuth
+
+生产环境通过 `internal/oauth` 校验各平台 token（微信 / Apple / Google），开发模式（`oauth.dev_mode=true`）允许仅传 `open_id` 跳过远程校验。
 
 ```json
 {
   "grant_type": "oauth",
   "provider": "wechat",
-  "open_id": "wx_openid_xxx"
+  "open_id": "wx_openid_xxx",
+  "access_token": "..."
 }
 ```
 
-流程：按 `provider + open_id` 查 `user_oauth` → 已绑定则登录 → 未绑定则自动创建用户并写入绑定记录。
+流程：按 `provider` 校验 token → 用 `open_id` 查 `user_oauth` → 已绑定则登录 → 未绑定则自动建用户并写入绑定记录。
 
-生产环境需关闭 `oauth.dev_mode`，并在 `service/auth` 的 OAuth 分支接入真实 token 校验逻辑。
+详见 [oauth.md](oauth.md)。生产环境须关闭 `oauth.dev_mode` 并配置各平台 `client_id` / `app_id`。
 
 ## 中间件顺序
 
-`RequestID` → `I18n` → `Zap` → `Recovery` → `Safe` → `RateLimit` → `CORS` → 路由级 `Auth` / `RequireRole`。
+`RequestID` → `I18n` → `Zap` → `Recovery` → `Safe` → `RateLimit(IP)` → `CORS` → 路由级 `Auth` → `RateLimit(user_id)` → `RequireRole`。
 
 ## 健康检查
 

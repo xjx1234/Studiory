@@ -80,7 +80,8 @@ type Config struct {
 	LogFormat string
 
 	// ── 限流 ──────────────────────────────────────────────────────────────
-	RateLimitPerMinute int
+	RateLimitPerMinute     int // 未登录/公开路由：按 IP
+	RateLimitUserPerMinute int // 已鉴权路由：按 user_id
 
 	// ── 可观测 ────────────────────────────────────────────────────────────
 	MetricsEnabled bool
@@ -143,7 +144,8 @@ func Load() *Config {
 		LogLevel:  v.GetString("log.level"),
 		LogFormat: v.GetString("log.format"),
 
-		RateLimitPerMinute: v.GetInt("rate_limit.per_minute"),
+		RateLimitPerMinute:     v.GetInt("rate_limit.per_minute"),
+		RateLimitUserPerMinute: v.GetInt("rate_limit.user_per_minute"),
 
 		MetricsEnabled: v.GetBool("metrics.enabled"),
 
@@ -154,6 +156,10 @@ func Load() *Config {
 	// DATABASE_URL 和 REDIS_URL 优先（为空时从分项拼接）
 	cfg.DatabaseURL = firstNonEmpty(v.GetString("database.url"), cfg.buildDatabaseURL())
 	cfg.RedisURL = firstNonEmpty(v.GetString("redis.url"), cfg.buildRedisURL())
+
+	if cfg.RateLimitUserPerMinute <= 0 {
+		cfg.RateLimitUserPerMinute = cfg.RateLimitPerMinute
+	}
 
 	return cfg
 }
@@ -321,6 +327,7 @@ func bindEnvs(v *viper.Viper) {
 		"log.level":                   "LOG_LEVEL",
 		"log.format":                  "LOG_FORMAT",
 		"rate_limit.per_minute":       "RATE_LIMIT_PER_MINUTE",
+		"rate_limit.user_per_minute":  "RATE_LIMIT_USER_PER_MINUTE",
 		"metrics.enabled":             "METRICS_ENABLED",
 		"cors.allow_origins":          "CORS_ALLOW_ORIGINS",
 		"cors.allow_credentials":      "CORS_ALLOW_CREDENTIALS",

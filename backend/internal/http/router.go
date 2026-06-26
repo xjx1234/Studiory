@@ -10,11 +10,13 @@ import (
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // NewRouter 构建 Gin 路由，挂载全局中间件与所有路由分组。
 //
-// 中间件顺序：RequestID → SecurityHeaders → I18n → Zap日志 → Recovery → Safe → RateLimit → CORS
+// 中间件顺序：RequestID → … → Safe → RateLimit(IP) → CORS
+// 已鉴权分组额外挂载 UserRateLimit(user_id)，在 Auth 之后执行。
 func NewRouter(deps *Deps) (*gin.Engine, error) {
 	if err := validateDeps(deps); err != nil {
 		return nil, err
@@ -28,7 +30,12 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	}
 	r.Use(middleware.SecurityHeaders(deps.Cfg.IsProd()))
 	r.Use(middleware.I18n())
-	r.Use(ginzap.Ginzap(zap.L(), time.RFC3339, true))
+	r.Use(ginzap.GinzapWithConfig(zap.L(), &ginzap.Config{
+		TimeFormat:   time.RFC3339,
+		UTC:          true,
+		DefaultLevel: zapcore.InfoLevel,
+		Context:      middleware.AccessLogFields,
+	}))
 	r.Use(ginzap.RecoveryWithZap(zap.L(), true))
 	r.Use(middleware.Safe())
 	r.Use(deps.RateLimitMiddleware)
@@ -47,11 +54,11 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	{
 		registerAuthRoutes(v1, deps)
 
-		user := v1.Group("/user", deps.AuthMiddleware)
+		user := v1.Group("/user", deps.AuthMiddleware, deps.UserRateLimitMiddleware)
 		registerUserProfileRoutes(user, deps)
 		registerUserTodoRoutes(user, deps)
 
-		admin := v1.Group("/admin", deps.AuthMiddleware, middleware.RequireRole(repo.RoleAdmin))
+		admin := v1.Group("/admin", deps.AuthMiddleware, deps.UserRateLimitMiddleware, middleware.RequireRole(repo.RoleAdmin))
 		registerAdminRoutes(admin, deps)
 	}
 
@@ -79,6 +86,12 @@ func validateDeps(deps *Deps) error {
 	}
 	if deps.RateLimitMiddleware == nil {
 		return errors.New("RateLimitMiddleware is required")
+	}
+	if deps.RateLimitMiddleware == nil {
+		return errors.New("RateLimitMiddleware is required")
+	}
+	if deps.UserRateLimitMiddleware == nil {
+		return errors.New("UserRateLimitMiddleware is required")
 	}
 	if len(deps.ReadyChecks) == 0 {
 		return errors.New("ReadyChecks is required")

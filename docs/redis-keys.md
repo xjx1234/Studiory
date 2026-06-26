@@ -77,11 +77,16 @@
 
 ## 5. 限流
 
-当前使用 Redis 分布式 store（`ulule/limiter`）。键前缀由 `REDIS_KEY_PREFIX` 控制：
+使用 Redis 分布式 store（`ulule/limiter`）。键前缀由 `REDIS_KEY_PREFIX` 控制，按维度分 scope：
 
-- `${REDIS_KEY_PREFIX}:limiter*`：限流计数与时间窗口相关键（由库内部生成，具体后缀随实现变化）。
+| 维度 | Redis 前缀 | 适用路由 | 配置项 |
+|------|------------|----------|--------|
+| 客户端 IP | `${REDIS_KEY_PREFIX}:limiter:ip*` | `/api/v1/auth/*`、`/health`、`/ready` 等（**不含** `/user`、`/admin`） | `rate_limit.per_minute` / `RATE_LIMIT_PER_MINUTE` |
+| 用户 ID | `${REDIS_KEY_PREFIX}:limiter:uid*` | `/api/v1/user/*`、`/api/v1/admin/*`（Auth 之后按 JWT `uid`） | `rate_limit.user_per_minute` / `RATE_LIMIT_USER_PER_MINUTE` |
 
-如果 Redis 不可用时会自动回退到进程内 memory store（此时不适合多实例限流一致性）。
+- 已鉴权路由跳过 IP 限流，避免同 NAT 下多用户共享配额；未配置 `user_per_minute` 时默认与 `per_minute` 相同。
+- 库内部会在上述前缀下生成计数与时间窗口相关键（具体后缀随实现变化）。
+- Redis 不可用时回退到进程内 memory store（多实例限流不一致）。
 
 ---
 

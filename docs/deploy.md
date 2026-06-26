@@ -84,7 +84,8 @@ make run
 | `AUTH_MOCK_CODE_ENABLED` | 必须为 `false` |
 | `OAUTH_DEV_MODE` | 必须为 `false` |
 | `CORS_ALLOW_ORIGINS` | 至少配置一个来源 |
-| `RATE_LIMIT_PER_MINUTE` | 必须大于 0 |
+| `RATE_LIMIT_PER_MINUTE` | 必须大于 0（公开路由按 IP） |
+| `RATE_LIMIT_USER_PER_MINUTE` | 可选；未配置时默认与 `RATE_LIMIT_PER_MINUTE` 相同（已鉴权路由按 user_id） |
 | `DATABASE_URL` / `REDIS_URL` | 不能为空 |
 | `AUTH_MULTI_DEVICE_ENABLED` | 按需设置（见下方「多/单设备 Session」） |
 | HTTP 超时 | `read_timeout` ≥ `read_header_timeout`，四项均须 > 0（见下方） |
