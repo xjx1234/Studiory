@@ -87,9 +87,6 @@ func validateDeps(deps *Deps) error {
 	if deps.RateLimitMiddleware == nil {
 		return errors.New("RateLimitMiddleware is required")
 	}
-	if deps.RateLimitMiddleware == nil {
-		return errors.New("RateLimitMiddleware is required")
-	}
 	if deps.UserRateLimitMiddleware == nil {
 		return errors.New("UserRateLimitMiddleware is required")
 	}
