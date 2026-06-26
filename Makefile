@@ -5,7 +5,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X backend/internal/buildinfo.Version=$(VERSION) -X backend/internal/buildinfo.Commit=$(COMMIT) -X backend/internal/buildinfo.BuildTime=$(BUILD_TIME)
 
-.PHONY: help up down logs run build test cover test-integration lint vuln sqlc migrate-up migrate-down compose-up compose-down fmt tidy seed
+.PHONY: help up down logs run build test cover test-integration lint vuln sqlc openapi-check migrate-up migrate-down compose-up compose-down fmt tidy seed
 
 help:
 	@echo "Available targets:"
@@ -17,6 +17,7 @@ help:
 	@echo "  make migrate-up    Run database migrations"
 	@echo "  make migrate-down  Roll back one migration"
 	@echo "  make sqlc          Generate sqlc code"
+	@echo "  make openapi-check Verify OpenAPI spec and router contract"
 	@echo "  make seed          Init admin user (set SEED_ADMIN_* env vars)"
 	@echo "  make run           Run backend"
 	@echo "  make build         Build backend"
@@ -52,6 +53,9 @@ migrate-down:
 
 sqlc:
 	cd $(BACKEND_DIR) && sqlc generate
+
+openapi-check:
+	cd $(BACKEND_DIR) && go test -run 'Test(OpenAPI|LoadDocument)' ./internal/openapi/... ./internal/http/...
 
 run:
 	cd $(BACKEND_DIR) && go run .

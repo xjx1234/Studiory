@@ -111,7 +111,7 @@ make migrate-up  # 执行迁移
 - 验证码下发：[docs/code-sender.md](docs/code-sender.md)
 - 结构化日志：[docs/logging.md](docs/logging.md)
 - 指标：[docs/metrics.md](docs/metrics.md)
-- OpenAPI：`docs/api/openapi.yaml`
+- OpenAPI：`docs/api/openapi.yaml`（CI 会校验文档合法性并与路由契约对比，见 `make openapi-check`）
 - 错误码：`docs/api/errcode.md`
 
 ## 新项目 checklist

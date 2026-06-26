@@ -87,6 +87,9 @@ jobs:
           sqlc generate
           git diff --exit-code -- internal/repo/sqlc/gen
 
+      - name: Verify OpenAPI contract
+        run: go test -run 'Test(OpenAPI|LoadDocument)' ./internal/openapi/... ./internal/http/...
+
       - name: Test
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
 
