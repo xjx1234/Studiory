@@ -18,3 +18,27 @@ func (l *LogSupport) LogInternal(op string, err error, fields ...zap.Field) {
 		l.Logger.Error(op, fields...)
 	}
 }
+
+// UserIDField 记录关联用户 ID，便于与 HTTP 访问日志串联；空字符串时省略。
+func UserIDField(userID string) zap.Field {
+	if userID == "" {
+		return zap.Skip()
+	}
+	return zap.String("user_id", userID)
+}
+
+// ActorUserIDField 记录操作者用户 ID（如 admin 改他人角色）；空字符串时省略。
+func ActorUserIDField(userID string) zap.Field {
+	if userID == "" {
+		return zap.Skip()
+	}
+	return zap.String("actor_user_id", userID)
+}
+
+// TargetField 记录登录/验证码等尚未关联 user_id 时的账号标识（手机号、邮箱等）。
+func TargetField(target string) zap.Field {
+	if target == "" {
+		return zap.Skip()
+	}
+	return zap.String("target", target)
+}

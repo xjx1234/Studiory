@@ -77,6 +77,7 @@ make run
 
 ```bash
 make test        # go test ./...
+make test-e2e    # HTTP 端到端（需 Docker：PG + Redis + 真实路由）
 make build       # 构建后端
 make sqlc        # 生成 sqlc 代码
 make migrate-up  # 执行迁移

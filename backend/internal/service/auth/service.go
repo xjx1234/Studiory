@@ -271,7 +271,7 @@ func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, c
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound.WithMessage("err_user_not_found")
 		}
-		s.LogInternal("loginWithCode lookup user", err)
+		s.LogInternal("loginWithCode lookup user", err, baseservice.TargetField(target))
 		return nil, errcode.ErrInternal
 	}
 
@@ -299,7 +299,7 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 		if errors.Is(err, oauth.ErrNoProvider) || errors.Is(err, oauth.ErrNotConfigured) {
 			return nil, errcode.ErrUnsupportedGrant
 		}
-		s.LogInternal("loginWithOAuth verify token", err)
+		s.LogInternal("loginWithOAuth verify token", err, zap.String("provider", provider))
 		return nil, errcode.ErrInternal
 	}
 	if openID == "" {
@@ -311,7 +311,10 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 		return s.issueResult(ctx, user)
 	}
 	if !errors.Is(lookupErr, repo.ErrNotFound) {
-		s.LogInternal("loginWithOAuth lookup user", lookupErr)
+		s.LogInternal("loginWithOAuth lookup user", lookupErr,
+			zap.String("provider", provider),
+			baseservice.TargetField(openID),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -320,7 +323,10 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 	}
 	created, createErr := s.createOAuthUser(ctx, nickname, provider, openID)
 	if createErr != nil {
-		s.LogInternal("loginWithOAuth create user", createErr)
+		s.LogInternal("loginWithOAuth create user", createErr,
+			zap.String("provider", provider),
+			baseservice.TargetField(openID),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -441,7 +447,9 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcryptCost)
 	if err != nil {
-		s.LogInternal("registerWithPassword hash password", err)
+		s.LogInternal("registerWithPassword hash password", err,
+			baseservice.TargetField(firstNonEmptyStr(input.Phone, input.Email)),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -458,7 +466,9 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 		if errors.Is(createErr, repo.ErrAlreadyExists) {
 			return nil, errcode.ErrAlreadyExists
 		}
-		s.LogInternal("registerWithPassword create user", createErr)
+		s.LogInternal("registerWithPassword create user", createErr,
+			baseservice.TargetField(firstNonEmptyStr(input.Phone, input.Email)),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -494,7 +504,9 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 		if errors.Is(createErr, repo.ErrAlreadyExists) {
 			return nil, errcode.ErrAlreadyExists
 		}
-		s.LogInternal("registerWithCode create user", createErr)
+		s.LogInternal("registerWithCode create user", createErr,
+			baseservice.TargetField(firstNonEmptyStr(input.Phone, input.Email)),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -515,7 +527,10 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 	cooldownKey := s.codeCooldownKey(codeType, target)
 	ok, err := s.rdb.SetNX(ctx, cooldownKey, "1", codeSendCooldown).Result()
 	if err != nil {
-		s.LogInternal("SendCode set cooldown", err)
+		s.LogInternal("SendCode set cooldown", err,
+			zap.String("code_type", codeType),
+			baseservice.TargetField(target),
+		)
 		return errcode.ErrInternal
 	}
 	if !ok {
@@ -526,7 +541,10 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 
 	key := s.codeRedisKey(codeType, target)
 	if err := s.rdb.Set(ctx, key, code, codeExpiry).Err(); err != nil {
-		s.LogInternal("SendCode set code", err)
+		s.LogInternal("SendCode set code", err,
+			zap.String("code_type", codeType),
+			baseservice.TargetField(target),
+		)
 		_ = s.rdb.Del(ctx, cooldownKey).Err()
 		return errcode.ErrInternal
 	}
@@ -537,7 +555,10 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 			Target:  target,
 			Code:    code,
 		}); err != nil {
-			s.LogInternal("SendCode dispatch", err)
+			s.LogInternal("SendCode dispatch", err,
+				zap.String("code_type", codeType),
+				baseservice.TargetField(target),
+			)
 			// 下发失败：回滚冷却与验证码，便于用户重试
 			_ = s.rdb.Del(ctx, cooldownKey, key).Err()
 			return errcode.ErrInternal
@@ -594,7 +615,7 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 		case errors.Is(lookupErr, repo.ErrNotFound):
 			return nil, errcode.ErrInvalidToken
 		default:
-			s.LogInternal("Refresh lookup user", lookupErr)
+			s.LogInternal("Refresh lookup user", lookupErr, baseservice.UserIDField(claims.UserID))
 			return nil, errcode.ErrInternal
 		}
 	}
@@ -605,13 +626,13 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 	}
 
 	if err := s.rdb.Set(ctx, blackKey, "1", refreshBlacklistTTL).Err(); err != nil {
-		s.LogInternal("Refresh blacklist old token", err)
+		s.LogInternal("Refresh blacklist old token", err, baseservice.UserIDField(claims.UserID))
 		return nil, errcode.ErrInternal
 	}
 
 	pair, issueErr := s.tokens.IssueTokenPair(claims.UserID, claims.Role, sessionID)
 	if issueErr != nil {
-		s.LogInternal("Refresh issue token pair", issueErr)
+		s.LogInternal("Refresh issue token pair", issueErr, baseservice.UserIDField(claims.UserID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -627,20 +648,22 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 
 	var logoutErr *errcode.Error
 
-	// 将 refresh token 加入 Redis 黑名单，TTL 等于 refresh token 有效期
 	key := s.blacklistKey(refreshToken)
+	claims, parseErr := s.tokens.ParseRefreshToken(refreshToken)
+
 	if err := s.rdb.Set(ctx, key, "1", refreshBlacklistTTL).Err(); err != nil {
-		s.LogInternal("Logout blacklist refresh token", err)
+		if parseErr == nil {
+			s.LogInternal("Logout blacklist refresh token", err, baseservice.UserIDField(claims.UserID))
+		} else {
+			s.LogInternal("Logout blacklist refresh token", err)
+		}
 		logoutErr = errcode.ErrInternal
 	}
 
-	if claims, err := s.tokens.ParseRefreshToken(refreshToken); err == nil {
-		// 仅吊销当前设备的 session；多设备模式下不影响其他设备。
-		if claims.SessionID != "" && s.sessions != nil {
-			if err := s.sessions.Revoke(ctx, claims.UserID, claims.SessionID); err != nil {
-				s.LogInternal("Logout revoke session", err)
-				logoutErr = errcode.ErrInternal
-			}
+	if parseErr == nil && claims.SessionID != "" && s.sessions != nil {
+		if err := s.sessions.Revoke(ctx, claims.UserID, claims.SessionID); err != nil {
+			s.LogInternal("Logout revoke session", err, baseservice.UserIDField(claims.UserID))
+			logoutErr = errcode.ErrInternal
 		}
 	}
 
@@ -696,7 +719,9 @@ func (s *AuthServiceImpl) findUserByAccount(ctx context.Context, phone, email, a
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrInvalidCredentials
 		}
-		s.LogInternal("findUserByAccount lookup user", err)
+		s.LogInternal("findUserByAccount lookup user", err,
+			baseservice.TargetField(firstNonEmptyStr(phone, email, account)),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -711,7 +736,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 			return errcode.ErrAlreadyExists
 		}
 		if !errors.Is(err, repo.ErrNotFound) {
-			s.LogInternal("checkAccountExists lookup phone", err)
+			s.LogInternal("checkAccountExists lookup phone", err, baseservice.TargetField(phone))
 			return errcode.ErrInternal
 		}
 	}
@@ -722,7 +747,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 			return errcode.ErrAlreadyExists
 		}
 		if !errors.Is(err, repo.ErrNotFound) {
-			s.LogInternal("checkAccountExists lookup email", err)
+			s.LogInternal("checkAccountExists lookup email", err, baseservice.TargetField(email))
 			return errcode.ErrInternal
 		}
 	}
@@ -739,14 +764,14 @@ func (s *AuthServiceImpl) issueResult(ctx context.Context, user *repo.User) (*au
 	sessionID := session.NewSessionID()
 	if s.sessions != nil {
 		if err := s.sessions.Register(ctx, user.ID.String(), sessionID); err != nil {
-			s.LogInternal("issueResult register session", err)
+			s.LogInternal("issueResult register session", err, baseservice.UserIDField(user.ID.String()))
 			return nil, errcode.ErrInternal
 		}
 	}
 
 	pair, err := s.tokens.IssueTokenPair(user.ID.String(), user.Role, sessionID)
 	if err != nil {
-		s.LogInternal("issueResult issue token pair", err)
+		s.LogInternal("issueResult issue token pair", err, baseservice.UserIDField(user.ID.String()))
 		return nil, errcode.ErrInternal
 	}
 
@@ -874,4 +899,13 @@ func looksLikePhone(s string) bool {
 		}
 	}
 	return true
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

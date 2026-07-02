@@ -99,7 +99,7 @@ func (s *userServiceImpl) GetProfile(ctx context.Context, userID string) (*Profi
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("GetProfile lookup user", err)
+		s.LogInternal("GetProfile lookup user", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -120,7 +120,7 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("UpdateProfile lookup user", err)
+		s.LogInternal("UpdateProfile lookup user", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -138,7 +138,7 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("UpdateProfile update user", err)
+		s.LogInternal("UpdateProfile update user", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 	return toProfileResult(updated), nil
@@ -159,7 +159,7 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		if errors.Is(err, repo.ErrNotFound) {
 			return errcode.ErrNotFound
 		}
-		s.LogInternal("ChangePassword lookup user", err)
+		s.LogInternal("ChangePassword lookup user", err, baseservice.UserIDField(userID))
 		return errcode.ErrInternal
 	}
 
@@ -176,25 +176,25 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		s.LogInternal("ChangePassword hash new password", err)
+		s.LogInternal("ChangePassword hash new password", err, baseservice.UserIDField(userID))
 		return errcode.ErrInternal
 	}
 
 	if _, err := s.users.UpdatePassword(ctx, id, string(hash)); err != nil {
-		s.LogInternal("ChangePassword update password", err)
+		s.LogInternal("ChangePassword update password", err, baseservice.UserIDField(userID))
 		return errcode.ErrInternal
 	}
 
 	// 改密后吊销该用户所有会话与旧 access token
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
-			s.LogInternal("ChangePassword revoke all sessions", err)
+			s.LogInternal("ChangePassword revoke all sessions", err, baseservice.UserIDField(userID))
 		}
 	}
 	if s.rdb != nil {
 		revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
 		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
-			s.LogInternal("ChangePassword revoke access tokens", err)
+			s.LogInternal("ChangePassword revoke access tokens", err, baseservice.UserIDField(userID))
 		}
 	}
 

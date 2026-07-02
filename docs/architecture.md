@@ -206,7 +206,7 @@ make build
 make sqlc
 ```
 
-CI 位于 `.github/workflows/ci.yml`，会校验 sqlc 生成代码、**OpenAPI 契约**（`docs/api/openapi.yaml` 与 Gin 路由一致）、运行测试并构建后端。
+CI 位于 `.github/workflows/ci.yml`，会校验 sqlc 生成代码、**OpenAPI 契约**、运行测试并构建后端。带 `-tags=integration` 的集成/E2E 测试需本机 Docker（`make test-integration`、`make test-e2e`）。
 
 ## 多端与子服务
 

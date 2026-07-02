@@ -58,15 +58,18 @@ log:
 
 ```go
 s.LogInternal("ChangePassword update password", err,
-    zap.String("user_id", userID),
+    baseservice.UserIDField(userID),
 )
 ```
 
 约定：
 
-- **已知 `user_id` 时必须追加**，便于与访问日志串联。
-- `op` 使用简短英文短语，描述失败步骤（与现有代码风格一致）。
+- **已知 `user_id` 时**使用 `UserIDField(userID)`；admin 操作他人时使用 `UserIDField(targetUserID)` + `ActorUserIDField(actingUserID)`。
+- **尚未关联用户**（注册前、验证码下发）使用 `TargetField(phoneOrEmail)`。
+- `op` 使用简短英文短语，描述失败步骤。
 - 不要记录密码、token、验证码等敏感值。
+
+辅助函数：`UserIDField`、`ActorUserIDField`、`TargetField`（空值自动 `zap.Skip()`）。
 
 ## 基础设施日志
 

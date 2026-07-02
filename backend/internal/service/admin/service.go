@@ -130,7 +130,7 @@ func (s *adminServiceImpl) GetUser(ctx context.Context, userID string) (*UserIte
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("GetUser lookup", err)
+		s.LogInternal("GetUser lookup", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -156,7 +156,10 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("UpdateRole update", err)
+		s.LogInternal("UpdateRole update", err,
+			baseservice.UserIDField(targetUserID),
+			baseservice.ActorUserIDField(actingUserID),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -182,7 +185,10 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("SetStatus update", err)
+		s.LogInternal("SetStatus update", err,
+			baseservice.UserIDField(targetUserID),
+			baseservice.ActorUserIDField(actingUserID),
+		)
 		return nil, errcode.ErrInternal
 	}
 
@@ -198,7 +204,7 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string) {
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
-			s.LogInternal("SetStatus revoke all sessions", err)
+			s.LogInternal("SetStatus revoke all sessions", err, baseservice.UserIDField(userID))
 		}
 	}
 	if s.rdb == nil {
@@ -206,7 +212,7 @@ func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string
 	}
 	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
 	if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
-		s.LogInternal("SetStatus revoke access tokens", err)
+		s.LogInternal("SetStatus revoke access tokens", err, baseservice.UserIDField(userID))
 	}
 }
 
