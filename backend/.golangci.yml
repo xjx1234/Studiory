@@ -3,6 +3,14 @@ version: "2"
 run:
   timeout: 5m
 
+formatters:
+  enable:
+    - gofmt       # 运行 gofmt 格式化检查
+  exclusions:
+    # sqlc 生成代码不参与格式化检查
+    paths:
+      - internal/repo/sqlc/gen
+
 linters:
   # standard 已包含 errcheck / govet / ineffassign / staticcheck / unused
   default: standard

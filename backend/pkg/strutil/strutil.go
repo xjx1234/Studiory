@@ -10,3 +10,12 @@ func NullableStr(s string) *string {
 	}
 	return &s
 }
+
+// Truncate 截断字符串至最多 maxLen 个字符，避免切片越界。
+// 适合用于日志中的敏感/长字段脱敏。
+func Truncate(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
+}

@@ -59,10 +59,10 @@ func TestLoginLockedAfterMaxFailures(t *testing.T) {
 
 	for i := 0; i < loginMaxFailAttempts; i++ {
 		_, e := svc.Login(context.Background(), req)
-		if e == nil {
+		switch {
+		case e == nil:
 			t.Fatalf("attempt %d: expected error, got nil", i+1)
-		}
-		if e.Code == errcode.ErrAccountLocked.Code {
+		case e.Code == errcode.ErrAccountLocked.Code:
 			t.Fatalf("account locked too early at attempt %d", i+1)
 		}
 	}

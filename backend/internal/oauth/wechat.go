@@ -57,7 +57,7 @@ func (p *WechatProvider) Verify(ctx context.Context, req VerifyRequest) (*Identi
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

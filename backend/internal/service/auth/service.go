@@ -814,10 +814,6 @@ func (s *AuthServiceImpl) blacklistKey(token string) string {
 	return fmt.Sprintf("%s:blacklist:refresh:%x", s.codePrefix, h)
 }
 
-func (s *AuthServiceImpl) revokeUserKey(userID string) string {
-	return fmt.Sprintf("%s:revoke:uid:%s", s.codePrefix, userID)
-}
-
 // ── 登录暴力破解防护 ──────────────────────────────────────────────────────────
 
 // isLoginLocked 检查账号是否处于锁定状态。
@@ -829,7 +825,7 @@ func (s *AuthServiceImpl) isLoginLocked(ctx context.Context, account string) boo
 	exists, err := s.rdb.Exists(ctx, s.loginLockKey(account)).Result()
 	if err != nil {
 		if s.Logger != nil {
-			s.Logger.Warn("isLoginLocked redis error, fail-open", zap.String("account_hash", account[:8]), zap.Error(err))
+			s.Logger.Warn("isLoginLocked redis error, fail-open", zap.String("account_hash", strutil.Truncate(account, 8)), zap.Error(err))
 		}
 		return false
 	}
