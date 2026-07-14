@@ -12,9 +12,9 @@ func TestSecurityHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name       string
-		isProd     bool
-		wantHSTS   bool
+		name     string
+		isProd   bool
+		wantHSTS bool
 	}{
 		{"dev: no HSTS", false, false},
 		{"prod: has HSTS", true, true},

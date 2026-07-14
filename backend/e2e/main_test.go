@@ -84,13 +84,13 @@ func testConfig(databaseURL, redisURL string) *config.Config {
 		AuthMultiDeviceEnabled:  true,
 		OAuthDevMode:            true,
 		OAuthProviders:          []string{"wechat", "apple", "google"},
-		LogLevel:                  "error",
-		LogFormat:                 "json",
-		RateLimitPerMinute:        1000,
-		RateLimitUserPerMinute:    1000,
-		MetricsEnabled:            false,
-		CORSAllowOrigins:          []string{"http://localhost:5173"},
-		CORSAllowCredentials:      true,
+		LogLevel:                "error",
+		LogFormat:               "json",
+		RateLimitPerMinute:      1000,
+		RateLimitUserPerMinute:  1000,
+		MetricsEnabled:          false,
+		CORSAllowOrigins:        []string{"http://localhost:5173"},
+		CORSAllowCredentials:    true,
 	}
 }
 

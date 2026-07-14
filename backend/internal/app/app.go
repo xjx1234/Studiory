@@ -13,11 +13,11 @@ import (
 	"backend/internal/oauth"
 	"backend/internal/repo/pg"
 	"backend/internal/sender"
-	"backend/internal/session"
 	adminservice "backend/internal/service/admin"
 	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
+	"backend/internal/session"
 	"backend/internal/store"
 	pkgvalidator "backend/pkg/validator"
 
@@ -118,8 +118,8 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		AuthMiddleware:          middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, logger),
 		RateLimitMiddleware:     middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
 		UserRateLimitMiddleware: middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix),
-		MetricsMiddleware:   metricsMiddleware,
-		MetricsHandler:      metricsHandler,
+		MetricsMiddleware:       metricsMiddleware,
+		MetricsHandler:          metricsHandler,
 		ReadyChecks: []internalhttp.ReadyCheck{
 			{
 				Name: "PostgreSQL",

@@ -37,7 +37,6 @@ type todoIDParam struct {
 	ID string `uri:"id" binding:"required,uuid"`
 }
 
-
 // List GET /api/v1/user/todos
 func (h *UserTodoHandler) List(c *gin.Context) {
 	userID, ok := mustUserID(c)

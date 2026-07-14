@@ -156,4 +156,3 @@ func TestLogout_OnlyRevokesCurrentSession_MultiDevice(t *testing.T) {
 		t.Fatal("other device session should still be valid")
 	}
 }
-

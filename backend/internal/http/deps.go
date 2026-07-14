@@ -39,10 +39,10 @@ type Deps struct {
 	// TodoService 示例模块（可复制此模式添加真实业务）
 	TodoService todoservice.Service
 
-	AuthMiddleware        gin.HandlerFunc
-	RateLimitMiddleware   gin.HandlerFunc
+	AuthMiddleware          gin.HandlerFunc
+	RateLimitMiddleware     gin.HandlerFunc
 	UserRateLimitMiddleware gin.HandlerFunc
-	ReadyChecks           []ReadyCheck
+	ReadyChecks             []ReadyCheck
 
 	// MetricsMiddleware / MetricsHandler 为可选项（metrics.enabled=false 时为 nil）。
 	// 由 app 层装配：handler 不直接持有基础设施，仅挂载 Prometheus 暴露端点。

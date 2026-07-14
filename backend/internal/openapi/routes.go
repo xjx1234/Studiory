@@ -7,11 +7,11 @@ import (
 )
 
 var allowedMethods = map[string]struct{}{
-	http.MethodGet:     {},
-	http.MethodPost:    {},
-	http.MethodPut:     {},
-	http.MethodPatch:   {},
-	http.MethodDelete:  {},
+	http.MethodGet:    {},
+	http.MethodPost:   {},
+	http.MethodPut:    {},
+	http.MethodPatch:  {},
+	http.MethodDelete: {},
 }
 
 // RouteInfo 是路由采集所需的最小接口（兼容 gin.Engine.Routes()）。

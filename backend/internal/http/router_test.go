@@ -73,12 +73,12 @@ func newTestServer(t *testing.T) (*gin.Engine, *testServer) {
 	}
 
 	deps := &Deps{
-		Cfg:                 &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}},
-		AuthService:         ts.auth,
-		UserService:         ts.user,
-		TodoService:         ts.todo,
-		AdminService:        ts.admin,
-		AuthMiddleware:      fakeAuthMiddleware,
+		Cfg:                     &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}},
+		AuthService:             ts.auth,
+		UserService:             ts.user,
+		TodoService:             ts.todo,
+		AdminService:            ts.admin,
+		AuthMiddleware:          fakeAuthMiddleware,
 		RateLimitMiddleware:     func(c *gin.Context) { c.Next() },
 		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
 		ReadyChecks: []ReadyCheck{

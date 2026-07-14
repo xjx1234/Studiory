@@ -56,7 +56,7 @@ type Config struct {
 	JWTRefreshTokenTTL time.Duration
 
 	// ── Auth ──────────────────────────────────────────────────────────────
-	AuthMockCodeEnabled  bool
+	AuthMockCodeEnabled    bool
 	AuthMultiDeviceEnabled bool // true=多设备同时在线；false=单设备（新登录踢掉旧会话）
 
 	// ── 验证码下发（SMTP 邮件，可选）────────────────────────────────────────
@@ -96,8 +96,8 @@ func Load() *Config {
 	v := loadViper()
 
 	cfg := &Config{
-		AppEnv:     v.GetString("app.env"),
-		ServerAddr: v.GetString("app.server_addr"),
+		AppEnv:                  v.GetString("app.env"),
+		ServerAddr:              v.GetString("app.server_addr"),
 		ServerReadHeaderTimeout: v.GetDuration("app.read_header_timeout"),
 		ServerReadTimeout:       v.GetDuration("app.read_timeout"),
 		ServerWriteTimeout:      v.GetDuration("app.write_timeout"),
@@ -125,7 +125,7 @@ func Load() *Config {
 		JWTAccessTokenTTL:  v.GetDuration("jwt.access_ttl"),
 		JWTRefreshTokenTTL: v.GetDuration("jwt.refresh_ttl"),
 
-		AuthMockCodeEnabled:  v.GetBool("auth.mock_code_enabled"),
+		AuthMockCodeEnabled:    v.GetBool("auth.mock_code_enabled"),
 		AuthMultiDeviceEnabled: v.GetBool("auth.multi_device_enabled"),
 
 		SMTPHost:     v.GetString("smtp.host"),
