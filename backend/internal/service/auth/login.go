@@ -11,6 +11,7 @@ import (
 	"backend/internal/repo"
 	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
+	"backend/pkg/strutil"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -250,7 +251,7 @@ func (s *AuthServiceImpl) findUserByAccount(ctx context.Context, phone, email, a
 		user, err = s.users.GetByEmail(ctx, email)
 	case account != "":
 		// account 字段同时支持手机号和邮箱
-		if looksLikePhone(account) {
+		if strutil.LooksLikePhone(account) {
 			user, err = s.users.GetByPhone(ctx, account)
 		} else {
 			user, err = s.users.GetByEmail(ctx, account)
@@ -264,7 +265,7 @@ func (s *AuthServiceImpl) findUserByAccount(ctx context.Context, phone, email, a
 			return nil, errcode.ErrInvalidCredentials
 		}
 		s.LogInternal("findUserByAccount lookup user", err,
-			baseservice.TargetField(firstNonEmptyStr(phone, email, account)),
+			baseservice.TargetField(strutil.FirstNonEmpty(phone, email, account)),
 		)
 		return nil, errcode.ErrInternal
 	}

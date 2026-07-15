@@ -40,7 +40,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcryptCost)
 	if err != nil {
 		s.LogInternal("registerWithPassword hash password", err,
-			baseservice.TargetField(firstNonEmptyStr(input.Phone, input.Email)),
+			baseservice.TargetField(strutil.FirstNonEmpty(input.Phone, input.Email)),
 		)
 		return nil, errcode.ErrInternal
 	}
@@ -59,7 +59,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 			return nil, errcode.ErrAlreadyExists
 		}
 		s.LogInternal("registerWithPassword create user", createErr,
-			baseservice.TargetField(firstNonEmptyStr(input.Phone, input.Email)),
+			baseservice.TargetField(strutil.FirstNonEmpty(input.Phone, input.Email)),
 		)
 		return nil, errcode.ErrInternal
 	}
@@ -97,7 +97,7 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 			return nil, errcode.ErrAlreadyExists
 		}
 		s.LogInternal("registerWithCode create user", createErr,
-			baseservice.TargetField(firstNonEmptyStr(input.Phone, input.Email)),
+			baseservice.TargetField(strutil.FirstNonEmpty(input.Phone, input.Email)),
 		)
 		return nil, errcode.ErrInternal
 	}

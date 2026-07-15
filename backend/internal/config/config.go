@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"backend/pkg/strutil"
+
 	"github.com/spf13/viper"
 	"github.com/subosito/gotenv"
 )
@@ -154,8 +156,8 @@ func Load() *Config {
 	}
 
 	// DATABASE_URL 和 REDIS_URL 优先（为空时从分项拼接）
-	cfg.DatabaseURL = firstNonEmpty(v.GetString("database.url"), cfg.buildDatabaseURL())
-	cfg.RedisURL = firstNonEmpty(v.GetString("redis.url"), cfg.buildRedisURL())
+	cfg.DatabaseURL = strutil.FirstNonEmpty(v.GetString("database.url"), cfg.buildDatabaseURL())
+	cfg.RedisURL = strutil.FirstNonEmpty(v.GetString("redis.url"), cfg.buildRedisURL())
 
 	if cfg.RateLimitUserPerMinute <= 0 {
 		cfg.RateLimitUserPerMinute = cfg.RateLimitPerMinute
@@ -359,15 +361,6 @@ func (c *Config) buildRedisURL() string {
 	}
 	url += fmt.Sprintf("%s:%s/%d", c.RedisHost, c.RedisPort, c.RedisDB)
 	return url
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func getStringSlice(v *viper.Viper, key string) []string {
