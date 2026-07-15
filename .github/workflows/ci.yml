@@ -63,6 +63,9 @@ jobs:
       - name: Integration tests (repo layer)
         run: go test -tags=integration ./internal/repo/pg/...
 
+      - name: Integration tests (app startup/health/shutdown)
+        run: go test -tags=integration -count=1 ./internal/app/...
+
       - name: E2E tests (HTTP + PG + Redis)
         run: go test -tags=integration -count=1 ./e2e/...
 

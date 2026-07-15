@@ -23,7 +23,7 @@ help:
 	@echo "  make build         Build backend"
 	@echo "  make test          Run Go tests"
 	@echo "  make cover         Run tests with coverage summary"
-	@echo "  make test-integration  Run repo integration tests (needs Docker)"
+	@echo "  make test-integration  Run repo/app integration tests (needs Docker)"
 	@echo "  make test-e2e          Run HTTP E2E tests (needs Docker)"
 	@echo "  make lint          Run golangci-lint (install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)"
 	@echo "  make vuln          Run govulncheck (install: go install golang.org/x/vuln/cmd/govulncheck@latest)"
@@ -71,7 +71,7 @@ cover:
 	cd $(BACKEND_DIR) && go test -race -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1
 
 test-integration:
-	cd $(BACKEND_DIR) && go test -tags=integration ./internal/repo/pg/...
+	cd $(BACKEND_DIR) && go test -tags=integration ./internal/repo/pg/... ./internal/app/...
 
 test-e2e:
 	cd $(BACKEND_DIR) && go test -tags=integration -count=1 ./e2e/...

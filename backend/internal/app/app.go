@@ -121,21 +121,8 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		MetricsMiddleware:       metricsMiddleware,
 		MetricsHandler:          metricsHandler,
 		ReadyChecks: []internalhttp.ReadyCheck{
-			{
-				Name: "PostgreSQL",
-				Check: func(ctx context.Context) error {
-					if pgStore.Pool() == nil {
-						return errors.New("postgres pool is nil")
-					}
-					return pgStore.Pool().Ping(ctx)
-				},
-			},
-			{
-				Name: "Redis",
-				Check: func(ctx context.Context) error {
-					return rdb.Ping(ctx).Err()
-				},
-			},
+			{Name: "PostgreSQL", Check: postgresReadyCheck(pgStore.Pool())},
+			{Name: "Redis", Check: redisReadyCheck(rdb)},
 		},
 	}
 
@@ -165,6 +152,26 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		Router: router,
 		Server: server,
 	}, nil
+}
+
+// postgresReadyCheck 构造 /ready 使用的 PostgreSQL 探针：连接池未初始化或 Ping 失败均视为不可用。
+func postgresReadyCheck(pool *pgxpool.Pool) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		if pool == nil {
+			return errors.New("postgres pool is nil")
+		}
+		return pool.Ping(ctx)
+	}
+}
+
+// redisReadyCheck 构造 /ready 使用的 Redis 探针。
+func redisReadyCheck(rdb redis.UniversalClient) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		if rdb == nil {
+			return errors.New("redis client is nil")
+		}
+		return rdb.Ping(ctx).Err()
+	}
 }
 
 // buildCodeSender 按配置装配验证码下发器。

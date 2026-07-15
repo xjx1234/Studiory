@@ -363,13 +363,20 @@ func (c *Config) buildRedisURL() string {
 	return url
 }
 
+// getStringSlice 从配置读取字符串列表。
+//
+// viper 对形如 "a, b ,c" 的字符串值会先按空白拆分（而不是按逗号），
+// 可能产生 ["a,", "b", ",c"] 这种带残留逗号的中间结果；这里统一重新拼接、
+// 按逗号切分并去除首尾空格，使 "a,b,c"、"a, b, c"、原生 yaml 列表都能得到
+// 一致的解析结果。
 func getStringSlice(v *viper.Viper, key string) []string {
 	raw := v.GetStringSlice(key)
-	if len(raw) != 1 || !strings.Contains(raw[0], ",") {
-		return raw
+	joined := strings.Join(raw, ",")
+	if joined == "" {
+		return nil
 	}
 
-	parts := strings.Split(raw[0], ",")
+	parts := strings.Split(joined, ",")
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
