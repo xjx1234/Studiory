@@ -6,6 +6,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -63,7 +64,9 @@ func (s *Store) Register(ctx context.Context, userID, sessionID string) error {
 		if err := s.rdb.SAdd(ctx, setKey, sessionID).Err(); err != nil {
 			return err
 		}
-		_ = s.rdb.Expire(ctx, setKey, s.sessionTTL).Err()
+		if err := s.rdb.Expire(ctx, setKey, s.sessionTTL).Err(); err != nil {
+			return fmt.Errorf("expire user sessions set: %w", err)
+		}
 	} else {
 		activeKey := s.activeSessionKey(userID)
 		if err := s.rdb.Set(ctx, activeKey, sessionID, s.sessionTTL).Err(); err != nil {
@@ -99,30 +102,44 @@ func (s *Store) Validate(ctx context.Context, userID, sessionID string) bool {
 }
 
 // Revoke 吊销单个会话（登出当前设备）。
+// 返回底层 Redis 操作中遇到的所有错误（errors.Join），调用方应记录日志：
+// 吊销失败意味着该会话在 TTL 到期前可能仍被 Validate 判定为有效。
 func (s *Store) Revoke(ctx context.Context, userID, sessionID string) error {
 	if s.rdb == nil || userID == "" || sessionID == "" {
 		return nil
 	}
 
-	_ = s.rdb.Del(ctx, s.sessionKey(sessionID)).Err()
+	var errs []error
+
+	if err := s.rdb.Del(ctx, s.sessionKey(sessionID)).Err(); err != nil {
+		errs = append(errs, fmt.Errorf("del session key: %w", err))
+	}
 
 	if s.multiDevice {
-		_ = s.rdb.SRem(ctx, s.userSessionsKey(userID), sessionID).Err()
+		if err := s.rdb.SRem(ctx, s.userSessionsKey(userID), sessionID).Err(); err != nil {
+			errs = append(errs, fmt.Errorf("srem user sessions set: %w", err))
+		}
 	} else {
 		activeKey := s.activeSessionKey(userID)
 		active, err := s.rdb.Get(ctx, activeKey).Result()
 		if err == nil && active == sessionID {
-			_ = s.rdb.Del(ctx, activeKey).Err()
+			if delErr := s.rdb.Del(ctx, activeKey).Err(); delErr != nil {
+				errs = append(errs, fmt.Errorf("del active session key: %w", delErr))
+			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // RevokeAll 吊销用户全部会话（改密、禁用账号、单设备新登录前）。
+// 返回底层 Redis 操作中遇到的所有错误（errors.Join）：这是安全相关的关键操作
+// （改密/禁用账号后应立即失效旧会话），调用方必须记录日志，不能静默丢弃。
 func (s *Store) RevokeAll(ctx context.Context, userID string) error {
 	if s.rdb == nil || userID == "" {
 		return nil
 	}
+
+	var errs []error
 
 	if s.multiDevice {
 		setKey := s.userSessionsKey(userID)
@@ -131,17 +148,23 @@ func (s *Store) RevokeAll(ctx context.Context, userID string) error {
 			return err
 		}
 		for _, sid := range ids {
-			_ = s.rdb.Del(ctx, s.sessionKey(sid)).Err()
+			if err := s.rdb.Del(ctx, s.sessionKey(sid)).Err(); err != nil {
+				errs = append(errs, fmt.Errorf("del session key %s: %w", sid, err))
+			}
 		}
-		_ = s.rdb.Del(ctx, setKey).Err()
+		if err := s.rdb.Del(ctx, setKey).Err(); err != nil {
+			errs = append(errs, fmt.Errorf("del user sessions set: %w", err))
+		}
 	} else {
 		activeKey := s.activeSessionKey(userID)
 		active, err := s.rdb.Get(ctx, activeKey).Result()
 		if err == nil && active != "" {
-			_ = s.rdb.Del(ctx, s.sessionKey(active), activeKey).Err()
+			if err := s.rdb.Del(ctx, s.sessionKey(active), activeKey).Err(); err != nil {
+				errs = append(errs, fmt.Errorf("del active session: %w", err))
+			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Store) sessionKey(sessionID string) string {

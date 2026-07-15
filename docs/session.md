@@ -35,7 +35,8 @@ auth:
 |------|------|
 | 会话存储 | `internal/session/session.go` |
 | JWT | `internal/auth/token.go`（`Claims.SessionID`） |
-| 登录/刷新/登出 | `internal/service/auth/service.go` |
+| 登录 | `internal/service/auth/login.go` |
+| 刷新/登出 | `internal/service/auth/token.go` |
 | 改密 | `internal/service/user/service.go` |
 | 禁用用户 | `internal/service/admin/service.go` |
 | 中间件 | `internal/http/middleware/auth.go` |
