@@ -2,6 +2,7 @@
 package pagination
 
 import (
+	"math"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,31 @@ type Query struct {
 // Offset 返回 SQL OFFSET。
 func (q Query) Offset() int {
 	return (q.Page - 1) * q.PageSize
+}
+
+// LimitInt32 返回适合传给数据库层（如 sqlc 生成代码）的 LIMIT 值。
+// PageSize 已由 ParseQuery clamp 到 [1, MaxPageSize]，这里的 clamp 是面向
+// 直接构造 Query（不经过 ParseQuery）场景的兜底防线。
+func (q Query) LimitInt32() int32 {
+	return clampToInt32(q.PageSize)
+}
+
+// OffsetInt32 返回适合传给数据库层的 OFFSET 值，避免 Page 异常偏大时
+// int → int32 转换溢出（G115）。
+func (q Query) OffsetInt32() int32 {
+	return clampToInt32(q.Offset())
+}
+
+// clampToInt32 将 int 安全收窄到 int32 范围，避免溢出。
+func clampToInt32(n int) int32 {
+	switch {
+	case n > math.MaxInt32:
+		return math.MaxInt32
+	case n < 0:
+		return 0
+	default:
+		return int32(n)
+	}
 }
 
 // List 统一分页响应结构。

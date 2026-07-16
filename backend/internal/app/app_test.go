@@ -83,7 +83,7 @@ func TestApp_Shutdown_StopsServerAndClosesRedis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	server := &http.Server{Handler: http.NewServeMux()}
+	server := &http.Server{Handler: http.NewServeMux(), ReadHeaderTimeout: 5 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ln) }()
 
@@ -128,7 +128,7 @@ func TestApp_Shutdown_LogsWarningButStillClosesResourcesOnTimeout(t *testing.T) 
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	server := &http.Server{Handler: mux}
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = server.Serve(ln) }()
 	defer close(unblock) // 保证测试结束时处理函数一定会退出，Serve 才能正常收尾
 

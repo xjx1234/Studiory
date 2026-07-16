@@ -284,6 +284,8 @@ func mergeConfig(base *viper.Viper, path, name string) {
 }
 
 // bindEnvs 显式绑定关键环境变量，保持与原有 .env 变量名兼容。
+//
+//nolint:gosec // G101 误报：这是「配置项 -> 环境变量名」的映射表，值均为变量名，不含真实密钥。
 func bindEnvs(v *viper.Viper) {
 	bindings := map[string]string{
 		"app.env":                     "APP_ENV",

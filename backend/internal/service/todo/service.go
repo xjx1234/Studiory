@@ -75,8 +75,8 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 		return pagination.List[Item]{}, errcode.ErrInternal
 	}
 
-	limit := int32(page.PageSize)
-	offset := int32(page.Offset())
+	limit := page.LimitInt32()
+	offset := page.OffsetInt32()
 	rows, err := s.todos.ListByUserIDPaginated(ctx, uid, limit, offset)
 	if err != nil {
 		s.LogInternal("List todos", err, baseservice.UserIDField(userID))

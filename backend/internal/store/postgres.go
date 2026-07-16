@@ -23,10 +23,10 @@ func NewPostgres(ctx context.Context, databaseURL string, opts PostgresOptions, 
 		return nil, err
 	}
 	if opts.MaxConns > 0 {
-		cfg.MaxConns = int32(opts.MaxConns)
+		cfg.MaxConns = int32(opts.MaxConns) //nolint:gosec // G115：连接池大小来自配置文件/环境变量，取值范围很小，不会溢出 int32
 	}
 	if opts.MinConns > 0 {
-		cfg.MinConns = int32(opts.MinConns)
+		cfg.MinConns = int32(opts.MinConns) //nolint:gosec // G115：同上
 	}
 	if opts.MaxConnIdle > 0 {
 		cfg.MaxConnIdleTime = opts.MaxConnIdle

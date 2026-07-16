@@ -104,8 +104,8 @@ func (s *adminServiceImpl) ListUsers(ctx context.Context, in ListInput, page pag
 	rows, err := s.users.List(ctx, &repo.ListUsersParams{
 		Keyword: in.Keyword,
 		Status:  in.Status,
-		Limit:   int32(page.PageSize),
-		Offset:  int32(page.Offset()),
+		Limit:   page.LimitInt32(),
+		Offset:  page.OffsetInt32(),
 	})
 	if err != nil {
 		s.LogInternal("ListUsers list", err)

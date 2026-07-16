@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+//nolint:gosec // G101 误报：这是 Google 公开的 tokeninfo 接口地址，不是密钥。
 const googleTokenInfoURL = "https://oauth2.googleapis.com/tokeninfo"
 
 // GoogleConfig Google OAuth 客户端配置。

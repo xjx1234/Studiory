@@ -17,12 +17,16 @@ linters:
   enable:
     - bodyclose   # 检测未关闭的 HTTP response body
     - misspell    # 检测英文拼写错误（注释/字符串）
+    - gosec       # 安全检查（硬编码密钥、弱随机数、SQL 拼接等）
   exclusions:
     # sqlc 生成代码不参与 lint
     paths:
       - internal/repo/sqlc/gen
     rules:
-      # 测试文件放宽 errcheck（断言/清理代码常忽略错误）
+      # 测试文件放宽 errcheck（断言/清理代码常忽略错误）、gosec
+      # （测试夹具里常见 postgres://postgres:password@... 这类占位 DSN，
+      # 会被 G101 误判为硬编码密钥，与真实密钥无关）
       - path: _test\.go
         linters:
           - errcheck
+          - gosec
