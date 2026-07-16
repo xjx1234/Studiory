@@ -123,3 +123,7 @@ make migrate-up  # 执行迁移
 4. 按需调整 `users.role` 枚举（migration）。
 5. 按 [docs/architecture.md](docs/architecture.md) 增加 migration → sqlc → repo → service → http。
 6. 评估示例 Todo 模块：保留作参考，或按 [docs/examples/todo-module.md](docs/examples/todo-module.md) 删除。
+
+## License
+
+[MIT](LICENSE)
