@@ -117,7 +117,7 @@ make migrate-up  # 执行迁移
 
 ## 新项目 checklist
 
-1. 改 `backend/go.mod` 的 module 名与 import 路径。
+1. 改 module 名与 import 路径：`make rename MODULE=github.com/acme/myapp`（自动改 `go.mod` + 全部 import 路径 + `-ldflags` 包路径，跑完会自检编译）。
 2. 改 `config/base.yaml`、`backend/.env` 中的库名、JWT 密钥。
 3. 改 `REDIS_KEY_PREFIX`、`CORS_ALLOW_ORIGINS`，避免多项目互相影响。
 4. 按需调整 `users.role` 枚举（migration）。

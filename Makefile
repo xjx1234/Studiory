@@ -5,7 +5,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X backend/internal/buildinfo.Version=$(VERSION) -X backend/internal/buildinfo.Commit=$(COMMIT) -X backend/internal/buildinfo.BuildTime=$(BUILD_TIME)
 
-.PHONY: help up down logs run build test cover test-integration test-e2e lint vuln sqlc openapi-check migrate-up migrate-down compose-up compose-down fmt tidy seed
+.PHONY: help up down logs run build test cover test-integration test-e2e lint vuln sqlc openapi-check migrate-up migrate-down compose-up compose-down fmt tidy seed rename
 
 help:
 	@echo "Available targets:"
@@ -29,6 +29,7 @@ help:
 	@echo "  make vuln          Run govulncheck (install: go install golang.org/x/vuln/cmd/govulncheck@latest)"
 	@echo "  make fmt           Format Go code"
 	@echo "  make tidy          Tidy Go modules"
+	@echo "  make rename MODULE=<path>  Rename Go module from 'backend' to <path> (new project bootstrap)"
 
 # 全栈一键启动：构建 API 镜像、自动跑迁移、启动 API+PG+Redis
 up:
@@ -90,3 +91,13 @@ tidy:
 
 seed:
 	cd $(BACKEND_DIR) && go run ./cmd/seed
+
+# 新项目开箱第一步：把 module 名从 backend 改成你自己的项目名，
+# 并同步替换所有 import 路径 / -ldflags 包路径。
+# 用法：make rename MODULE=github.com/acme/myapp
+rename:
+	@if [ -z "$(MODULE)" ]; then \
+		echo "用法: make rename MODULE=github.com/acme/myapp"; \
+		exit 1; \
+	fi
+	@bash scripts/rename-module.sh $(MODULE)
