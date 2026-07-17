@@ -53,6 +53,8 @@ spec:
             - name: SERVER_ADDR
               value: ":8080"
           envFrom:
+            - configMapRef:
+                name: studiory-api-config
             - secretRef:
                 name: studiory-api-secret
           # 存活探针：进程可响应即可；不访问 PG/Redis，避免依赖故障导致误重启

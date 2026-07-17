@@ -158,8 +158,7 @@ docker run --rm \
 
 ## 四、Kubernetes 部署示例
 
-示例清单位于 [`deploy/k8s/`](../deploy/k8s/)，包含 Deployment（探针 + 资源限制 + 优雅下线 + 反亲和）、Service、
-PodDisruptionBudget、ServiceMonitor（可选）、迁移 Job 与 Secret 模板。
+示例清单位于 [`deploy/k8s/`](../deploy/k8s/)，包含 Deployment（探针 + 资源限制 + 优雅下线 + 反亲和）、Service、ConfigMap（非敏感配置）、Ingress（域名 + TLS）、PodDisruptionBudget、ServiceMonitor（可选）、迁移 Job 与 Secret 模板。
 
 ### 探针约定
 
@@ -235,6 +234,56 @@ kubectl apply -f deploy/k8s/pdb.yaml
 kubectl apply -f deploy/k8s/service-monitor.yaml
 ```
 
+### ConfigMap 与 Secret（配置分离）
+
+配置分为两类，通过 `envFrom` 组合注入容器：
+
+| 来源 | 文件 | 存放内容 | 更新方式 |
+|------|------|----------|----------|
+| **ConfigMap** | [`configmap.yaml`](../deploy/k8s/configmap.yaml) | 非敏感配置：`APP_ENV`、`LOG_FORMAT`、`CORS_ALLOW_ORIGINS`、`RATE_LIMIT_*` 等 | `kubectl apply -f` |
+| **Secret** | [`secret.example.yaml`](../deploy/k8s/secret.example.yaml) | 敏感信息：`DATABASE_URL`、`REDIS_URL`、`JWT_SECRET` 等 | 复制为 `secret.yaml` 编辑后 apply |
+
+```bash
+kubectl apply -f deploy/k8s/configmap.yaml
+
+cp deploy/k8s/secret.example.yaml secret.yaml
+# 编辑 secret.yaml 后：
+kubectl apply -f secret.yaml
+```
+
+> ConfigMap 更新后不会自动重启 Pod，需手动触发：`kubectl rollout restart deployment/studiory-api`
+
+### Ingress（域名 + TLS）
+
+[`ingress.yaml`](../deploy/k8s/ingress.yaml) 提供了基于 ingress-nginx 的 Ingress 模板，包含：
+
+- HTTPS 重定向（`ssl-redirect: true`）
+- 请求体大小限制（`proxy-body-size: 10m`）
+- 限速（`limit-rps: 10`，`limit-burst: 20`）
+- 超时与后端 `SERVER_READ/WRITE_TIMEOUT` 对齐
+- TLS 证书引用（手动创建或 cert-manager 自动签发）
+
+使用前需修改 `spec.rules.host` 和 `spec.tls.hosts` 为实际域名，并确保集群已安装 Ingress Controller。
+
+```bash
+# 安装 ingress-nginx（如尚未安装）
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  -n ingress-nginx --create-namespace
+
+# TLS 证书（二选一）
+# 方式一：手动创建
+kubectl create secret tls studiory-tls \
+  --cert=path/to/tls.crt --key=path/to/tls.key
+
+# 方式二：cert-manager 自动签发（需先安装 cert-manager）
+# 参考 https://cert-manager.io/docs/installation/
+
+# 应用 Ingress
+kubectl apply -f deploy/k8s/ingress.yaml
+```
+
+> 如果使用云厂商 Ingress Controller（如 AWS ALB、GCP GCE），需调整 `ingressClassName` 和 annotations。
+
 ### 部署步骤（示例）
 
 ```bash
@@ -246,19 +295,22 @@ docker build \
   -f backend/Dockerfile backend
 docker push registry.example.com/studiory-api:v1.0.0
 
-# 2. 创建 Secret（勿提交真实 secret.yaml）
+# 2. 创建 ConfigMap（非敏感配置）
+kubectl apply -f deploy/k8s/configmap.yaml
+
+# 3. 创建 Secret（勿提交真实 secret.yaml）
 cp deploy/k8s/secret.example.yaml secret.yaml
 # 编辑 secret.yaml 后：
 kubectl apply -f secret.yaml
 
-# 3. 迁移（先于 API 上线）
+# 4. 迁移（先于 API 上线）
 kubectl create configmap studiory-migrations \
   --from-file=backend/migrations/ \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f deploy/k8s/migrate-job.yaml
 kubectl wait --for=condition=complete job/studiory-migrate --timeout=120s
 
-# 4. 部署 API
+# 5. 部署 API
 # 编辑 deploy/k8s/api-deployment.yaml 中的 image 后：
 kubectl apply -f deploy/k8s/api-service.yaml
 kubectl apply -f deploy/k8s/api-deployment.yaml
@@ -266,7 +318,11 @@ kubectl apply -f deploy/k8s/pdb.yaml
 # 若使用 Prometheus Operator：
 # kubectl apply -f deploy/k8s/service-monitor.yaml
 
-# 5. 验证
+# 6. 配置 Ingress（域名 + TLS）
+# 编辑 deploy/k8s/ingress.yaml 中的 host 和 TLS 配置后：
+kubectl apply -f deploy/k8s/ingress.yaml
+
+# 7. 验证
 kubectl rollout status deployment/studiory-api
 kubectl port-forward svc/studiory-api 8080:80 &
 curl -s http://localhost:8080/health

@@ -1,0 +1,46 @@
+# Ingress：将外部 HTTP/HTTPS 流量路由到集群内 Service。
+#
+# 使用前：
+#   1. 集群已安装 Ingress Controller（ingress-nginx / Traefik / ALB 等）
+#   2. 将 spec.rules.host 改为实际域名
+#   3. TLS 证书通过 cert-manager 自动签发或手动创建 Secret
+#
+# 应用：
+#   kubectl apply -f deploy/k8s/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: studiory-api
+  labels:
+    app: studiory-api
+  annotations:
+    # nginx-ingress 示例；其他 Controller 按需调整
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # 请求体大小限制（按业务调整）
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # 限速：每个 IP 每秒 10 个请求，突发 20
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-burst: "20"
+    # 超时与后端 SERVER_READ/WRITE_TIMEOUT 对齐
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.example.com
+      # 证书 Secret（手动创建或由 cert-manager 自动签发）：
+      #   kubectl create secret tls studiory-tls \
+      #     --cert=path/to/tls.crt --key=path/to/tls.key
+      secretName: studiory-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: studiory-api
+                port:
+                  name: http

@@ -1,0 +1,37 @@
+# ConfigMap：存放非敏感配置（敏感信息放 Secret）
+#
+# Deployment 通过 envFrom.secretRef + envFrom.configMapRef 组合加载：
+#   - secret.example.yaml → DATABASE_URL / REDIS_URL / JWT_SECRET 等
+#   - 本文件               → APP_ENV / LOG_FORMAT / CORS 等
+#
+# 应用：
+#   kubectl apply -f deploy/k8s/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: studiory-api-config
+data:
+  APP_ENV: "production"
+  SERVER_ADDR: ":8080"
+
+  # 日志
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+
+  # Auth
+  AUTH_MULTI_DEVICE_ENABLED: "true"
+
+  # OAuth（生产关闭 dev 模式）
+  OAUTH_DEV_MODE: "false"
+  OAUTH_PROVIDERS: "wechat,apple,google"
+
+  # 限流
+  RATE_LIMIT_PER_MINUTE: "60"
+  RATE_LIMIT_USER_PER_MINUTE: "120"
+
+  # Metrics
+  METRICS_ENABLED: "true"
+
+  # CORS（按实际前端域名修改，敏感度低但非默认值）
+  CORS_ALLOW_ORIGINS: "https://your-frontend.example.com"
+  CORS_ALLOW_CREDENTIALS: "true"

@@ -13,7 +13,7 @@
 │   ├── pkg/          # 可复用公共库
 │   └── main.go
 ├── docs/             # 架构说明、Redis 键规范、部署、示例 API 等
-├── deploy/k8s/       # Kubernetes 示例清单（探针、资源、优雅下线、反亲和、PDB、迁移 Job）
+├── deploy/k8s/       # Kubernetes 示例清单（Deployment、Service、ConfigMap、Ingress、PDB、ServiceMonitor、迁移 Job）
 ├── docker-compose.yml
 └── Makefile
 ```
@@ -37,6 +37,18 @@
 
 详细约定与「如何加一个新模块」见 [docs/architecture.md](docs/architecture.md)。
 
+## 前置条件
+
+| 工具 | 版本 | 用途 | 安装 |
+|------|------|------|------|
+| Go | 1.25+ | 编译/测试 | [go.dev/dl](https://go.dev/dl/) |
+| Docker | 20.10+ | 起 PG/Redis、全栈体验 | [docker.com](https://www.docker.com/) |
+| golang-migrate | 4.17+ | 数据库迁移 | `go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest` |
+| sqlc | 1.27+ | 生成类型安全 SQL 代码 | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest` |
+| golangci-lint | 2.12+ | 代码检查 | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` |
+
+> 仅 `make up`（Docker 全栈）时不需要本地安装 Go/migrate/sqlc；本地开发（`make run`）需要全部安装。
+
 ## 快速开始
 
 ### 方式一：Docker 一键全栈（推荐快速体验）
@@ -55,6 +67,16 @@ make down                            # 停止
 仅用 Docker 起依赖，API 在本地用 Go 运行：
 
 ```bash
+# 一键初始化（复制 .env + 起依赖 + 迁移）
+make setup
+
+# 启动后端
+make run
+```
+
+或手动分步执行：
+
+```bash
 # 1. 配置（config.Load 会自动加载 backend/.env）
 cp backend/.env.example backend/.env
 # 编辑 DATABASE_URL、REDIS_URL、JWT_SECRET
@@ -67,6 +89,29 @@ make migrate-up
 
 # 4. 启动后端
 make run
+```
+
+### 首次启动验证
+
+```bash
+# 1. 健康检查
+curl http://localhost:8080/health
+# {"code":0,"message":"ok","data":{"status":"ok"}}
+
+# 2. 发送验证码（开发环境固定返回 123456）
+curl -X POST http://localhost:8080/api/v1/auth/send-code \
+  -H "Content-Type: application/json" \
+  -d '{"code_type":"sms","target":"13800138000"}'
+
+# 3. 验证码登录
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"grant_type":"sms_code","phone":"13800138000","code":"123456"}'
+# 返回 access_token + refresh_token
+
+# 4. 用 access_token 访问受保护接口
+curl http://localhost:8080/api/v1/user/profile \
+  -H "Authorization: Bearer <access_token>"
 ```
 
 完整启动/部署说明（含生产配置校验、独立迁移）见 [docs/deploy.md](docs/deploy.md)。
@@ -114,6 +159,7 @@ make migrate-up  # 执行迁移
 - 指标：[docs/metrics.md](docs/metrics.md)
 - OpenAPI：`docs/api/openapi.yaml`（CI 会校验文档合法性并与路由契约对比，见 `make openapi-check`）
 - 错误码：`docs/api/errcode.md`
+- 环境变量参考：[docs/env-vars.md](docs/env-vars.md)
 
 ## 新项目 checklist
 

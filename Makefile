@@ -5,10 +5,11 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X backend/internal/buildinfo.Version=$(VERSION) -X backend/internal/buildinfo.Commit=$(COMMIT) -X backend/internal/buildinfo.BuildTime=$(BUILD_TIME)
 
-.PHONY: help up down logs run build test cover test-integration test-e2e lint vuln sqlc openapi-check migrate-up migrate-down compose-up compose-down fmt tidy seed rename
+.PHONY: help setup up down logs run build test cover test-integration test-e2e lint vuln sqlc openapi-check migrate-up migrate-down compose-up compose-down fmt tidy seed rename
 
 help:
 	@echo "Available targets:"
+	@echo "  make setup         一键初始化本地开发环境（复制 .env + 起依赖 + 迁移）"
 	@echo "  make up            Start full stack (API + PostgreSQL + Redis + auto migrate)"
 	@echo "  make down          Stop full stack"
 	@echo "  make logs          Tail API container logs"
@@ -30,6 +31,20 @@ help:
 	@echo "  make fmt           Format Go code"
 	@echo "  make tidy          Tidy Go modules"
 	@echo "  make rename MODULE=<path>  Rename Go module from 'backend' to <path> (new project bootstrap)"
+
+# 一键初始化本地开发环境：复制 .env → 起依赖 → 迁移
+setup:
+	@if [ ! -f $(BACKEND_DIR)/.env ]; then \
+		cp $(BACKEND_DIR)/.env.example $(BACKEND_DIR)/.env; \
+		echo "✅ 已创建 $(BACKEND_DIR)/.env，请按需修改 DATABASE_URL / REDIS_URL / JWT_SECRET"; \
+	else \
+		echo "ℹ️  $(BACKEND_DIR)/.env 已存在，跳过复制"; \
+	fi
+	$(MAKE) compose-up
+	@echo "⏳ 等待 PostgreSQL 就绪..."
+	@sleep 3
+	$(MAKE) migrate-up
+	@echo "✅ 初始化完成，运行 'make run' 启动后端"
 
 # 全栈一键启动：构建 API 镜像、自动跑迁移、启动 API+PG+Redis
 up:
