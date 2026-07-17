@@ -60,7 +60,7 @@ func New(users repo.UserRepo, rdb redis.UniversalClient, opts ...Option) Service
 		users:                 users,
 		rdb:                   rdb,
 		codePrefix:            "app",
-		allowMockCodeFallback: true,
+		allowMockCodeFallback: false,
 		oauthDevMode:          false,
 		oauthProviders:        defaultOAuthProviderSet(),
 	}

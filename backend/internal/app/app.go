@@ -178,6 +178,9 @@ func redisReadyCheck(rdb redis.UniversalClient) func(ctx context.Context) error 
 //
 // 接入更多服务商（如阿里云/腾讯云短信）：实现 sender.Provider，按渠道追加到 providers，
 // NewRouter 会在同一渠道内按注册顺序做故障转移。
+//
+// 生产环境（APP_ENV=production）必须配置至少一个真实 Provider（SMTP 或短信），
+// 否则启动报错——避免验证码被明文写入日志造成安全漏洞。
 func buildCodeSender(cfg *config.Config, logger *zap.Logger) sender.Sender {
 	var providers []sender.Provider
 
@@ -190,11 +193,15 @@ func buildCodeSender(cfg *config.Config, logger *zap.Logger) sender.Sender {
 
 	// 短信：示例脚手架未内置真实运营商，按上方注释接入后追加到 providers。
 
-	// 兜底：开发模式或未配置任何真实 Provider 时，用 mock（仅日志）保证流程可跑通。
-	if cfg.AuthMockCodeEnabled || len(providers) == 0 {
-		if !cfg.AuthMockCodeEnabled {
-			logger.Warn("未配置真实验证码服务商，回退到 mock（仅日志，生产环境请接入真实短信/邮件服务）")
+	if cfg.AuthMockCodeEnabled {
+		// 开发模式显式启用 mock：追加 MockProvider，验证码固定 123456
+		providers = append(providers, sender.NewMockProvider(logger))
+	} else if len(providers) == 0 {
+		// 未配置任何真实 Provider：开发环境回退 mock（仅日志），生产环境直接报错
+		if cfg.IsProd() {
+			logger.Fatal("生产环境未配置真实验证码服务商（SMTP 或短信），请在 .env 中设置 SMTP_* 或接入短信运营商")
 		}
+		logger.Warn("未配置真实验证码服务商，回退到 mock（仅日志，生产环境请接入真实短信/邮件服务）")
 		providers = append(providers, sender.NewMockProvider(logger))
 	}
 
