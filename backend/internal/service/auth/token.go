@@ -17,10 +17,14 @@ import (
 const refreshBlacklistTTL = 7 * 24 * time.Hour
 
 func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*auth.TokenPair, *errcode.Error) {
-	// 检查黑名单
+	// 检查黑名单（fail-closed：Redis 出错时拒绝刷新，防止已登出的 token 被利用）
 	blackKey := s.blacklistKey(refreshToken)
 	exists, err := s.rdb.Exists(ctx, blackKey).Result()
-	if err == nil && exists > 0 {
+	if err != nil {
+		s.LogInternal("Refresh check blacklist", err)
+		return nil, errcode.ErrInternal
+	}
+	if exists > 0 {
 		return nil, errcode.ErrInvalidToken
 	}
 
