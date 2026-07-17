@@ -18,7 +18,27 @@ spec:
     metadata:
       labels:
         app: studiory-api
+      annotations:
+        # 供未使用 Prometheus Operator 的经典 Prometheus（kubernetes_sd_configs）直接发现抓取；
+        # 使用 Prometheus Operator 的话改用 service-monitor.yaml，两者不必同时启用。
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
     spec:
+      # 同一 app 的多个副本尽量分散到不同节点，避免单节点故障时全部实例同时不可用。
+      # 用 preferred（软约束）而非 required，避免小集群节点数不足时 Pod 无法调度。
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: studiory-api
+                topologyKey: kubernetes.io/hostname
+      # preStop（5s）+ 应用内优雅关闭（main.go 里 shutdown ctx 10s）+ 余量，
+      # 需要 terminationGracePeriodSeconds 覆盖两者之和，否则会被强杀（SIGKILL）。
+      terminationGracePeriodSeconds: 20
       containers:
         - name: api
           # 替换为实际镜像仓库，例如 registry.example.com/studiory-api:v1.0.0
@@ -64,3 +84,10 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
             runAsNonRoot: true
+          lifecycle:
+            preStop:
+              # 收到 SIGTERM 前先 sleep：给 Endpoints/kube-proxy/Ingress 留出时间
+              # 把本 Pod 从负载均衡里摘掉，避免摘流生效前仍有新请求打进来。
+              # sleep 结束后 kubelet 才发送 SIGTERM，触发 main.go 里的优雅关闭。
+              exec:
+                command: ["sh", "-c", "sleep 5"]

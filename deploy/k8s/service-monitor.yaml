@@ -1,0 +1,20 @@
+# 可选：仅当集群安装了 Prometheus Operator（提供 ServiceMonitor CRD）时才需要这个文件。
+# 如果用的是经典 Prometheus + kubernetes_sd_configs，直接用 api-deployment.yaml 里
+# 已经写好的 prometheus.io/scrape 系列 annotation 即可，不需要本文件，两者不要同时启用。
+#
+# 应用：
+#   kubectl apply -f deploy/k8s/service-monitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: studiory-api
+  labels:
+    app: studiory-api
+spec:
+  selector:
+    matchLabels:
+      app: studiory-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

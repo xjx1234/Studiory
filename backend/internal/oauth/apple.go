@@ -25,8 +25,9 @@ type AppleConfig struct {
 
 // AppleProvider 通过 Apple JWKS 校验 id_token 并解析 sub 作为 open_id。
 type AppleProvider struct {
-	cfg    AppleConfig
-	client *http.Client
+	cfg     AppleConfig
+	client  *http.Client
+	jwksURL string // 测试用覆盖；为空则使用默认生产地址
 
 	jwksMu sync.RWMutex
 	jwks   map[string]*rsa.PublicKey
@@ -116,7 +117,7 @@ func (p *AppleProvider) publicKey(ctx context.Context, kid string) (*rsa.PublicK
 }
 
 func (p *AppleProvider) refreshJWKS(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, appleJWKSURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.jwksEndpoint(), nil)
 	if err != nil {
 		return err
 	}
@@ -165,6 +166,13 @@ func (p *AppleProvider) refreshJWKS(ctx context.Context) error {
 	p.jwks = keys
 	p.jwksMu.Unlock()
 	return nil
+}
+
+func (p *AppleProvider) jwksEndpoint() string {
+	if p.jwksURL != "" {
+		return p.jwksURL
+	}
+	return appleJWKSURL
 }
 
 func rsaPublicKeyFromModExp(nB64, eB64 string) (*rsa.PublicKey, error) {

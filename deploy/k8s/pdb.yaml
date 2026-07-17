@@ -1,0 +1,14 @@
+# PodDisruptionBudget：限制“自愿驱逐”（节点维护 drain、cluster-autoscaler 缩容等）
+# 同时踢掉的 Pod 数量，避免 2 副本被同时驱逐导致短暂全不可用。
+# 不影响 kubelet 对故障 Pod 的强制驱逐，也不影响 Deployment 自身的滚动发布。
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: studiory-api
+spec:
+  # 2 副本场景下 minAvailable=1：允许一次驱逐一个，另一个必须保持可用。
+  # 副本数调多之后建议改成百分比，例如 maxUnavailable: 25%。
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: studiory-api

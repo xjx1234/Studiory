@@ -17,6 +17,12 @@ import (
 type FakeUserRepo struct {
 	Users   map[uuid.UUID]*repo.User
 	Created []*repo.User
+
+	// 错误注入：非 nil 时对应方法直接返回该错误，用于覆盖 service 层的
+	// “非 ErrNotFound 的内部错误” 分支（真实数据库故障等）。
+	GetByIDErr        error
+	UpdateProfileErr  error
+	UpdatePasswordErr error
 }
 
 func NewFakeUserRepo() *FakeUserRepo {
@@ -24,6 +30,9 @@ func NewFakeUserRepo() *FakeUserRepo {
 }
 
 func (r *FakeUserRepo) GetByID(_ context.Context, id uuid.UUID) (*repo.User, error) {
+	if r.GetByIDErr != nil {
+		return nil, r.GetByIDErr
+	}
 	if u, ok := r.Users[id]; ok {
 		return u, nil
 	}
@@ -68,6 +77,9 @@ func (r *FakeUserRepo) Create(_ context.Context, params *repo.CreateUserParams) 
 }
 
 func (r *FakeUserRepo) UpdatePassword(_ context.Context, id uuid.UUID, hash string) (*repo.User, error) {
+	if r.UpdatePasswordErr != nil {
+		return nil, r.UpdatePasswordErr
+	}
 	u, ok := r.Users[id]
 	if !ok {
 		return nil, repo.ErrNotFound
@@ -77,6 +89,9 @@ func (r *FakeUserRepo) UpdatePassword(_ context.Context, id uuid.UUID, hash stri
 }
 
 func (r *FakeUserRepo) UpdateProfile(_ context.Context, id uuid.UUID, nickname, avatar string) (*repo.User, error) {
+	if r.UpdateProfileErr != nil {
+		return nil, r.UpdateProfileErr
+	}
 	u, ok := r.Users[id]
 	if !ok {
 		return nil, repo.ErrNotFound

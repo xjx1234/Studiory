@@ -158,7 +158,8 @@ docker run --rm \
 
 ## 四、Kubernetes 部署示例
 
-示例清单位于 [`deploy/k8s/`](../deploy/k8s/)，包含 Deployment（探针 + 资源限制）、Service、迁移 Job 与 Secret 模板。
+示例清单位于 [`deploy/k8s/`](../deploy/k8s/)，包含 Deployment（探针 + 资源限制 + 优雅下线 + 反亲和）、Service、
+PodDisruptionBudget、ServiceMonitor（可选）、迁移 Job 与 Secret 模板。
 
 ### 探针约定
 
@@ -191,6 +192,49 @@ docker run --rm \
 
 Go API 通常内存占用不高；高并发或大量连接时可按 Prometheus / 压测结果调高 `limits`，并同步调整 `database.pool.max_conns`、`redis.pool_size`。
 
+### 优雅下线（preStop + terminationGracePeriodSeconds）
+
+滚动发布/缩容时，kubelet 发 SIGTERM 与 Service/kube-proxy/Ingress 摘除该 Pod 的 Endpoint 是**并行**发生的，
+没有严格的先后顺序保证——如果 App 收到 SIGTERM 立刻退出，仍可能有新请求在摘流生效前被转发进来。
+
+`api-deployment.yaml` 用一个简单的 `preStop: sleep 5` 缓解：
+
+```yaml
+lifecycle:
+  preStop:
+    exec:
+      command: ["sh", "-c", "sleep 5"]
+```
+
+时间线：`preStop`（5s，只 sleep 不处理业务）→ kubelet 发 SIGTERM → 应用内优雅关闭（`main.go` 里 shutdown ctx 10s）。
+`terminationGracePeriodSeconds` 必须覆盖这两段时间之和，否则会在关闭完成前被 kubelet 强杀（SIGKILL），
+所以清单里设为 `20`（5 + 10 + 余量）。若调整了 shutdown 超时或 preStop 时长，记得同步调整这个值。
+
+### 反亲和（podAntiAffinity）与 PodDisruptionBudget
+
+- **podAntiAffinity**（软约束）：尽量把 `studiory-api` 的多个副本调度到不同节点，避免单节点故障时全部实例同时下线。用
+  `preferredDuringSchedulingIgnoredDuringExecution` 而非 `required`，小集群节点数不够时也能正常调度，只是不保证严格分散。
+- **PodDisruptionBudget**（[`pdb.yaml`](../deploy/k8s/pdb.yaml)）：限制节点维护 drain、`cluster-autoscaler` 缩容等
+  **自愿驱逐**同时踢掉的副本数（`minAvailable: 1`），不影响 kubelet 对故障 Pod 的强制驱逐，也不影响 Deployment
+  自身滚动发布。副本数调多后建议改成百分比形式的 `maxUnavailable`。
+
+```bash
+kubectl apply -f deploy/k8s/pdb.yaml
+```
+
+### Prometheus 抓取
+
+`/metrics` 的抓取方式二选一，不要同时启用：
+
+- **经典 Prometheus**（`kubernetes_sd_configs`）：`api-deployment.yaml` 的 Pod template 已经带了
+  `prometheus.io/scrape`、`prometheus.io/port`、`prometheus.io/path` annotation，配合对应的 relabel 规则即可自动发现。
+- **Prometheus Operator**：应用 [`service-monitor.yaml`](../deploy/k8s/service-monitor.yaml)（需要集群已安装
+  `ServiceMonitor` CRD）：
+
+```bash
+kubectl apply -f deploy/k8s/service-monitor.yaml
+```
+
 ### 部署步骤（示例）
 
 ```bash
@@ -218,6 +262,9 @@ kubectl wait --for=condition=complete job/studiory-migrate --timeout=120s
 # 编辑 deploy/k8s/api-deployment.yaml 中的 image 后：
 kubectl apply -f deploy/k8s/api-service.yaml
 kubectl apply -f deploy/k8s/api-deployment.yaml
+kubectl apply -f deploy/k8s/pdb.yaml
+# 若使用 Prometheus Operator：
+# kubectl apply -f deploy/k8s/service-monitor.yaml
 
 # 5. 验证
 kubectl rollout status deployment/studiory-api

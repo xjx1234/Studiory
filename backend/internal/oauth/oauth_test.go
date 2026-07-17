@@ -133,3 +133,113 @@ func TestAppleProvider_RequiresClientID(t *testing.T) {
 		t.Fatalf("expected ErrNotConfigured, got %v", err)
 	}
 }
+
+// mockProvider 用于覆盖 Router 里跟具体平台校验逻辑无关、只关心 Router 自身行为的分支。
+type mockProvider struct {
+	name     string
+	identity *Identity
+	err      error
+}
+
+func (m *mockProvider) Name() string { return m.name }
+func (m *mockProvider) Verify(_ context.Context, _ VerifyRequest) (*Identity, error) {
+	return m.identity, m.err
+}
+
+func TestRouter_DevModeIgnoredWhenTokenPresent(t *testing.T) {
+	// devMode=true，但请求带了 access_token：不能走“仅凭 open_id 免校验”的捷径，
+	// 必须真正过一遍 Provider.Verify（否则会绕过生产场景下的真实校验）。
+	called := false
+	mock := &mockProvider{name: ProviderWechat, identity: &Identity{OpenID: "real-openid"}}
+	r := NewRouter(nil, true, &countingProvider{Provider: mock, onCall: func() { called = true }})
+
+	identity, err := r.Verify(context.Background(), VerifyRequest{
+		Provider:    ProviderWechat,
+		OpenID:      "wx_dev_openid",
+		AccessToken: "real-token",
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !called {
+		t.Fatal("expected Provider.Verify to be called when access_token is present, even in dev mode")
+	}
+	if identity.OpenID != "real-openid" {
+		t.Fatalf("OpenID = %q, want real-openid", identity.OpenID)
+	}
+}
+
+type countingProvider struct {
+	Provider
+	onCall func()
+}
+
+func (c *countingProvider) Verify(ctx context.Context, req VerifyRequest) (*Identity, error) {
+	c.onCall()
+	return c.Provider.Verify(ctx, req)
+}
+
+func TestRouter_EmptyIdentityOpenIDReturnsInvalidToken(t *testing.T) {
+	mock := &mockProvider{name: ProviderGoogle, identity: &Identity{OpenID: "  "}}
+	r := NewRouter(nil, false, mock)
+
+	_, err := r.Verify(context.Background(), VerifyRequest{Provider: ProviderGoogle, AccessToken: "t"})
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken for blank OpenID, got %v", err)
+	}
+}
+
+func TestRouter_NilIdentityReturnsInvalidToken(t *testing.T) {
+	mock := &mockProvider{name: ProviderGoogle, identity: nil}
+	r := NewRouter(nil, false, mock)
+
+	_, err := r.Verify(context.Background(), VerifyRequest{Provider: ProviderGoogle, AccessToken: "t"})
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken for nil identity, got %v", err)
+	}
+}
+
+func TestRouter_TrimsWhitespaceFromReturnedOpenID(t *testing.T) {
+	mock := &mockProvider{name: ProviderGoogle, identity: &Identity{OpenID: "  sub-1  "}}
+	r := NewRouter(nil, false, mock)
+
+	identity, err := r.Verify(context.Background(), VerifyRequest{Provider: ProviderGoogle, AccessToken: "t"})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if identity.OpenID != "sub-1" {
+		t.Fatalf("OpenID = %q, want trimmed %q", identity.OpenID, "sub-1")
+	}
+}
+
+func TestRouter_ProviderNameIsCaseAndWhitespaceInsensitive(t *testing.T) {
+	mock := &mockProvider{name: ProviderGoogle, identity: &Identity{OpenID: "sub-1"}}
+	r := NewRouter(nil, false, mock)
+
+	identity, err := r.Verify(context.Background(), VerifyRequest{Provider: "  GOOGLE  ", AccessToken: "t"})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if identity.OpenID != "sub-1" {
+		t.Fatalf("OpenID = %q", identity.OpenID)
+	}
+}
+
+func TestRouter_EmptyProviderReturnsInvalidToken(t *testing.T) {
+	r := NewRouter(nil, false)
+
+	_, err := r.Verify(context.Background(), VerifyRequest{Provider: "  ", AccessToken: "t"})
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken for empty provider, got %v", err)
+	}
+}
+
+func TestRouter_NilProvidersAreSkippedDuringRegistration(t *testing.T) {
+	// 注册时传入 nil Provider 不应 panic，也不应被当作可用 provider。
+	r := NewRouter(nil, false, nil)
+
+	_, err := r.Verify(context.Background(), VerifyRequest{Provider: ProviderGoogle, AccessToken: "t"})
+	if !errors.Is(err, ErrNoProvider) {
+		t.Fatalf("expected ErrNoProvider, got %v", err)
+	}
+}
