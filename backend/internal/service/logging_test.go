@@ -146,7 +146,12 @@ func TestTargetField_IncludesValue(t *testing.T) {
 	ls.SetLogger(logger)
 	ls.LogInternal("SendCode", errTest{}, TargetField("13800138000"))
 
-	if !bytes.Contains(buf.Bytes(), []byte(`"target":"13800138000"`)) {
+	// PII 脱敏后应为 138****8000，而非明文
+	if !bytes.Contains(buf.Bytes(), []byte(`"target":"138****8000"`)) {
 		t.Fatalf("log output = %s", buf.String())
+	}
+	// 确保明文不在日志中
+	if bytes.Contains(buf.Bytes(), []byte(`"target":"13800138000"`)) {
+		t.Fatalf("plaintext target leaked in log: %s", buf.String())
 	}
 }

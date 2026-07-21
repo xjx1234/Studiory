@@ -73,3 +73,30 @@ func TestLooksLikePhone(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskPII(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"phone 11 digits", "13800138000", "138****8000"},
+		{"phone 10 digits", "1234567890", "123***7890"},
+		{"email normal", "alice@example.com", "al****@example.com"},
+		{"email short local", "ab@test.com", "****@test.com"},
+		{"openid", "wx_openid_abc123", "wx_o****"},
+		{"short string", "abc", "****"},
+		{"4 chars", "abcd", "****"},
+		{"5 chars", "abcde", "abcd****"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MaskPII(tc.input)
+			if got != tc.want {
+				t.Fatalf("MaskPII(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

@@ -24,7 +24,7 @@ func authWithSessions(t *testing.T, multiDevice bool) (Service, *session.Store, 
 	sess := session.NewStore(rdb, "test", multiDevice, time.Hour)
 	users := testutil.NewFakeUserRepo()
 
-	svc := New(users, rdb,
+	svc := New(users, NewRedisCacheStore(rdb),
 		WithTokenIssuer(issuer),
 		WithSessionStore(sess),
 	)

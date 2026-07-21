@@ -1,6 +1,10 @@
 package service
 
-import "go.uber.org/zap"
+import (
+	"backend/pkg/strutil"
+
+	"go.uber.org/zap"
+)
 
 // LogSupport 提供 service 层通用内部错误日志能力。
 // 各业务 service 可匿名嵌入该结构体，避免重复实现 logger 字段和 LogInternal。
@@ -36,9 +40,10 @@ func ActorUserIDField(userID string) zap.Field {
 }
 
 // TargetField 记录登录/验证码等尚未关联 user_id 时的账号标识（手机号、邮箱等）。
+// 自动对 PII 脱敏，防止手机号/邮箱明文写入日志。
 func TargetField(target string) zap.Field {
 	if target == "" {
 		return zap.Skip()
 	}
-	return zap.String("target", target)
+	return zap.String("target", strutil.MaskPII(target))
 }

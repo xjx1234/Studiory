@@ -25,7 +25,7 @@ func newTestRDB(t *testing.T) (*miniredis.Miniredis, redis.UniversalClient) {
 
 func bfSvc(t *testing.T, repo *testutil.FakeUserRepo, rdb redis.UniversalClient) *AuthServiceImpl {
 	t.Helper()
-	svc, ok := New(repo, rdb, WithTokenIssuer(testTokenIssuer())).(*AuthServiceImpl)
+	svc, ok := New(repo, NewRedisCacheStore(rdb), WithTokenIssuer(testTokenIssuer())).(*AuthServiceImpl)
 	if !ok {
 		t.Fatal("expected *AuthServiceImpl")
 	}
@@ -132,5 +132,107 @@ func TestLoginLockExpires(t *testing.T) {
 	_, e = svc.Login(context.Background(), rightReq)
 	if e != nil {
 		t.Fatalf("expected success after lock expired, got %v", e)
+	}
+}
+
+// TestCodeLoginLockedAfterMaxFailures 验证验证码登录连续失败后账号被锁定。
+func TestCodeLoginLockedAfterMaxFailures(t *testing.T) {
+	_, rdb := newTestRDB(t)
+	fakeRepo := testutil.NewFakeUserRepo()
+	phone := "13800000004"
+	id := uuid.New()
+	phoneCopy := phone
+	fakeRepo.Users[id] = &repo.User{
+		ID:       id,
+		Phone:    &phoneCopy,
+		Nickname: "code-login-user",
+		Role:     repo.RoleUser,
+		Status:   repo.StatusActive,
+	}
+
+	svc, ok := New(fakeRepo, NewRedisCacheStore(rdb),
+		WithTokenIssuer(testTokenIssuer()),
+		WithMockCodeFallback(true),
+	).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+
+	req := &auth.LoginRequest{
+		GrantType: auth.GrantTypeSMSCode,
+		Phone:     phone,
+		Code:      "000000", // 错误验证码
+	}
+
+	for i := 0; i < loginMaxFailAttempts; i++ {
+		_, e := svc.Login(context.Background(), req)
+		switch {
+		case e == nil:
+			t.Fatalf("attempt %d: expected error, got nil", i+1)
+		case e.Code == errcode.ErrAccountLocked.Code:
+			t.Fatalf("account locked too early at attempt %d", i+1)
+		}
+	}
+
+	// 超过阈值后应返回锁定错误
+	_, e := svc.Login(context.Background(), req)
+	if e == nil || e.Code != errcode.ErrAccountLocked.Code {
+		t.Fatalf("expected ErrAccountLocked after %d code failures, got %v", loginMaxFailAttempts, e)
+	}
+}
+
+// TestCodeLoginClearsCounterOnSuccess 验证验证码登录成功后清除失败计数。
+func TestCodeLoginClearsCounterOnSuccess(t *testing.T) {
+	mr, rdb := newTestRDB(t)
+	fakeRepo := testutil.NewFakeUserRepo()
+	phone := "13800000005"
+	id := uuid.New()
+	phoneCopy := phone
+	fakeRepo.Users[id] = &repo.User{
+		ID:       id,
+		Phone:    &phoneCopy,
+		Nickname: "code-login-user",
+		Role:     repo.RoleUser,
+		Status:   repo.StatusActive,
+	}
+
+	svc, ok := New(fakeRepo, NewRedisCacheStore(rdb),
+		WithTokenIssuer(testTokenIssuer()),
+		WithMockCodeFallback(true),
+	).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+
+	// 先发送验证码（mock fallback → 固定码 123456）
+	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+		t.Fatalf("SendCode failed: %+v", e)
+	}
+
+	// 故意失败 2 次（用错误验证码）
+	wrongReq := &auth.LoginRequest{GrantType: auth.GrantTypeSMSCode, Phone: phone, Code: "999999"}
+	for i := 0; i < 2; i++ {
+		svc.Login(context.Background(), wrongReq) //nolint:errcheck
+	}
+
+	// 快进冷却窗口，允许再次发送验证码
+	mr.FastForward(codeSendCooldown + time.Second)
+
+	// 再次发送验证码（前一次已被 verifyCode 消费）
+	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+		t.Fatalf("second SendCode failed: %+v", e)
+	}
+
+	// 正确验证码登录
+	rightReq := &auth.LoginRequest{GrantType: auth.GrantTypeSMSCode, Phone: phone, Code: MockVerificationCode}
+	_, e := svc.Login(context.Background(), rightReq)
+	if e != nil {
+		t.Fatalf("expected success, got %v", e)
+	}
+
+	// fail key 应已被删除
+	failKey := svc.loginFailKey(loginAccountID(phone, "", ""))
+	if mr.Exists(failKey) {
+		t.Error("expected fail key to be deleted after successful code login")
 	}
 }

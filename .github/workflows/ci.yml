@@ -107,5 +107,11 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
+      - name: Coverage threshold (>= 50%)
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t < 50.0) { printf "::error::Coverage %.1f%% is below 50%% threshold\n", t; exit 1 } }'
+
       - name: Build
         run: go build -o /tmp/app-api .

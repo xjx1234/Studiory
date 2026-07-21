@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"backend/internal/repo"
@@ -147,7 +148,8 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 		return nil, e
 	}
 	// 不允许管理员修改自己的角色，避免自我降权后失去管理入口。
-	if actingUserID == targetUserID {
+	// 使用 EqualFold 防止 UUID 大小写差异绕过保护。
+	if strings.EqualFold(actingUserID, targetUserID) {
 		return nil, errcode.ErrCannotModifySelf
 	}
 
@@ -163,6 +165,11 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 		return nil, errcode.ErrInternal
 	}
 
+	// 角色变更后立即吊销该用户所有旧 access token，使旧角色即时失效。
+	// 与 SetStatus 禁用行为保持一致：权限变更必须立即生效，
+	// 否则被降权用户的旧 token 在剩余 TTL 内仍携带旧 role。
+	s.revokeAccessTokens(ctx, targetUserID)
+
 	item := toUserItem(updated)
 	return &item, nil
 }
@@ -176,7 +183,8 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 		return nil, e
 	}
 	// 不允许管理员禁用自己，避免把自己锁在系统外。
-	if actingUserID == targetUserID && status == repo.StatusDisabled {
+	// 使用 EqualFold 防止 UUID 大小写差异绕过保护。
+	if strings.EqualFold(actingUserID, targetUserID) && status == repo.StatusDisabled {
 		return nil, errcode.ErrCannotModifySelf
 	}
 
@@ -204,7 +212,7 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string) {
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
-			s.LogInternal("SetStatus revoke all sessions", err, baseservice.UserIDField(userID))
+			s.LogInternal("revoke all sessions", err, baseservice.UserIDField(userID))
 		}
 	}
 	if s.rdb == nil {
@@ -212,7 +220,7 @@ func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string
 	}
 	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
 	if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
-		s.LogInternal("SetStatus revoke access tokens", err, baseservice.UserIDField(userID))
+		s.LogInternal("revoke access tokens", err, baseservice.UserIDField(userID))
 	}
 }
 

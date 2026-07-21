@@ -28,7 +28,7 @@ func TestValidateRejectsOAuthDevModeInProduction(t *testing.T) {
 		ServerAddr:          ":8080",
 		DatabaseURL:         "postgres://postgres:password@localhost:5432/app?sslmode=disable",
 		RedisURL:            "redis://localhost:6379/0",
-		JWTSecret:           "prod-secret-with-enough-length",
+		JWTSecret:           "prod-secret-that-is-at-least-32-bytes-long",
 		RateLimitPerMinute:  60,
 		CORSAllowOrigins:    []string{"https://example.com"},
 		AuthMockCodeEnabled: false,
@@ -37,6 +37,44 @@ func TestValidateRejectsOAuthDevModeInProduction(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected production oauth dev mode to be rejected")
+	}
+}
+
+func TestValidateRejectsShortJWTSecretInProduction(t *testing.T) {
+	cfg := &Config{
+		AppEnv:              "production",
+		ServerAddr:          ":8080",
+		DatabaseURL:         "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		RedisURL:            "redis://localhost:6379/0",
+		JWTSecret:           "short-secret-only-20ch",
+		RateLimitPerMinute:  60,
+		CORSAllowOrigins:    []string{"https://example.com"},
+		AuthMockCodeEnabled: false,
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected short JWT secret to be rejected in production")
+	}
+}
+
+func TestValidateAccepts32ByteJWTSecretInProduction(t *testing.T) {
+	cfg := &Config{
+		AppEnv:                  "production",
+		ServerAddr:              ":8080",
+		ServerReadHeaderTimeout: 5 * time.Second,
+		ServerReadTimeout:       15 * time.Second,
+		ServerWriteTimeout:      30 * time.Second,
+		ServerIdleTimeout:       120 * time.Second,
+		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		RedisURL:                "redis://localhost:6379/0",
+		JWTSecret:               "0123456789abcdef0123456789abcdef", // 正好 32 字节
+		RateLimitPerMinute:      60,
+		CORSAllowOrigins:        []string{"https://example.com"},
+		AuthMockCodeEnabled:     false,
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected 32-byte JWT secret to be accepted in production: %v", err)
 	}
 }
 

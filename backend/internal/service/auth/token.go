@@ -17,17 +17,7 @@ import (
 const refreshBlacklistTTL = 7 * 24 * time.Hour
 
 func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*auth.TokenPair, *errcode.Error) {
-	// 检查黑名单（fail-closed：Redis 出错时拒绝刷新，防止已登出的 token 被利用）
-	blackKey := s.blacklistKey(refreshToken)
-	exists, err := s.rdb.Exists(ctx, blackKey).Result()
-	if err != nil {
-		s.LogInternal("Refresh check blacklist", err)
-		return nil, errcode.ErrInternal
-	}
-	if exists > 0 {
-		return nil, errcode.ErrInvalidToken
-	}
-
+	// 先解析 token，格式不合法直接拒绝（不占用黑名单 key）
 	claims, parseErr := s.tokens.ParseRefreshToken(refreshToken)
 	if parseErr != nil {
 		return nil, errcode.ErrInvalidToken
@@ -54,9 +44,17 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 		return nil, errcode.ErrInvalidToken
 	}
 
-	if err := s.rdb.Set(ctx, blackKey, "1", refreshBlacklistTTL).Err(); err != nil {
+	// 原子化黑名单标记（fail-closed）：SET NX 将「检查+写入」合并为一步，
+	// 消除 TOCTOU 竞态——同一 refresh token 并发刷新时仅一个请求能成功，
+	// 其余视为重放攻击直接拒绝。
+	blackKey := s.blacklistKey(refreshToken)
+	ok, err := s.cache.SetNX(ctx, blackKey, "1", refreshBlacklistTTL)
+	if err != nil {
 		s.LogInternal("Refresh blacklist old token", err, baseservice.UserIDField(claims.UserID))
 		return nil, errcode.ErrInternal
+	}
+	if !ok {
+		return nil, errcode.ErrInvalidToken
 	}
 
 	pair, issueErr := s.tokens.IssueTokenPair(claims.UserID, claims.Role, sessionID)
@@ -78,7 +76,7 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 	key := s.blacklistKey(refreshToken)
 	claims, parseErr := s.tokens.ParseRefreshToken(refreshToken)
 
-	if err := s.rdb.Set(ctx, key, "1", refreshBlacklistTTL).Err(); err != nil {
+	if err := s.cache.Set(ctx, key, "1", refreshBlacklistTTL); err != nil {
 		if parseErr == nil {
 			s.LogInternal("Logout blacklist refresh token", err, baseservice.UserIDField(claims.UserID))
 		} else {

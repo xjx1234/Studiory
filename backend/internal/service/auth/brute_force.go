@@ -40,31 +40,31 @@ return count
 // isLoginLocked 检查账号是否处于锁定状态。
 // Redis 不可用时 fail-open（仅打 Warn 日志），避免 Redis 故障完全阻断登录。
 func (s *AuthServiceImpl) isLoginLocked(ctx context.Context, account string) bool {
-	if s.rdb == nil || account == "" {
+	if s.cache == nil || account == "" {
 		return false
 	}
-	exists, err := s.rdb.Exists(ctx, s.loginLockKey(account)).Result()
+	exists, err := s.cache.Exists(ctx, s.loginLockKey(account))
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Warn("isLoginLocked redis error, fail-open", zap.String("account_hash", strutil.Truncate(account, 8)), zap.Error(err))
 		}
 		return false
 	}
-	return exists > 0
+	return exists
 }
 
 // recordLoginFail 原子递增失败计数，达到阈值时写入锁定 key。
 func (s *AuthServiceImpl) recordLoginFail(ctx context.Context, account string) {
-	if s.rdb == nil || account == "" {
+	if s.cache == nil || account == "" {
 		return
 	}
 	failKey := s.loginFailKey(account)
 	lockKey := s.loginLockKey(account)
-	if err := s.rdb.Eval(ctx, loginRecordFailLua, []string{failKey, lockKey},
+	if _, err := s.cache.Eval(ctx, loginRecordFailLua, []string{failKey, lockKey},
 		int64(loginFailWindow.Seconds()),
 		loginMaxFailAttempts,
 		int64(loginLockDuration.Seconds()),
-	).Err(); err != nil {
+	); err != nil {
 		if s.Logger != nil {
 			s.Logger.Warn("recordLoginFail redis error", zap.Error(err))
 		}
@@ -73,10 +73,10 @@ func (s *AuthServiceImpl) recordLoginFail(ctx context.Context, account string) {
 
 // clearLoginFail 登录成功后清除失败计数（锁定 key 等自然过期）。
 func (s *AuthServiceImpl) clearLoginFail(ctx context.Context, account string) {
-	if s.rdb == nil || account == "" {
+	if s.cache == nil || account == "" {
 		return
 	}
-	if err := s.rdb.Del(ctx, s.loginFailKey(account)).Err(); err != nil {
+	if err := s.cache.Del(ctx, s.loginFailKey(account)); err != nil {
 		if s.Logger != nil {
 			s.Logger.Warn("clearLoginFail redis error", zap.Error(err))
 		}

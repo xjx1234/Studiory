@@ -1,10 +1,14 @@
 package http
 
 import (
+	"errors"
+
 	"backend/internal/auth"
 	authservice "backend/internal/service/auth"
+	"backend/pkg/errcode"
 	"backend/pkg/request"
 	"backend/pkg/resp"
+	"backend/pkg/strutil"
 
 	"github.com/gin-gonic/gin"
 )
@@ -68,6 +72,26 @@ type SendCodeReq struct {
 	Type   string `json:"type"   binding:"required,oneof=sms email"`
 	Target string `json:"target" binding:"required"`
 }
+
+// Validate 按 type 校验 target 格式，防止 SMTP 头注入。
+func (r *SendCodeReq) Validate() error {
+	switch r.Type {
+	case "sms":
+		if !strutil.LooksLikePhone(r.Target) {
+			return errInvalidPhoneTarget
+		}
+	case "email":
+		if !strutil.LooksLikeEmail(r.Target) {
+			return errInvalidEmailTarget
+		}
+	}
+	return nil
+}
+
+var (
+	errInvalidPhoneTarget = errors.New("invalid phone target")
+	errInvalidEmailTarget = errors.New("invalid email target")
+)
 
 type RefreshReq struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
@@ -134,6 +158,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) SendCode(c *gin.Context) {
 	var req SendCodeReq
 	if !request.Bind(c, &req) {
+		return
+	}
+
+	// 按 type 校验 target 格式，防止 SMTP 头注入。
+	if err := req.Validate(); err != nil {
+		resp.Fail(c, errcode.ErrBadRequest)
 		return
 	}
 

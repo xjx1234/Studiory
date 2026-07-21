@@ -51,7 +51,7 @@ func (r *todoRepo) Create(ctx context.Context, userID uuid.UUID, title string) (
 		Title:  title,
 	})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	return todoFromRow(row), nil
 }

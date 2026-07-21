@@ -86,18 +86,25 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		metricsHandler = m.Handler()
 	}
 
+	codeSender, err := buildCodeSender(cfg, logger)
+	if err != nil {
+		pool.Close()
+		_ = rdb.Close()
+		return nil, err
+	}
+
 	deps := &internalhttp.Deps{
 		Cfg:    cfg,
 		Logger: logger,
 
-		AuthService: authservice.New(pgStore.Users(), rdb,
+		AuthService: authservice.New(pgStore.Users(), authservice.NewRedisCacheStore(rdb),
 			authservice.WithTokenIssuer(tokenIssuer),
 			authservice.WithOAuthRepo(pgStore.OAuth()),
 			authservice.WithUserOAuthTxRunner(pgStore),
 			authservice.WithLogger(logger),
 			authservice.WithCodePrefix(cfg.RedisKeyPrefix),
 			authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
-			authservice.WithCodeSender(buildCodeSender(cfg, logger)),
+			authservice.WithCodeSender(codeSender),
 			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
 			authservice.WithOAuthProviders(cfg.OAuthProviders),
 			authservice.WithOAuthVerifier(buildOAuthVerifier(cfg, logger)),
@@ -180,8 +187,9 @@ func redisReadyCheck(rdb redis.UniversalClient) func(ctx context.Context) error 
 // NewRouter 会在同一渠道内按注册顺序做故障转移。
 //
 // 生产环境（APP_ENV=production）必须配置至少一个真实 Provider（SMTP 或短信），
-// 否则启动报错——避免验证码被明文写入日志造成安全漏洞。
-func buildCodeSender(cfg *config.Config, logger *zap.Logger) sender.Sender {
+// 否则返回 error 让调用方决定如何处理——避免在装配阶段调用 logger.Fatal
+// 导致资源未清理（PG pool、Redis conn 等已创建但无法 Close）。
+func buildCodeSender(cfg *config.Config, logger *zap.Logger) (sender.Sender, error) {
 	var providers []sender.Provider
 
 	// 邮件：配置了 SMTP 即启用真实邮件下发
@@ -197,15 +205,15 @@ func buildCodeSender(cfg *config.Config, logger *zap.Logger) sender.Sender {
 		// 开发模式显式启用 mock：追加 MockProvider，验证码固定 123456
 		providers = append(providers, sender.NewMockProvider(logger))
 	} else if len(providers) == 0 {
-		// 未配置任何真实 Provider：开发环境回退 mock（仅日志），生产环境直接报错
+		// 未配置任何真实 Provider：开发环境回退 mock（仅日志），生产环境返回 error
 		if cfg.IsProd() {
-			logger.Fatal("生产环境未配置真实验证码服务商（SMTP 或短信），请在 .env 中设置 SMTP_* 或接入短信运营商")
+			return nil, errors.New("生产环境未配置真实验证码服务商（SMTP 或短信），请在 .env 中设置 SMTP_* 或接入短信运营商")
 		}
 		logger.Warn("未配置真实验证码服务商，回退到 mock（仅日志，生产环境请接入真实短信/邮件服务）")
 		providers = append(providers, sender.NewMockProvider(logger))
 	}
 
-	return sender.NewRouter(logger, providers...)
+	return sender.NewRouter(logger, providers...), nil
 }
 
 // buildOAuthVerifier 按配置装配第三方登录 token 校验器。

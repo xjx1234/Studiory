@@ -43,3 +43,45 @@ func LooksLikePhone(s string) bool {
 	}
 	return true
 }
+
+// LooksLikeEmail 简单判断字符串是否看起来像邮箱地址。
+// 仅做基本格式校验（含 @ 和 .），不做 RFC 5322 完整校验。
+func LooksLikeEmail(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) < 3 || len(s) > 254 {
+		return false
+	}
+	at := strings.IndexByte(s, '@')
+	if at <= 0 || at == len(s)-1 {
+		return false
+	}
+	domain := s[at+1:]
+	return strings.IndexByte(domain, '.') > 0
+}
+
+// MaskPII 对手机号/邮箱等 PII 进行脱敏，用于日志输出。
+//   - 手机号：显示前 3 + 后 4（如 13800138000 → 138****8000）
+//   - 邮箱：显示前 2 + 完整域名（如 alice@example.com → al****@example.com）
+//   - 其他：显示前 4 + ****（如 openid_abc → open****）
+func MaskPII(s string) string {
+	if s == "" {
+		return ""
+	}
+	if LooksLikeEmail(s) {
+		at := strings.IndexByte(s, '@')
+		if at <= 2 {
+			return "****" + s[at:]
+		}
+		return s[:2] + "****" + s[at:]
+	}
+	if LooksLikePhone(s) {
+		if len(s) <= 7 {
+			return strings.Repeat("*", len(s)-3) + s[len(s)-3:]
+		}
+		return s[:3] + strings.Repeat("*", len(s)-7) + s[len(s)-4:]
+	}
+	if len(s) <= 4 {
+		return "****"
+	}
+	return s[:4] + "****"
+}

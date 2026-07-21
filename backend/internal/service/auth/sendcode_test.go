@@ -27,7 +27,7 @@ func (c *captureSender) Send(_ context.Context, msg sender.Message) error {
 
 func sendCodeSvc(t *testing.T, rdb redis.UniversalClient, snd sender.Sender, mockFallback bool) *AuthServiceImpl {
 	t.Helper()
-	svc, ok := New(testutil.NewFakeUserRepo(), rdb,
+	svc, ok := New(testutil.NewFakeUserRepo(), NewRedisCacheStore(rdb),
 		WithTokenIssuer(testTokenIssuer()),
 		WithMockCodeFallback(mockFallback),
 		WithCodeSender(snd),

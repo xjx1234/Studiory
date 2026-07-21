@@ -42,7 +42,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 	}
 
 	cooldownKey := s.codeCooldownKey(codeType, target)
-	ok, err := s.rdb.SetNX(ctx, cooldownKey, "1", codeSendCooldown).Result()
+	ok, err := s.cache.SetNX(ctx, cooldownKey, "1", codeSendCooldown)
 	if err != nil {
 		s.LogInternal("SendCode set cooldown", err,
 			zap.String("code_type", codeType),
@@ -57,12 +57,12 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 	code := s.generateCode()
 
 	key := s.codeRedisKey(codeType, target)
-	if err := s.rdb.Set(ctx, key, code, codeExpiry).Err(); err != nil {
+	if err := s.cache.Set(ctx, key, code, codeExpiry); err != nil {
 		s.LogInternal("SendCode set code", err,
 			zap.String("code_type", codeType),
 			baseservice.TargetField(target),
 		)
-		_ = s.rdb.Del(ctx, cooldownKey).Err()
+		_ = s.cache.Del(ctx, cooldownKey)
 		return errcode.ErrInternal
 	}
 
@@ -77,7 +77,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 				baseservice.TargetField(target),
 			)
 			// 下发失败：回滚冷却与验证码，便于用户重试
-			_ = s.rdb.Del(ctx, cooldownKey, key).Err()
+			_ = s.cache.Del(ctx, cooldownKey, key)
 			return errcode.ErrInternal
 		}
 	}
@@ -111,12 +111,17 @@ func (s *AuthServiceImpl) generateCode() string {
 // 验证成功后删除 key，确保一次有效。
 func (s *AuthServiceImpl) verifyCode(ctx context.Context, codeType, target, code string) bool {
 	key := s.codeRedisKey(codeType, target)
-	result, err := s.rdb.Eval(ctx, verifyCodeLua, []string{key}, code).Int()
+	result, err := s.cache.Eval(ctx, verifyCodeLua, []string{key}, code)
 	if err != nil {
 		return false
 	}
 
-	switch result {
+	count, ok := result.(int64)
+	if !ok {
+		return false
+	}
+
+	switch count {
 	case 1:
 		return true
 	case -1:

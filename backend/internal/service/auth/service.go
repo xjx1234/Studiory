@@ -21,7 +21,6 @@ import (
 	"backend/internal/session"
 	"backend/pkg/errcode"
 
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -42,7 +41,7 @@ type AuthServiceImpl struct {
 	oauth                 repo.OAuthRepo
 	oauthTx               repo.UserOAuthTxRunner
 	tokens                *auth.TokenIssuer
-	rdb                   redis.UniversalClient
+	cache                 CacheStore
 	sessions              *session.Store
 	codeSender            sender.Sender
 	codePrefix            string
@@ -54,11 +53,11 @@ type AuthServiceImpl struct {
 
 type Option func(*AuthServiceImpl)
 
-// New 创建 AuthService，需注入 UserRepo 和 Redis client。
-func New(users repo.UserRepo, rdb redis.UniversalClient, opts ...Option) Service {
+// New 创建 AuthService，需注入 UserRepo 和 CacheStore。
+func New(users repo.UserRepo, cache CacheStore, opts ...Option) Service {
 	s := &AuthServiceImpl{
 		users:                 users,
-		rdb:                   rdb,
+		cache:                 cache,
 		codePrefix:            "app",
 		allowMockCodeFallback: false,
 		oauthDevMode:          false,

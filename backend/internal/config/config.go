@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -199,6 +200,9 @@ func (c *Config) Validate() error {
 		if c.JWTSecret == "dev-secret-change-in-production" {
 			return errors.New("production 环境必须设置安全的 JWT_SECRET")
 		}
+		if len(c.JWTSecret) < 32 {
+			return errors.New("production 环境的 jwt.secret 长度不能少于 32 字节（HS256 安全要求）")
+		}
 		if c.AuthMockCodeEnabled {
 			return errors.New("production 环境不能启用 auth.mock_code_enabled")
 		}
@@ -348,21 +352,30 @@ func loadDotEnv() {
 }
 
 func (c *Config) buildDatabaseURL() string {
-	dsn := fmt.Sprintf("postgres://%s", c.DBUser)
-	if c.DBPassword != "" {
-		dsn += ":" + c.DBPassword
+	u := &url.URL{
+		Scheme:   "postgres",
+		Host:     fmt.Sprintf("%s:%s", c.DBHost, c.DBPort),
+		Path:     c.DBName,
+		RawQuery: "sslmode=" + url.QueryEscape(c.DBSSLMode),
 	}
-	dsn += fmt.Sprintf("@%s:%s/%s?sslmode=%s", c.DBHost, c.DBPort, c.DBName, c.DBSSLMode)
-	return dsn
+	if c.DBPassword != "" {
+		u.User = url.UserPassword(c.DBUser, c.DBPassword)
+	} else {
+		u.User = url.User(c.DBUser)
+	}
+	return u.String()
 }
 
 func (c *Config) buildRedisURL() string {
-	url := "redis://"
-	if c.RedisPassword != "" {
-		url += ":" + c.RedisPassword + "@"
+	u := &url.URL{
+		Scheme: "redis",
+		Host:   fmt.Sprintf("%s:%s", c.RedisHost, c.RedisPort),
+		Path:   fmt.Sprintf("%d", c.RedisDB),
 	}
-	url += fmt.Sprintf("%s:%s/%d", c.RedisHost, c.RedisPort, c.RedisDB)
-	return url
+	if c.RedisPassword != "" {
+		u.User = url.UserPassword("", c.RedisPassword)
+	}
+	return u.String()
 }
 
 // getStringSlice 从配置读取字符串列表。

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -88,6 +89,36 @@ func TestBuildRedisURL_WithoutPassword(t *testing.T) {
 	want := "redis://localhost:6379/0"
 	if got := cfg.buildRedisURL(); got != want {
 		t.Errorf("buildRedisURL() = %q, want %q", got, want)
+	}
+}
+
+// TestBuildDatabaseURL_SpecialCharsInPassword 验证密码含特殊字符时被正确 URL encode。
+func TestBuildDatabaseURL_SpecialCharsInPassword(t *testing.T) {
+	cfg := &Config{
+		DBHost: "localhost", DBPort: "5432", DBUser: "app",
+		DBPassword: "p@ss:w/ord", DBName: "appdb", DBSSLMode: "disable",
+	}
+	got := cfg.buildDatabaseURL()
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("buildDatabaseURL() produced unparseable URL: %v", err)
+	}
+	// 解析后密码应还原为原始值
+	if pass, ok := parsed.User.Password(); !ok || pass != "p@ss:w/ord" {
+		t.Errorf("password not round-tripped: got %q, want %q", pass, "p@ss:w/ord")
+	}
+}
+
+// TestBuildRedisURL_SpecialCharsInPassword 验证 Redis 密码含特殊字符时被正确 URL encode。
+func TestBuildRedisURL_SpecialCharsInPassword(t *testing.T) {
+	cfg := &Config{RedisHost: "localhost", RedisPort: "6379", RedisPassword: "r@dis:p/ass", RedisDB: 0}
+	got := cfg.buildRedisURL()
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("buildRedisURL() produced unparseable URL: %v", err)
+	}
+	if pass, ok := parsed.User.Password(); !ok || pass != "r@dis:p/ass" {
+		t.Errorf("password not round-tripped: got %q, want %q", pass, "r@dis:p/ass")
 	}
 }
 

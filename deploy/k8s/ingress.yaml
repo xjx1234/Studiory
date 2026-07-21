@@ -24,6 +24,12 @@ metadata:
     # 超时与后端 SERVER_READ/WRITE_TIMEOUT 对齐
     nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    # /metrics 不对外暴露：仅集群内 Prometheus 抓取，外部请求返回 403。
+    # 如果集群使用 Prometheus Operator（ServiceMonitor），可不经过 Ingress。
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location = /metrics {
+        return 403;
+      }
 spec:
   ingressClassName: nginx
   tls:

@@ -69,7 +69,19 @@ func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, c
 		return nil, errcode.ErrBadRequest
 	}
 
+	// 验证码登录同样纳入防暴力破解：复用密码登录的锁定机制，
+	// 防止 6 位数字码被分布式爆破。
+	account := loginAccountID(
+		condStr(codeType == "sms", target, ""),
+		condStr(codeType == "email", target, ""),
+		"",
+	)
+	if s.isLoginLocked(ctx, account) {
+		return nil, errcode.ErrAccountLocked
+	}
+
 	if !s.verifyCode(ctx, codeType, target, code) {
+		s.recordLoginFail(ctx, account)
 		return nil, errcode.ErrInvalidCode
 	}
 
@@ -90,7 +102,17 @@ func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, c
 		return nil, errcode.ErrInternal
 	}
 
+	// 验证码校验通过且用户存在，清除失败计数
+	s.clearLoginFail(ctx, account)
 	return s.issueResult(ctx, user)
+}
+
+// condStr 按条件返回 a 或 b，简化内联三元表达式。
+func condStr(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
 }
 
 func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginRequest) (*auth.LoginResult, *errcode.Error) {
