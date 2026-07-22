@@ -54,7 +54,11 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 		return errcode.ErrTooManyRequests
 	}
 
-	code := s.generateCode()
+	code, codeErr := s.generateCode()
+	if codeErr != nil {
+		_ = s.cache.Del(ctx, cooldownKey)
+		return codeErr
+	}
 
 	key := s.codeRedisKey(codeType, target)
 	if err := s.cache.Set(ctx, key, code, codeExpiry); err != nil {
@@ -87,23 +91,23 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 
 // generateCode 生成验证码。
 // 开发模式（allowMockCodeFallback）下返回固定的 MockVerificationCode 便于联调；
-// 否则生成 6 位随机数字验证码。
-func (s *AuthServiceImpl) generateCode() string {
+// 否则生成 6 位随机数字验证码。crypto/rand 失败时返回错误，不回退固定码。
+func (s *AuthServiceImpl) generateCode() (string, *errcode.Error) {
 	if s.allowMockCodeFallback {
-		return MockVerificationCode
+		return MockVerificationCode, nil
 	}
 	const digits = "0123456789"
 	b := make([]byte, 6)
 	for i := range b {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
 		if err != nil {
-			// crypto/rand 失败极罕见，退回固定码以不阻塞流程（已写日志）
+			// crypto/rand 失败极罕见，但必须拒绝生成而非回退固定码
 			s.LogInternal("generateCode rand", err)
-			return MockVerificationCode
+			return "", errcode.ErrInternal
 		}
 		b[i] = digits[n.Int64()]
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // verifyCode 校验验证码。
