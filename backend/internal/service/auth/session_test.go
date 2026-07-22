@@ -21,7 +21,7 @@ func authWithSessions(t *testing.T, multiDevice bool) (Service, *session.Store, 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	issuer := testTokenIssuer()
-	sess := session.NewStore(rdb, "test", multiDevice, time.Hour)
+	sess := session.NewStore(rdb, "test", multiDevice, time.Hour, true)
 	users := testutil.NewFakeUserRepo()
 
 	svc := New(users, NewRedisCacheStore(rdb),

@@ -61,6 +61,7 @@ type Config struct {
 	// ── Auth ──────────────────────────────────────────────────────────────
 	AuthMockCodeEnabled    bool
 	AuthMultiDeviceEnabled bool // true=多设备同时在线；false=单设备（新登录踢掉旧会话）
+	AuthRedisFailOpen      bool // Redis故障时鉴权策略：true=fail-open（放行，可用性优先）；false=fail-closed（拒绝，安全性优先）
 
 	// ── 验证码下发（SMTP 邮件，可选）────────────────────────────────────────
 	// SMTPHost 为空时不启用 SMTP Provider；短信服务商按需在 app 层接入。
@@ -130,6 +131,7 @@ func Load() *Config {
 
 		AuthMockCodeEnabled:    v.GetBool("auth.mock_code_enabled"),
 		AuthMultiDeviceEnabled: v.GetBool("auth.multi_device_enabled"),
+		AuthRedisFailOpen:      v.GetBool("auth.redis_fail_open"),
 
 		SMTPHost:     v.GetString("smtp.host"),
 		SMTPPort:     v.GetInt("smtp.port"),
@@ -321,6 +323,7 @@ func bindEnvs(v *viper.Viper) {
 		"jwt.refresh_ttl":             "JWT_REFRESH_TTL",
 		"auth.mock_code_enabled":      "AUTH_MOCK_CODE_ENABLED",
 		"auth.multi_device_enabled":   "AUTH_MULTI_DEVICE_ENABLED",
+		"auth.redis_fail_open":        "AUTH_REDIS_FAIL_OPEN",
 		"smtp.host":                   "SMTP_HOST",
 		"smtp.port":                   "SMTP_PORT",
 		"smtp.username":               "SMTP_USERNAME",

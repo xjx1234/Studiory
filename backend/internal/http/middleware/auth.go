@@ -21,7 +21,8 @@ const ContextKeyUserRole = "userRole"
 
 // Auth 验证请求头中的 JWT Access Token，将用户信息注入 Gin Context。
 // 验证失败时直接返回 401，不继续执行后续 Handler。
-func Auth(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.UniversalClient, keyPrefix string, logger *zap.Logger) gin.HandlerFunc {
+// failOpen 控制 Redis 故障时的吊销检查降级策略：true=放行（可用性优先）；false=拒绝（安全性优先）。
+func Auth(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.UniversalClient, keyPrefix string, failOpen bool, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("Authorization")
 		if raw == "" {
@@ -41,7 +42,7 @@ func Auth(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.Universal
 			return
 		}
 
-		if isAccessTokenRevoked(c.Request.Context(), rdb, keyPrefix, claims, logger) {
+		if isAccessTokenRevoked(c.Request.Context(), rdb, keyPrefix, claims, failOpen, logger) {
 			resp.Fail(c, errcode.ErrInvalidToken)
 			return
 		}
@@ -57,7 +58,7 @@ func Auth(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.Universal
 	}
 }
 
-func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPrefix string, claims *auth.Claims, logger *zap.Logger) bool {
+func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPrefix string, claims *auth.Claims, failOpen bool, logger *zap.Logger) bool {
 	if rdb == nil || claims == nil || claims.IssuedAt == nil {
 		return false
 	}
@@ -65,12 +66,22 @@ func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPre
 	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", keyPrefix, claims.UserID)
 	revokeAt, err := rdb.Get(ctx, revokeKey).Int64()
 	if err != nil {
-		if !errors.Is(err, redis.Nil) && logger != nil {
-			logger.Warn("access token revoke check unavailable, failing open",
-				zap.Error(err),
-				zap.String("user_id", claims.UserID),
-			)
+		if !errors.Is(err, redis.Nil) {
+			// Redis 连接故障，按策略降级
+			strategy := "fail-open"
+			if !failOpen {
+				strategy = "fail-closed"
+			}
+			if logger != nil {
+				logger.Warn("access token revoke check unavailable, "+strategy,
+					zap.Error(err),
+					zap.String("user_id", claims.UserID),
+				)
+			}
+			// failOpen=true → 视为未吊销（放行）；failOpen=false → 视为已吊销（拒绝）
+			return !failOpen
 		}
+		// key 不存在 → 未吊销
 		return false
 	}
 	return claims.IssuedAt.Unix() <= revokeAt

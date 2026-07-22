@@ -33,6 +33,7 @@ func TestLoad_ReadsFromEnvironmentVariables(t *testing.T) {
 		"JWT_REFRESH_TTL":            "168h",
 		"AUTH_MOCK_CODE_ENABLED":     "true",
 		"AUTH_MULTI_DEVICE_ENABLED":  "false",
+		"AUTH_REDIS_FAIL_OPEN":       "false",
 		"RATE_LIMIT_PER_MINUTE":      "100",
 		"RATE_LIMIT_USER_PER_MINUTE": "200",
 		"METRICS_ENABLED":            "true",
@@ -70,6 +71,9 @@ func TestLoad_ReadsFromEnvironmentVariables(t *testing.T) {
 	}
 	if cfg.AuthMultiDeviceEnabled {
 		t.Error("AuthMultiDeviceEnabled = true, want false")
+	}
+	if cfg.AuthRedisFailOpen {
+		t.Error("AuthRedisFailOpen = true, want false")
 	}
 	if cfg.RateLimitPerMinute != 100 {
 		t.Errorf("RateLimitPerMinute = %d, want 100", cfg.RateLimitPerMinute)

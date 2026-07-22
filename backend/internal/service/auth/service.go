@@ -49,6 +49,7 @@ type AuthServiceImpl struct {
 	oauthVerifier         oauth.Verifier
 	oauthDevMode          bool
 	oauthProviders        map[string]struct{}
+	failOpen              bool // Redis故障时鉴权策略：true=放行（可用性优先）；false=拒绝（安全性优先）
 }
 
 type Option func(*AuthServiceImpl)
@@ -62,6 +63,7 @@ func New(users repo.UserRepo, cache CacheStore, opts ...Option) Service {
 		allowMockCodeFallback: false,
 		oauthDevMode:          false,
 		oauthProviders:        defaultOAuthProviderSet(),
+		failOpen:              true, // 默认 fail-open（可用性优先）
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -156,5 +158,13 @@ func WithOAuthProviders(providers []string) Option {
 func WithOAuthVerifier(v oauth.Verifier) Option {
 	return func(s *AuthServiceImpl) {
 		s.oauthVerifier = v
+	}
+}
+
+// WithRedisFailOpen 设置 Redis 故障时的鉴权降级策略。
+// true=放行（可用性优先，默认）；false=拒绝（安全性优先）。
+func WithRedisFailOpen(failOpen bool) Option {
+	return func(s *AuthServiceImpl) {
+		s.failOpen = failOpen
 	}
 }

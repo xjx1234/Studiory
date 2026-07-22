@@ -38,17 +38,24 @@ return count
 )
 
 // isLoginLocked 检查账号是否处于锁定状态。
-// Redis 不可用时 fail-open（仅打 Warn 日志），避免 Redis 故障完全阻断登录。
+// Redis 故障时按 failOpen 策略降级：true=放行（可用性优先）；false=拒绝（安全性优先）。
 func (s *AuthServiceImpl) isLoginLocked(ctx context.Context, account string) bool {
 	if s.cache == nil || account == "" {
 		return false
 	}
 	exists, err := s.cache.Exists(ctx, s.loginLockKey(account))
 	if err != nil {
-		if s.Logger != nil {
-			s.Logger.Warn("isLoginLocked redis error, fail-open", zap.String("account_hash", strutil.Truncate(account, 8)), zap.Error(err))
+		strategy := "fail-open"
+		if !s.failOpen {
+			strategy = "fail-closed"
 		}
-		return false
+		if s.Logger != nil {
+			s.Logger.Warn("isLoginLocked redis error, "+strategy,
+				zap.String("account_hash", strutil.Truncate(account, 8)),
+				zap.Error(err))
+		}
+		// failOpen=true → 视为未锁定（放行）；failOpen=false → 视为已锁定（拒绝）
+		return !s.failOpen
 	}
 	return exists
 }

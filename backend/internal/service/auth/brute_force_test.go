@@ -236,3 +236,45 @@ func TestCodeLoginClearsCounterOnSuccess(t *testing.T) {
 		t.Error("expected fail key to be deleted after successful code login")
 	}
 }
+
+// TestIsLoginLocked_FailClosed 验证 failOpen=false 时 Redis 故障视为已锁定。
+func TestIsLoginLocked_FailClosed(t *testing.T) {
+	mr, rdb := newTestRDB(t)
+	fakeRepo := testutil.NewFakeUserRepo()
+
+	svc, ok := New(fakeRepo, NewRedisCacheStore(rdb),
+		WithTokenIssuer(testTokenIssuer()),
+		WithRedisFailOpen(false), // fail-closed
+	).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+
+	// 关闭 Redis，模拟连接故障
+	mr.Close()
+
+	// fail-closed：Redis 故障时应视为已锁定
+	if !svc.isLoginLocked(context.Background(), "some-account") {
+		t.Error("expected isLoginLocked to return true (fail-closed) when redis is unavailable")
+	}
+}
+
+// TestIsLoginLocked_FailOpen 验证 failOpen=true（默认）时 Redis 故障视为未锁定。
+func TestIsLoginLocked_FailOpen(t *testing.T) {
+	mr, rdb := newTestRDB(t)
+	fakeRepo := testutil.NewFakeUserRepo()
+
+	svc, ok := New(fakeRepo, NewRedisCacheStore(rdb),
+		WithTokenIssuer(testTokenIssuer()),
+		WithRedisFailOpen(true), // fail-open (default)
+	).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+
+	mr.Close()
+
+	if svc.isLoginLocked(context.Background(), "some-account") {
+		t.Error("expected isLoginLocked to return false (fail-open) when redis is unavailable")
+	}
+}

@@ -20,15 +20,19 @@ type Store struct {
 	prefix      string
 	sessionTTL  time.Duration
 	multiDevice bool
+	failOpen    bool // Redis故障时：true=放行（可用性优先）；false=拒绝（安全性优先）
 }
 
 // NewStore 创建会话存储。sessionTTL 建议与 refresh token 有效期一致。
-func NewStore(rdb redis.UniversalClient, prefix string, multiDevice bool, sessionTTL time.Duration) *Store {
+// failOpen 控制 Redis 故障时的降级策略：true=放行所有 session（可用性优先）；
+// false=拒绝所有 session（安全性优先）。
+func NewStore(rdb redis.UniversalClient, prefix string, multiDevice bool, sessionTTL time.Duration, failOpen bool) *Store {
 	return &Store{
 		rdb:         rdb,
 		prefix:      prefix,
 		sessionTTL:  sessionTTL,
 		multiDevice: multiDevice,
+		failOpen:    failOpen,
 	}
 }
 
@@ -77,10 +81,15 @@ func (s *Store) Register(ctx context.Context, userID, sessionID string) error {
 }
 
 // Validate 校验会话是否仍有效。
+// Redis 故障时按 failOpen 策略降级：
+//   - failOpen=true：放行（可用性优先，session 校验暂时跳过）
+//   - failOpen=false：拒绝（安全性优先，所有请求被视为未认证）
 func (s *Store) Validate(ctx context.Context, userID, sessionID string) bool {
 	if s.rdb == nil || userID == "" || sessionID == "" {
-		return true // 无 Redis 时不阻断（与 revoke fail-open 一致）
+		return true
 	}
+
+	var redisError bool
 
 	if s.multiDevice {
 		setKey := s.userSessionsKey(userID)
@@ -88,17 +97,34 @@ func (s *Store) Validate(ctx context.Context, userID, sessionID string) bool {
 		if err == nil && ok {
 			return true
 		}
+		if err != nil {
+			redisError = true
+		}
 	} else {
 		activeKey := s.activeSessionKey(userID)
 		active, err := s.rdb.Get(ctx, activeKey).Result()
 		if err == nil && active == sessionID {
 			return true
 		}
+		if err != nil && !errors.Is(err, redis.Nil) {
+			redisError = true
+		}
 	}
 
 	// 兜底：session 键仍存在也视为有效（应对 set/active 过期但 session 键尚在的边界）
 	uid, err := s.rdb.Get(ctx, s.sessionKey(sessionID)).Result()
-	return err == nil && uid == userID
+	if err == nil && uid == userID {
+		return true
+	}
+	if err != nil && !errors.Is(err, redis.Nil) {
+		redisError = true
+	}
+
+	// Redis 连接故障时按策略降级
+	if redisError && s.failOpen {
+		return true
+	}
+	return false
 }
 
 // Revoke 吊销单个会话（登出当前设备）。

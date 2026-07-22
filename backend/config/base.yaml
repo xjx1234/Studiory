@@ -42,6 +42,7 @@ jwt:
 auth:
   mock_code_enabled: true     # 仅开发环境使用固定验证码 123456
   multi_device_enabled: true  # true=多设备同时在线；false=单设备（新登录踢掉旧会话）
+  redis_fail_open: true       # Redis故障时鉴权策略：true=放行（可用性优先）；false=拒绝（安全性优先）
 
 # 验证码下发（SMTP 邮件，可选）。host 为空则不启用，回退到 mock。
 # 短信运营商在 internal/app/app.go 的 buildCodeSender 中按需接入。

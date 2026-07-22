@@ -353,7 +353,7 @@ func TestChangePassword_RevokesSessionsAndAccessTokens(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	sessions := session.NewStore(rdb, "test", true, time.Hour)
+	sessions := session.NewStore(rdb, "test", true, time.Hour, true)
 	if err := sessions.Register(context.Background(), id.String(), "session-1"); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestChangePassword_RevokeErrorsDoNotFailRequest(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	sessions := session.NewStore(rdb, "test", true, time.Hour)
+	sessions := session.NewStore(rdb, "test", true, time.Hour, true)
 	mr.Close()
 
 	svc := New(fakeRepo, WithSessionStore(sessions), WithRevokeSupport(rdb, "test", time.Hour))

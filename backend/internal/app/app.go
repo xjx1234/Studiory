@@ -71,7 +71,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 
 	pgStore := pg.NewStore(pool)
 
-	sessionStore := session.NewStore(rdb, cfg.RedisKeyPrefix, cfg.AuthMultiDeviceEnabled, tokenIssuer.RefreshTokenTTL())
+	sessionStore := session.NewStore(rdb, cfg.RedisKeyPrefix, cfg.AuthMultiDeviceEnabled, tokenIssuer.RefreshTokenTTL(), cfg.AuthRedisFailOpen)
 
 	// 可观测：装配 Prometheus 指标（在 app 层注册 collector，保持 handler 不碰基础设施）。
 	var metricsMiddleware gin.HandlerFunc
@@ -109,6 +109,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithOAuthProviders(cfg.OAuthProviders),
 			authservice.WithOAuthVerifier(buildOAuthVerifier(cfg, logger)),
 			authservice.WithSessionStore(sessionStore),
+			authservice.WithRedisFailOpen(cfg.AuthRedisFailOpen),
 		),
 		UserService: userservice.New(pgStore.Users(),
 			userservice.WithLogger(logger),
@@ -122,7 +123,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		),
 		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
 
-		AuthMiddleware:          middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, logger),
+		AuthMiddleware:          middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, cfg.AuthRedisFailOpen, logger),
 		RateLimitMiddleware:     middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
 		UserRateLimitMiddleware: middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix),
 		MetricsMiddleware:       metricsMiddleware,
