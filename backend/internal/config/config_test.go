@@ -120,3 +120,60 @@ func TestValidateRejectsInvalidServerTimeouts(t *testing.T) {
 		t.Fatal("expected read_timeout < read_header_timeout to be rejected")
 	}
 }
+
+func prodBaseConfig() Config {
+	return Config{
+		AppEnv:                  "production",
+		ServerAddr:              ":8080",
+		ServerReadHeaderTimeout: 5 * time.Second,
+		ServerReadTimeout:       15 * time.Second,
+		ServerWriteTimeout:      30 * time.Second,
+		ServerIdleTimeout:       120 * time.Second,
+		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		RedisURL:                "redis://localhost:6379/0",
+		JWTSecret:               "prod-secret-that-is-at-least-32-bytes-long",
+		RateLimitPerMinute:      60,
+		CORSAllowOrigins:        []string{"https://example.com"},
+		AuthMockCodeEnabled:     false,
+	}
+}
+
+func TestValidateRejectsGoogleWithoutClientIDInProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.OAuthProviders = []string{"google"}
+	// OAuthGoogleClientID 为空
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected google without client_id to be rejected in production")
+	}
+}
+
+func TestValidateRejectsAppleWithoutClientIDInProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.OAuthProviders = []string{"apple"}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected apple without client_id to be rejected in production")
+	}
+}
+
+func TestValidateRejectsWechatWithoutAppIDInProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.OAuthProviders = []string{"wechat"}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected wechat without app_id to be rejected in production")
+	}
+}
+
+func TestValidateAcceptsConfiguredOAuthProvidersInProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.OAuthProviders = []string{"google", "apple", "wechat"}
+	cfg.OAuthGoogleClientID = "google-client-id"
+	cfg.OAuthAppleClientID = "apple-client-id"
+	cfg.OAuthWechatAppID = "wechat-app-id"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected fully configured OAuth providers to be accepted: %v", err)
+	}
+}

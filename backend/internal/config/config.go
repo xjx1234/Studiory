@@ -211,6 +211,22 @@ func (c *Config) Validate() error {
 		if c.OAuthDevMode {
 			return errors.New("production 环境不能启用 oauth.dev_mode")
 		}
+		for _, p := range c.OAuthProviders {
+			switch strings.ToLower(strings.TrimSpace(p)) {
+			case "google":
+				if c.OAuthGoogleClientID == "" {
+					return errors.New("production 环境启用 google 登录时必须配置 oauth.google.client_id")
+				}
+			case "apple":
+				if c.OAuthAppleClientID == "" {
+					return errors.New("production 环境启用 apple 登录时必须配置 oauth.apple.client_id")
+				}
+			case "wechat":
+				if c.OAuthWechatAppID == "" {
+					return errors.New("production 环境启用 wechat 登录时必须配置 oauth.wechat.app_id")
+				}
+			}
+		}
 	}
 	if c.RateLimitPerMinute <= 0 {
 		return errors.New("rate_limit.per_minute 必须大于 0")

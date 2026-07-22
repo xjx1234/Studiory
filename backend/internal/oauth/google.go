@@ -16,7 +16,7 @@ const googleTokenInfoURL = "https://oauth2.googleapis.com/tokeninfo"
 
 // GoogleConfig Google OAuth 客户端配置。
 type GoogleConfig struct {
-	ClientID string // 非空时校验 token 的 aud 字段
+	ClientID string // 必须配置，用于校验 token 的 aud 字段
 }
 
 // GoogleProvider 通过 Google tokeninfo 接口校验 id_token 或 access_token。
@@ -87,7 +87,10 @@ func (p *GoogleProvider) Verify(ctx context.Context, req VerifyRequest) (*Identi
 	}
 
 	clientID := strings.TrimSpace(p.cfg.ClientID)
-	if clientID != "" && payload.Aud != "" && payload.Aud != clientID {
+	if clientID == "" {
+		return nil, fmt.Errorf("%w: google client_id", ErrNotConfigured)
+	}
+	if payload.Aud == "" || payload.Aud != clientID {
 		return nil, fmt.Errorf("%w: google aud mismatch", ErrInvalidToken)
 	}
 

@@ -39,11 +39,11 @@ func TestGoogleProvider_AccessTokenFallback(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"sub": "sub-1"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"sub": "sub-1", "aud": "test-client"})
 	}))
 	defer srv.Close()
 
-	p := NewGoogleProvider(GoogleConfig{})
+	p := NewGoogleProvider(GoogleConfig{ClientID: "test-client"})
 	p.tokenInfoURL = srv.URL
 	p.client = srv.Client()
 
@@ -123,23 +123,36 @@ func TestGoogleProvider_MalformedJSONReturnsInvalidToken(t *testing.T) {
 	}
 }
 
-func TestGoogleProvider_NoClientIDSkipsAudCheck(t *testing.T) {
+func TestGoogleProvider_NoClientIDReturnsNotConfigured(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"sub": "sub-1", "aud": "whatever"})
 	}))
 	defer srv.Close()
 
-	// ClientID 未配置：不校验 aud，任何值都应通过。
+	// ClientID 未配置：必须拒绝，不能跳过 aud 校验。
 	p := NewGoogleProvider(GoogleConfig{})
 	p.tokenInfoURL = srv.URL
 	p.client = srv.Client()
 
-	identity, err := p.Verify(context.Background(), VerifyRequest{IDToken: "t"})
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
+	_, err := p.Verify(context.Background(), VerifyRequest{IDToken: "t"})
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("expected ErrNotConfigured, got %v", err)
 	}
-	if identity.OpenID != "sub-1" {
-		t.Fatalf("OpenID = %q", identity.OpenID)
+}
+
+func TestGoogleProvider_MissingAudReturnsInvalidToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"sub": "sub-1"}) // 无 aud 字段
+	}))
+	defer srv.Close()
+
+	p := NewGoogleProvider(GoogleConfig{ClientID: "test-client"})
+	p.tokenInfoURL = srv.URL
+	p.client = srv.Client()
+
+	_, err := p.Verify(context.Background(), VerifyRequest{IDToken: "t"})
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken for missing aud, got %v", err)
 	}
 }
 
