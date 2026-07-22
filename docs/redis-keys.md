@@ -27,7 +27,7 @@
 - 写入当前时间戳；`Auth` 中间件校验 token 的 `iat` 是否早于该时间戳。
 - **不再用于普通登出**（登出改为按 session 吊销，见第 7 节），避免多设备模式下误伤其他设备。
 - 改密、后台禁用账号仍会写入该键，作为 access token 的兜底吊销。
-- Redis 不可用时吊销检查 **fail-open**（放行并打 Warn 日志）。
+- Redis 故障时按 `auth.redis_fail_open` 策略降级（默认开发 `true`=放行，生产 `false`=拒绝），打 Warn 日志。
 
 ---
 
@@ -44,7 +44,7 @@
 - JWT 的 `sid` 声明与 Redis 会话一一对应。
 - **多设备模式**（`multi_device_enabled=true`，默认）：每次登录新建 session，互不影响；登出仅 `Revoke` 当前 session。
 - **单设备模式**（`multi_device_enabled=false`）：新登录前 `RevokeAll` 并写入新的 `active_session`，旧设备 token 立即失效。
-- `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 是否仍在 Redis 中有效。
+- `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 是否仍在 Redis 中有效。Session 校验同样按 `auth.redis_fail_open` 策略降级。
 
 ---
 
@@ -70,7 +70,7 @@
 - 键后缀为「账号标识（手机号/邮箱/account，统一小写去空格）」的 SHA-256 十六进制摘要，不存明文账号。
 - 仅作用于**密码登录**路径：失败（含「用户不存在」，防止时序枚举账号）时原子递增 `fail` 计数；达到 **5 次/10 分钟** 阈值时写入 `lock` 键锁定 **15 分钟**。计数与锁定写入由同一段 Redis Lua 脚本原子完成。
 - 登录成功立即删除 `fail` 计数（`lock` 键自然过期）。
-- Redis 不可用时 **fail-open**（放行并打 Warn 日志），避免缓存故障完全阻断登录。
+- Redis 故障时按 `auth.redis_fail_open` 策略降级（默认开发 `true`=放行，生产 `false`=拒绝），打 Warn 日志。
 - 阈值/窗口/锁定时长为 `service/auth/service.go` 中常量（`loginMaxFailAttempts`、`loginFailWindow`、`loginLockDuration`），命中锁定返回错误码 `10010`（`err_account_locked`，HTTP 429）。
 
 ---

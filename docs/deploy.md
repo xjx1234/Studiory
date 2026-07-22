@@ -80,9 +80,14 @@ make run
 
 | 配置 | 要求 |
 |------|------|
-| `JWT_SECRET` | 不能为默认值 `dev-secret-change-in-production` |
+| `JWT_SECRET` | 不能为默认值 `dev-secret-change-in-production`，长度 ≥32 字节 |
 | `AUTH_MOCK_CODE_ENABLED` | 必须为 `false` |
 | `OAUTH_DEV_MODE` | 必须为 `false` |
+| `OAUTH_GOOGLE_CLIENT_ID` | 启用 google 登录时必填（强制校验 `aud`） |
+| `OAUTH_APPLE_CLIENT_ID` | 启用 apple 登录时必填 |
+| `OAUTH_WECHAT_APP_ID` | 启用 wechat 登录时必填 |
+| `METRICS_TOKEN` | `METRICS_ENABLED=true` 时必填（`/metrics` bearer token） |
+| `AUTH_REDIS_FAIL_OPEN` | 生产默认 `false`（安全优先）；可用性优先可设为 `true` |
 | `CORS_ALLOW_ORIGINS` | 至少配置一个来源 |
 | `RATE_LIMIT_PER_MINUTE` | 必须大于 0（公开路由按 IP） |
 | `RATE_LIMIT_USER_PER_MINUTE` | 可选；未配置时默认与 `RATE_LIMIT_PER_MINUTE` 相同（已鉴权路由按 user_id） |
@@ -333,5 +338,5 @@ curl -s http://localhost:8080/ready
 
 - PostgreSQL / Redis 需由集群内其他 Helm Chart 或托管服务提供；Secret 中的 `DATABASE_URL`、`REDIS_URL` 指向对应地址。
 - 生产务必设置 `APP_ENV=production` 及第三节所列安全项；`secret.example.yaml` 已默认关闭 mock 验证码与 OAuth dev 模式。
-- `/metrics` 默认无鉴权，生产环境通过 NetworkPolicy / 内网 ServiceMonitor 限制访问，见 [metrics.md](metrics.md)。
+- `/metrics` 生产环境需配置 `METRICS_TOKEN` bearer token（应用层保护），并通过 NetworkPolicy / 内网 ServiceMonitor 限制访问，见 [metrics.md](metrics.md)。
 - 滚动发布时，旧 Pod 在 `readinessProbe` 失败期间自动摘流；新 Pod 通过 `/ready` 后才接流量。

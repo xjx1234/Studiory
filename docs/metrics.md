@@ -3,17 +3,21 @@
 应用在 `/metrics` 暴露 Prometheus 文本格式指标。应用只输出**原始指标**（计数器 / 直方图 / Gauge），
 QPS、P99、错误率等由 Prometheus / Grafana 用 PromQL 派生。
 
-## 开关
+## 开关与安全
 
 由 `metrics.enabled` 控制（环境变量 `METRICS_ENABLED`），默认 `true`。
 
 ```yaml
 metrics:
   enabled: true
+  token: ""                   # /metrics bearer token，生产环境必须配置
 ```
 
 - 关闭后不注册中间件，也不挂载 `/metrics` 端点。
-- `/metrics` 默认不经过鉴权与限流。生产环境应在网络层（Ingress / 防火墙 / ServiceMonitor 内网）限制访问，或将 `enabled` 设为 `false` 并改用 sidecar。
+- **应用层保护**：`metrics.token` 非空时，`/metrics` 端点要求 `Authorization: Bearer <token>` 才能访问。兼容 Prometheus `scrape_config` 的 `bearer_token` 字段，也支持 `?token=` query 参数。
+- **生产环境强制**：`config.Validate()` 在生产模式下要求 `metrics.enabled=true` 时必须配置 `metrics.token`，防止绕过 Ingress 直连暴露指标。
+- 开发环境 `token` 为空时 `/metrics` 无鉴权，方便本地调试。
+- 网络层（Ingress `server-snippet` 返回 403）与应用层 bearer token 构成双重防护。
 
 ## 暴露的指标
 
@@ -80,5 +84,9 @@ rate(redis_pool_misses_total[5m])
 
 ```bash
 make run
+# 开发环境（token 为空）可直接访问
 curl -s http://localhost:8080/metrics | head -40
+
+# 生产环境（token 非空）需携带 bearer token
+curl -s -H "Authorization: Bearer <METRICS_TOKEN>" http://localhost:8080/metrics | head -40
 ```

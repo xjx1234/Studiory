@@ -19,7 +19,7 @@
 冷却限频(SetNX) → 生成验证码 → 写 Redis(5min) → Router.Send → 选渠道 Provider 依次尝试
 ```
 
-- 验证码生成：开发模式（`auth.mock_code_enabled=true`）用固定 `123456` 便于联调；否则生成 6 位 `crypto/rand` 随机码。
+- 验证码生成：开发模式（`auth.mock_code_enabled=true`）用固定 `123456` 便于联调；否则生成 6 位 `crypto/rand` 随机码，**rand 失败时返回错误而非回退固定码**。
 - 下发失败：清除冷却键与验证码，允许用户立即重试。
 - 故障转移：同一渠道的多个 Provider 按注册顺序尝试，任一成功即返回；全部失败才报错。
 

@@ -26,8 +26,9 @@ auth:
 1. 每次登录生成 `session_id`（UUID），写入 JWT 的 `sid` 声明（access + refresh 均携带）。
 2. Redis 记录会话状态，详见 [redis-keys.md](redis-keys.md) 第 7 节。
 3. `Auth` 中间件校验：`sid` 在 Redis 中仍有效 **且** 未命中用户级 `revoke:uid`。
-4. `Refresh` 保持同一 `sid` 轮换 token，不新建 session。
-5. `Logout` 仅吊销当前 `sid` 对应 session（多设备下不影响其他设备）。
+4. Redis 故障时按 `auth.redis_fail_open` 策略降级（默认开发 `true`=放行，生产 `false`=拒绝）。
+5. `Refresh` 保持同一 `sid` 轮换 token，不新建 session。
+6. `Logout` 仅吊销当前 `sid` 对应 session（多设备下不影响其他设备）。
 
 ## 涉及文件
 
