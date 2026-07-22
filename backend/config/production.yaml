@@ -19,6 +19,7 @@ rate_limit:
 auth:
   mock_code_enabled: false
   multi_device_enabled: true   # 高安全场景可改为 false
+  redis_fail_open: false       # 生产默认安全优先（Redis故障时拒绝请求）；可用性优先可改为 true 或设 AUTH_REDIS_FAIL_OPEN=true
 
 oauth:
   dev_mode: false
