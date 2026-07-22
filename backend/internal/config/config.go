@@ -89,6 +89,7 @@ type Config struct {
 
 	// ── 可观测 ────────────────────────────────────────────────────────────
 	MetricsEnabled bool
+	MetricsToken   string // /metrics 端点的 bearer token，生产环境必须配置
 
 	// ── CORS ──────────────────────────────────────────────────────────────
 	CORSAllowOrigins     []string
@@ -153,6 +154,7 @@ func Load() *Config {
 		RateLimitUserPerMinute: v.GetInt("rate_limit.user_per_minute"),
 
 		MetricsEnabled: v.GetBool("metrics.enabled"),
+		MetricsToken:   v.GetString("metrics.token"),
 
 		CORSAllowOrigins:     getStringSlice(v, "cors.allow_origins"),
 		CORSAllowCredentials: v.GetBool("cors.allow_credentials"),
@@ -226,6 +228,9 @@ func (c *Config) Validate() error {
 					return errors.New("production 环境启用 wechat 登录时必须配置 oauth.wechat.app_id")
 				}
 			}
+		}
+		if c.MetricsEnabled && c.MetricsToken == "" {
+			return errors.New("production 环境启用 metrics 时必须配置 metrics.token（bearer token）")
 		}
 	}
 	if c.RateLimitPerMinute <= 0 {
@@ -356,6 +361,7 @@ func bindEnvs(v *viper.Viper) {
 		"rate_limit.per_minute":       "RATE_LIMIT_PER_MINUTE",
 		"rate_limit.user_per_minute":  "RATE_LIMIT_USER_PER_MINUTE",
 		"metrics.enabled":             "METRICS_ENABLED",
+		"metrics.token":               "METRICS_TOKEN",
 		"cors.allow_origins":          "CORS_ALLOW_ORIGINS",
 		"cors.allow_credentials":      "CORS_ALLOW_CREDENTIALS",
 	}

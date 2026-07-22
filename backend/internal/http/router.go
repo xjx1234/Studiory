@@ -2,6 +2,8 @@ package http
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"backend/internal/http/middleware"
@@ -47,7 +49,11 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	registerHealthRoutes(r, deps)
 
 	if deps.MetricsHandler != nil {
-		r.GET("/metrics", gin.WrapH(deps.MetricsHandler))
+		handler := gin.WrapH(deps.MetricsHandler)
+		if deps.Cfg.MetricsToken != "" {
+			handler = metricsBearerAuth(deps.Cfg.MetricsToken, handler)
+		}
+		r.GET("/metrics", handler)
 	}
 
 	v1 := r.Group("/api/v1")
@@ -94,4 +100,23 @@ func validateDeps(deps *Deps) error {
 		return errors.New("ReadyChecks is required")
 	}
 	return nil
+}
+
+// metricsBearerAuth 校验 /metrics 请求的 Bearer token。
+// 兼容 Prometheus scrape_config 的 bearer_token 字段（发送 Authorization: Bearer <token>）。
+func metricsBearerAuth(token string, next gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth := c.GetHeader("Authorization")
+		if auth == "" {
+			// 兼容部分采集器通过 query 参数传递 token
+			if q := strings.TrimSpace(c.Query("token")); q != "" {
+				auth = "Bearer " + q
+			}
+		}
+		if auth != "Bearer "+token {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		c.Next()
+	}
 }

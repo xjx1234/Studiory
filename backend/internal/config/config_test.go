@@ -177,3 +177,23 @@ func TestValidateAcceptsConfiguredOAuthProvidersInProduction(t *testing.T) {
 		t.Fatalf("expected fully configured OAuth providers to be accepted: %v", err)
 	}
 }
+
+func TestValidateRejectsMetricsWithoutTokenInProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.MetricsEnabled = true
+	// MetricsToken 为空
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected metrics without token to be rejected in production")
+	}
+}
+
+func TestValidateAcceptsMetricsWithTokenInProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.MetricsEnabled = true
+	cfg.MetricsToken = "secret-metrics-token"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected metrics with token to be accepted in production: %v", err)
+	}
+}

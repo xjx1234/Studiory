@@ -37,3 +37,7 @@ oauth:
 cors:
   allow_origins: []           # 生产环境必须通过环境变量或 local.yaml 显式配置
   allow_credentials: true
+
+metrics:
+  enabled: true
+  token: ""                   # 生产环境必须通过 METRICS_TOKEN 环境变量设置 bearer token

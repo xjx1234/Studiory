@@ -76,7 +76,8 @@ rate_limit:
   user_per_minute: 120         # 已鉴权 /user、/admin：按 user_id（同 NAT 互不干扰）
 
 metrics:
-  enabled: true              # 暴露 Prometheus /metrics 端点（生产可按需关闭或用网络层保护）
+  enabled: true              # 暴露 Prometheus /metrics 端点（生产可按需关闭）
+  token: ""                  # /metrics bearer token，生产环境必须配置（防止绕过 Ingress 直连）
 
 cors:
   allow_origins:

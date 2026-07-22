@@ -407,3 +407,91 @@ func TestAdminSetStatus_CannotDisableSelf(t *testing.T) {
 		gin.H{"status": "disabled"}, "X-Test-UserID", "11111111-1111-1111-1111-111111111111", "X-Test-Role", repo.RoleAdmin)
 	assertStatusCode(t, w, body, http.StatusBadRequest, errcode.ErrCannotModifySelf.Code)
 }
+
+// ── /metrics bearer token 保护 ────────────────────────────────────────────────
+
+func newMetricsTestServer(t *testing.T, token string) *gin.Engine {
+	t.Helper()
+	ts := &testServer{
+		auth:  &fakeAuthService{},
+		user:  &fakeUserService{},
+		todo:  &fakeTodoService{},
+		admin: &fakeAdminService{},
+	}
+	deps := &Deps{
+		Cfg:                     &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}, MetricsToken: token},
+		AuthService:             ts.auth,
+		UserService:             ts.user,
+		TodoService:             ts.todo,
+		AdminService:            ts.admin,
+		AuthMiddleware:          fakeAuthMiddleware,
+		RateLimitMiddleware:     func(c *gin.Context) { c.Next() },
+		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		MetricsHandler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("# metrics ok\n"))
+		}),
+		ReadyChecks: []ReadyCheck{
+			{Name: "noop", Check: func(context.Context) error { return nil }},
+		},
+	}
+	r, err := NewRouter(deps)
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	return r
+}
+
+func TestMetrics_RequiresBearerToken(t *testing.T) {
+	r := newMetricsTestServer(t, "secret-token")
+
+	// 无 token → 401
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("without token: status = %d, want 401", w.Code)
+	}
+
+	// 错误 token → 401
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", w.Code)
+	}
+
+	// 正确 token → 200
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("correct token: status = %d, want 200", w.Code)
+	}
+}
+
+func TestMetrics_QueryTokenFallback(t *testing.T) {
+	r := newMetricsTestServer(t, "secret-token")
+
+	// 通过 query 参数传 token → 200
+	req := httptest.NewRequest(http.MethodGet, "/metrics?token=secret-token", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("query token: status = %d, want 200", w.Code)
+	}
+}
+
+func TestMetrics_NoTokenConfigured(t *testing.T) {
+	// token 为空时不启用 bearer auth（向后兼容开发环境）
+	r := newMetricsTestServer(t, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("no token configured: status = %d, want 200", w.Code)
+	}
+}
