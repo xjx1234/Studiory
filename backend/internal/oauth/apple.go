@@ -14,9 +14,14 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/sync/singleflight"
 )
 
 const appleJWKSURL = "https://appleid.apple.com/auth/keys"
+
+// jwksRefreshMinInterval 限制 JWKS 远程刷新频率：kid 未命中时至多每分钟请求一次 Apple，
+// 防止伪造 token 携带随机 kid 打爆 JWKS 端点（Apple 密钥轮换极低频，1 分钟足够）。
+const jwksRefreshMinInterval = time.Minute
 
 // AppleConfig Sign in with Apple 配置。
 type AppleConfig struct {
@@ -29,8 +34,11 @@ type AppleProvider struct {
 	client  *http.Client
 	jwksURL string // 测试用覆盖；为空则使用默认生产地址
 
-	jwksMu sync.RWMutex
-	jwks   map[string]*rsa.PublicKey
+	jwksMu      sync.RWMutex
+	jwks        map[string]*rsa.PublicKey
+	lastRefresh time.Time // 最近一次成功刷新时间，配合 jwksRefreshMinInterval 节流
+
+	sf singleflight.Group // 合并并发刷新，同一时刻只有一个 goroutine 请求 Apple
 }
 
 func NewAppleProvider(cfg AppleConfig) *AppleProvider {
@@ -98,12 +106,20 @@ func (p *AppleProvider) Verify(ctx context.Context, req VerifyRequest) (*Identit
 func (p *AppleProvider) publicKey(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	p.jwksMu.RLock()
 	key, ok := p.jwks[kid]
+	throttled := time.Since(p.lastRefresh) < jwksRefreshMinInterval
 	p.jwksMu.RUnlock()
 	if ok {
 		return key, nil
 	}
 
-	if err := p.refreshJWKS(ctx); err != nil {
+	// 距上次成功刷新不足最小间隔：kid 仍未命中直接视为无效，不再请求远程
+	if throttled {
+		return nil, fmt.Errorf("kid %s not found in apple jwks", kid)
+	}
+
+	if _, err, _ := p.sf.Do("jwks-refresh", func() (any, error) {
+		return nil, p.refreshJWKS(ctx)
+	}); err != nil {
 		return nil, err
 	}
 
@@ -164,6 +180,7 @@ func (p *AppleProvider) refreshJWKS(ctx context.Context) error {
 
 	p.jwksMu.Lock()
 	p.jwks = keys
+	p.lastRefresh = time.Now() // 仅成功时记录：端点故障恢复后合法登录可立即重试
 	p.jwksMu.Unlock()
 	return nil
 }

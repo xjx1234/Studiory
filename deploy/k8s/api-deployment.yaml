@@ -84,7 +84,8 @@ spec:
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # distroless 静态二进制，无任何写盘需求（日志写 stdout），根文件系统可只读
+            readOnlyRootFilesystem: true
             runAsNonRoot: true
           lifecycle:
             preStop:

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -235,6 +236,48 @@ func TestAppleProvider_UnknownKidRejected(t *testing.T) {
 	_, err := p.Verify(context.Background(), VerifyRequest{IDToken: tokenStr})
 	if !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("expected ErrInvalidToken, got %v", err)
+	}
+}
+
+func TestAppleProvider_UnknownKidThrottledAfterRefresh(t *testing.T) {
+	key := generateTestRSAKey(t)
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		resp := map[string]any{
+			"keys": []map[string]string{
+				{
+					"kty": "RSA", "kid": testAppleKid, "use": "sig", "alg": "RS256",
+					"n": base64URLBigInt(key.N), "e": base64URLExponent(key.E),
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	p := NewAppleProvider(AppleConfig{ClientID: "client-1"})
+	p.jwksURL = srv.URL
+	p.client = srv.Client()
+
+	// 首次合法登录触发一次成功刷新
+	validToken := signAppleTestToken(t, key, testAppleKid, defaultAppleClaims("client-1", "sub-1"))
+	if _, err := p.Verify(context.Background(), VerifyRequest{IDToken: validToken}); err != nil {
+		t.Fatalf("Verify valid token: %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("expected 1 JWKS fetch after first verify, got %d", hits)
+	}
+
+	// 最小刷新间隔内，伪造随机 kid 的 token 不得再触发远程请求
+	for i := 0; i < 5; i++ {
+		forged := signAppleTestToken(t, key, fmt.Sprintf("forged-kid-%d", i), defaultAppleClaims("client-1", "sub-1"))
+		if _, err := p.Verify(context.Background(), VerifyRequest{IDToken: forged}); !errors.Is(err, ErrInvalidToken) {
+			t.Fatalf("forged kid #%d: expected ErrInvalidToken, got %v", i, err)
+		}
+	}
+	if hits != 1 {
+		t.Errorf("expected JWKS fetch throttled to 1, got %d fetches", hits)
 	}
 }
 

@@ -116,6 +116,7 @@ return oauth.NewRouter(logger, cfg.OAuthDevMode, providers...)
 - **dev_mode 仅用于本地联调**，生产必须关闭并由各 Provider 校验真实 token
 - **生产环境凭据强制校验**：`config.Validate()` 在生产模式下要求每个启用的 provider 都必须配置对应凭据（`google.client_id`、`apple.client_id`、`wechat.app_id`），否则启动失败
 - Apple / Google Provider 未配置 `client_id` 时返回 `ErrNotConfigured`
+- Apple JWKS 刷新带 singleflight 合并 + 最小刷新间隔节流（1 分钟），伪造随机 `kid` 的 token 无法打爆 Apple JWKS 端点
 - Google Provider **强制校验 `aud`**：`client_id` 为空时拒绝（不再跳过），响应中 `aud` 缺失或不匹配也拒绝
 - token 无效统一映射为 `10002 err_invalid_token`
 - 首次 OAuth 登录自动创建 `role=user` 账号，昵称优先使用平台返回的 `nickname`

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"backend/pkg/strutil"
-
 	"go.uber.org/zap"
 )
 
@@ -50,8 +48,10 @@ func (s *AuthServiceImpl) isLoginLocked(ctx context.Context, account string) boo
 			strategy = "fail-closed"
 		}
 		if s.Logger != nil {
+			// 只记账号哈希前缀，不落明文账号（与 Redis 键同一标准）
+			h := sha256.Sum256([]byte(account))
 			s.Logger.Warn("isLoginLocked redis error, "+strategy,
-				zap.String("account_hash", strutil.Truncate(account, 8)),
+				zap.String("account_hash", fmt.Sprintf("%x", h[:4])),
 				zap.Error(err))
 		}
 		// failOpen=true → 视为未锁定（放行）；failOpen=false → 视为已锁定（拒绝）

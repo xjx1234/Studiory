@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"backend/internal/auth"
@@ -462,7 +463,7 @@ func TestMetrics_RequiresBearerToken(t *testing.T) {
 		t.Fatalf("wrong token: status = %d, want 401", w.Code)
 	}
 
-	// 正确 token → 200
+	// 正确 token → 200，且确实执行到了被包裹的 metrics handler
 	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	req.Header.Set("Authorization", "Bearer secret-token")
 	w = httptest.NewRecorder()
@@ -470,17 +471,20 @@ func TestMetrics_RequiresBearerToken(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("correct token: status = %d, want 200", w.Code)
 	}
+	if !strings.Contains(w.Body.String(), "# metrics ok") {
+		t.Fatalf("correct token: metrics handler not invoked, body = %q", w.Body.String())
+	}
 }
 
-func TestMetrics_QueryTokenFallback(t *testing.T) {
+func TestMetrics_QueryTokenRejected(t *testing.T) {
 	r := newMetricsTestServer(t, "secret-token")
 
-	// 通过 query 参数传 token → 200
+	// query 参数传 token 不被接受（会随访问日志落盘）→ 401
 	req := httptest.NewRequest(http.MethodGet, "/metrics?token=secret-token", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("query token: status = %d, want 200", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("query token: status = %d, want 401", w.Code)
 	}
 }
 

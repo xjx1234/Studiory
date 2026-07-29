@@ -1,9 +1,9 @@
 package http
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"backend/internal/http/middleware"
@@ -103,20 +103,17 @@ func validateDeps(deps *Deps) error {
 }
 
 // metricsBearerAuth 校验 /metrics 请求的 Bearer token。
-// 兼容 Prometheus scrape_config 的 bearer_token 字段（发送 Authorization: Bearer <token>）。
+// 对应 Prometheus scrape_config 的 bearer_token 字段（发送 Authorization: Bearer <token>）。
+// 不支持 query 参数传递：URL 中的 token 会随访问日志落盘，违背密钥不落日志原则。
 func metricsBearerAuth(token string, next gin.HandlerFunc) gin.HandlerFunc {
+	expected := []byte("Bearer " + token)
 	return func(c *gin.Context) {
-		auth := c.GetHeader("Authorization")
-		if auth == "" {
-			// 兼容部分采集器通过 query 参数传递 token
-			if q := strings.TrimSpace(c.Query("token")); q != "" {
-				auth = "Bearer " + q
-			}
-		}
-		if auth != "Bearer "+token {
+		auth := []byte(c.GetHeader("Authorization"))
+		// 常数时间比较，避免通过响应时延逐字符猜解 token
+		if subtle.ConstantTimeCompare(auth, expected) != 1 {
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
-		c.Next()
+		next(c)
 	}
 }

@@ -14,7 +14,7 @@ metrics:
 ```
 
 - 关闭后不注册中间件，也不挂载 `/metrics` 端点。
-- **应用层保护**：`metrics.token` 非空时，`/metrics` 端点要求 `Authorization: Bearer <token>` 才能访问。兼容 Prometheus `scrape_config` 的 `bearer_token` 字段，也支持 `?token=` query 参数。
+- **应用层保护**：`metrics.token` 非空时，`/metrics` 端点要求 `Authorization: Bearer <token>` 才能访问（常数时间比较）。对应 Prometheus `scrape_config` 的 `bearer_token` 字段；**不支持** `?token=` query 参数（会随访问日志落盘）。
 - **生产环境强制**：`config.Validate()` 在生产模式下要求 `metrics.enabled=true` 时必须配置 `metrics.token`，防止绕过 Ingress 直连暴露指标。
 - 开发环境 `token` 为空时 `/metrics` 无鉴权，方便本地调试。
 - 网络层（Ingress `server-snippet` 返回 403）与应用层 bearer token 构成双重防护。

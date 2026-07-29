@@ -137,7 +137,7 @@
 | 变量 | 默认值 | 必填 | 说明 |
 |------|--------|------|------|
 | `METRICS_ENABLED` | `true` | 否 | 暴露 Prometheus `/metrics` 端点 |
-| `METRICS_TOKEN` | — | **生产必填**（`METRICS_ENABLED=true` 时） | `/metrics` 端点 bearer token，防止绕过 Ingress 直连。Prometheus `scrape_config` 中设置 `bearer_token` |
+| `METRICS_TOKEN` | — | **生产必填**（`METRICS_ENABLED=true` 时） | `/metrics` 端点 bearer token，防止绕过 Ingress 直连。仅支持 `Authorization: Bearer` 头（Prometheus `scrape_config` 的 `bearer_token`），不支持 query 参数 |
 
 ---
 
@@ -157,7 +157,7 @@
 | `JWT_SECRET` | 默认值是公开的开发密钥，必须替换为强随机字符串（≥32 字节） |
 | `AUTH_MOCK_CODE_ENABLED` | 必须为 `false`，否则任何人可用 `123456` 登录 |
 | `OAUTH_DEV_MODE` | 必须为 `false`，否则可绕过第三方 token 校验 |
-| `OAUTH_GOOGLE_CLIENT_ID` | 启用 google 登录时必填，否则不校验 `aud`（任意 Google token 可登录） |
+| `OAUTH_GOOGLE_CLIENT_ID` | 启用 google 登录时必填；未配置时 google 登录直接拒绝（`ErrNotConfigured`），生产启动时强制校验 |
 | `OAUTH_APPLE_CLIENT_ID` | 启用 apple 登录时必填 |
 | `OAUTH_WECHAT_APP_ID` | 启用 wechat 登录时必填 |
 | `METRICS_TOKEN` | 启用 metrics 时必填，防止绕过 Ingress 直连暴露指标 |
