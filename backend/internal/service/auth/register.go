@@ -76,8 +76,22 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 	if input.CodeType == "email" {
 		target = input.Email
 	}
+	if target == "" {
+		return nil, errcode.ErrBadRequest
+	}
+
+	// 与验证码登录共用防暴力破解：同一 target 连续猜错会锁定，避免仅靠 IP 限流约束 6 位码。
+	account := loginAccountID(
+		condStr(input.CodeType == "sms", target, ""),
+		condStr(input.CodeType == "email", target, ""),
+		"",
+	)
+	if s.isLoginLocked(ctx, account) {
+		return nil, errcode.ErrAccountLocked
+	}
 
 	if !s.verifyCode(ctx, input.CodeType, target, input.Code) {
+		s.recordLoginFail(ctx, account)
 		return nil, errcode.ErrInvalidCode
 	}
 
@@ -102,6 +116,7 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 		return nil, errcode.ErrInternal
 	}
 
+	s.clearLoginFail(ctx, account)
 	return s.issueResult(ctx, user)
 }
 

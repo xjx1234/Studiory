@@ -1,7 +1,7 @@
-// ── 登录暴力破解防护 ──────────────────────────────────────────────────────────
+// ── 登录/注册暴力破解防护 ────────────────────────────────────────────────────
 //
-// 同一账号在 loginFailWindow 内失败 loginMaxFailAttempts 次后锁定
-// loginLockDuration，期间拒绝任何密码登录尝试。
+// 同一账号（手机号/邮箱）在 loginFailWindow 内失败 loginMaxFailAttempts 次后锁定
+// loginLockDuration。覆盖：密码登录、验证码登录、验证码注册。
 
 package authservice
 

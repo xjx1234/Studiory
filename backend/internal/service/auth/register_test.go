@@ -130,6 +130,82 @@ func TestRegisterWithCode_InvalidCode(t *testing.T) {
 	}
 }
 
+// TestRegisterWithCode_LocksAfterTooManyFailures 验证验证码注册猜错达到阈值后锁定。
+func TestRegisterWithCode_LocksAfterTooManyFailures(t *testing.T) {
+	_, rdb := newTestRDB(t)
+	svc := registerSvc(t, rdb)
+	phone := "13900000010"
+
+	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+		t.Fatalf("SendCode failed: %+v", e)
+	}
+
+	wrong := &RegisterInput{
+		GrantType: "code",
+		CodeType:  "sms",
+		Phone:     phone,
+		Code:      "999999",
+	}
+	for i := 0; i < loginMaxFailAttempts; i++ {
+		_, e := svc.Register(context.Background(), wrong)
+		switch {
+		case e == nil:
+			t.Fatalf("attempt %d: expected error, got nil", i+1)
+		case e.Code == errcode.ErrAccountLocked.Code:
+			t.Fatalf("account locked too early at attempt %d", i+1)
+		case e.Code != errcode.ErrInvalidCode.Code:
+			t.Fatalf("attempt %d: expected ErrInvalidCode, got %+v", i+1, e)
+		}
+	}
+
+	_, e := svc.Register(context.Background(), wrong)
+	if e == nil || e.Code != errcode.ErrAccountLocked.Code {
+		t.Fatalf("expected ErrAccountLocked after %d failures, got %+v", loginMaxFailAttempts, e)
+	}
+
+	// 即使验证码正确，锁定期间也不应放行。
+	_, e = svc.Register(context.Background(), &RegisterInput{
+		GrantType: "code",
+		CodeType:  "sms",
+		Phone:     phone,
+		Code:      MockVerificationCode,
+	})
+	if e == nil || e.Code != errcode.ErrAccountLocked.Code {
+		t.Fatalf("expected ErrAccountLocked for correct code while locked, got %+v", e)
+	}
+}
+
+// TestRegisterWithCode_ClearsCounterOnSuccess 验证注册成功后清除失败计数。
+func TestRegisterWithCode_ClearsCounterOnSuccess(t *testing.T) {
+	mr, rdb := newTestRDB(t)
+	svc := registerSvc(t, rdb)
+	phone := "13900000011"
+
+	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+		t.Fatalf("SendCode failed: %+v", e)
+	}
+
+	wrong := &RegisterInput{GrantType: "code", CodeType: "sms", Phone: phone, Code: "999999"}
+	for i := 0; i < 2; i++ {
+		_, _ = svc.Register(context.Background(), wrong)
+	}
+
+	_, e := svc.Register(context.Background(), &RegisterInput{
+		GrantType: "code",
+		CodeType:  "sms",
+		Phone:     phone,
+		Code:      MockVerificationCode,
+	})
+	if e != nil {
+		t.Fatalf("expected successful register, got %+v", e)
+	}
+
+	failKey := svc.loginFailKey(loginAccountID(phone, "", ""))
+	if mr.Exists(failKey) {
+		t.Error("expected fail key to be deleted after successful code register")
+	}
+}
+
 // TestRegisterWithCode_MissingFields 验证缺少 code 或 codeType 返回 ErrBadRequest。
 func TestRegisterWithCode_MissingFields(t *testing.T) {
 	_, rdb := newTestRDB(t)
