@@ -232,6 +232,14 @@ func (c *Config) Validate() error {
 		if c.MetricsEnabled && c.MetricsToken == "" {
 			return errors.New("production 环境启用 metrics 时必须配置 metrics.token（bearer token）")
 		}
+		// DATABASE_URL 优先于分项配置，database.ssl_mode 对完整 DSN 不生效，
+		// 必须要求 DSN 显式携带安全的 sslmode，防止 TLS 被静默绕过
+		// （sslmode 缺省时 pgx 按 prefer 处理，服务端不支持 TLS 会静默回落明文连接）。
+		switch databaseSSLMode(c.DatabaseURL) {
+		case "require", "verify-ca", "verify-full":
+		default:
+			return errors.New("production 环境的 database.url 必须显式携带 sslmode=require/verify-ca/verify-full")
+		}
 	}
 	if c.RateLimitPerMinute <= 0 {
 		return errors.New("rate_limit.per_minute 必须大于 0")
@@ -245,6 +253,24 @@ func (c *Config) Validate() error {
 // IsDev 是否为开发环境。
 func (c *Config) IsDev() bool {
 	return c.AppEnv == "development" || c.AppEnv == ""
+}
+
+// databaseSSLMode 从 DSN 中提取 sslmode，兼容 URL（postgres://...?sslmode=x）
+// 与 key=value（host=... sslmode=x）两种格式；未携带或解析失败返回空串。
+func databaseSSLMode(dsn string) string {
+	if strings.Contains(dsn, "://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return ""
+		}
+		return u.Query().Get("sslmode")
+	}
+	for _, kv := range strings.Fields(dsn) {
+		if v, ok := strings.CutPrefix(kv, "sslmode="); ok {
+			return strings.Trim(v, "'")
+		}
+	}
+	return ""
 }
 
 // IsProd 是否为生产环境。

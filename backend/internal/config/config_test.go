@@ -65,7 +65,7 @@ func TestValidateAccepts32ByteJWTSecretInProduction(t *testing.T) {
 		ServerReadTimeout:       15 * time.Second,
 		ServerWriteTimeout:      30 * time.Second,
 		ServerIdleTimeout:       120 * time.Second,
-		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=require",
 		RedisURL:                "redis://localhost:6379/0",
 		JWTSecret:               "0123456789abcdef0123456789abcdef", // 正好 32 字节
 		RateLimitPerMinute:      60,
@@ -129,7 +129,7 @@ func prodBaseConfig() Config {
 		ServerReadTimeout:       15 * time.Second,
 		ServerWriteTimeout:      30 * time.Second,
 		ServerIdleTimeout:       120 * time.Second,
-		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=require",
 		RedisURL:                "redis://localhost:6379/0",
 		JWTSecret:               "prod-secret-that-is-at-least-32-bytes-long",
 		RateLimitPerMinute:      60,
@@ -175,6 +175,38 @@ func TestValidateAcceptsConfiguredOAuthProvidersInProduction(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected fully configured OAuth providers to be accepted: %v", err)
+	}
+}
+
+func TestValidateRejectsInsecureDatabaseSSLModeInProduction(t *testing.T) {
+	insecure := []string{
+		"postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		"postgres://postgres:password@localhost:5432/app?sslmode=prefer",
+		// 未携带 sslmode：pgx 按 prefer 处理，可能静默回落明文，同样拒绝
+		"postgres://postgres:password@localhost:5432/app",
+		"host=localhost port=5432 dbname=app sslmode=disable",
+	}
+	for _, dsn := range insecure {
+		cfg := prodBaseConfig()
+		cfg.DatabaseURL = dsn
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected insecure DSN to be rejected in production: %s", dsn)
+		}
+	}
+}
+
+func TestValidateAcceptsSecureDatabaseSSLModeInProduction(t *testing.T) {
+	secure := []string{
+		"postgres://postgres:password@localhost:5432/app?sslmode=require",
+		"postgres://postgres:password@localhost:5432/app?sslmode=verify-full",
+		"host=localhost port=5432 dbname=app sslmode=verify-ca",
+	}
+	for _, dsn := range secure {
+		cfg := prodBaseConfig()
+		cfg.DatabaseURL = dsn
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected secure DSN to be accepted in production: %s, got %v", dsn, err)
+		}
 	}
 }
 

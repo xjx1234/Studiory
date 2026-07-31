@@ -29,7 +29,7 @@
 
 | 变量 | 默认值 | 必填 | 说明 |
 |------|--------|------|------|
-| `DATABASE_URL` | — | 是 | 完整连接串，如 `postgres://user:pass@host:5432/db?sslmode=disable` |
+| `DATABASE_URL` | — | 是 | 完整连接串，如 `postgres://user:pass@host:5432/db?sslmode=disable`；生产环境必须显式携带 `sslmode=require/verify-ca/verify-full`，启动时强制校验（缺省时 pgx 按 `prefer` 处理，会静默回落明文连接） |
 
 **方式二：分项配置（`DATABASE_URL` 为空时生效）**
 
@@ -162,6 +162,6 @@
 | `OAUTH_WECHAT_APP_ID` | 启用 wechat 登录时必填 |
 | `METRICS_TOKEN` | 启用 metrics 时必填，防止绕过 Ingress 直连暴露指标 |
 | `AUTH_REDIS_FAIL_OPEN` | 生产默认 `false`（安全优先）；需可用性优先可设为 `true` |
-| `DATABASE_URL` / `DB_PASSWORD` | 使用真实数据库凭据 |
+| `DATABASE_URL` / `DB_PASSWORD` | 使用真实数据库凭据；DSN 必须显式携带 `sslmode=require/verify-ca/verify-full`（启动强制校验） |
 | `REDIS_URL` / `REDIS_PASSWORD` | 使用真实 Redis 凭据 |
 | `CORS_ALLOW_ORIGINS` | 配置为实际前端域名，不要用 `*` |
