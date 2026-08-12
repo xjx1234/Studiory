@@ -431,18 +431,39 @@ if !request.Bind(c, &req) {
 ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 defer stop()
 
-// 2. 非阻塞启动 HTTP Server
+// 2. 非阻塞启动 HTTP Server；启动失败通过 channel 通知主 goroutine，
+//    避免在 goroutine 内直接 Fatal（os.Exit 会跳过 defer 清理）
+serverErr := make(chan error, 1)
 go func() {
-    a.Server.ListenAndServe()
+    if err := a.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+        serverErr <- err
+    }
 }()
 
-// 3. 等待信号
-<-ctx.Done()
+// 3. 等待退出信号或 Server 异常退出
+var runErr error
+select {
+case <-ctx.Done():
+    zap.L().Info("收到退出信号，开始优雅停机")
+case runErr = <-serverErr:
+    zap.L().Error("服务器异常退出", zap.Error(runErr))
+}
 
 // 4. 带超时优雅关闭（10 秒内等待请求完成）
 shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 a.Shutdown(shutdownCtx)  // 先停 HTTP Server，再关闭 PG + Redis
+
+// 5. 清理完成后才以非零码退出（os.Exit 跳过 defer，故显式刷日志）
+if runErr != nil {
+    _ = logger.Sync()
+    os.Exit(1)
+}
 ```
+
+**设计要点**：
+- Server 启动失败（如端口被占用）不会静默丢失，而是汇入主流程走完整清理路径
+- 绝不在 goroutine 内调用 `Fatal`：它内部是 `os.Exit(1)`，会跳过所有 defer（日志 Sync、连接关闭等）
+- 异常退出时先完成清理、刷日志，最后才 `os.Exit(1)`，保证退出码语义正确
 
 ---
 
@@ -865,7 +886,7 @@ HEALTHCHECK CMD wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1
 - `CGO_ENABLED=0`：纯静态链接，alpine 也能跑
 - `-trimpath`：去掉编译路径，安全 + 可重现
 - `-s -w`：去符号表 + DWARF，缩小镜像体积
-- `GOTOOLCHAIN=auto`：Go 工具链自动下载 go.mod 指定的版本
+- `GOTOOLCHAIN=go${GO_VERSION}+auto`：按 go.mod 声明的版本自动切换/下载工具链。注意 go.mod 只钉小版本（`go 1.25`）而非精确 patch 版本，避免本地工具链小版本不一致时强制下载、网络异常时卡死构建
 
 ### 6.2 K8s 部署模板
 
