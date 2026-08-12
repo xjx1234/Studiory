@@ -48,22 +48,35 @@ func main() {
 
 	zap.L().Info("API 服务启动", zap.String("addr", cfg.ServerAddr))
 
-	// 非阻塞启动 HTTP Server，让主 goroutine 等待退出信号
+	// 非阻塞启动 HTTP Server；启动失败通过 channel 通知主 goroutine，
+	// 避免在 goroutine 内直接 Fatal（os.Exit 会跳过 defer 清理）
+	serverErr := make(chan error, 1)
 	go func() {
 		if err := a.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			zap.L().Fatal("服务器启动失败", zap.Error(err))
+			serverErr <- err
 		}
 	}()
 
-	// 等待退出信号（Ctrl+C 或 SIGTERM）
-	<-ctx.Done()
-	zap.L().Info("收到退出信号，开始优雅停机")
+	// 等待退出信号（Ctrl+C 或 SIGTERM）或 Server 异常退出
+	var runErr error
+	select {
+	case <-ctx.Done():
+		zap.L().Info("收到退出信号，开始优雅停机")
+	case runErr = <-serverErr:
+		zap.L().Error("服务器异常退出", zap.Error(runErr))
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	a.Shutdown(shutdownCtx)
 
 	zap.L().Info("服务已安全退出")
+
+	// 清理完成后再以非零码退出（os.Exit 跳过 defer，故显式刷日志）
+	if runErr != nil {
+		_ = logger.Sync()
+		os.Exit(1)
+	}
 }
 
 // initLogger 根据配置初始化 Zap Logger。
