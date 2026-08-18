@@ -26,8 +26,8 @@ require (
 	github.com/ulule/limiter/v3 v3.11.2
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
-	golang.org/x/sync v0.19.0
-	golang.org/x/text v0.34.0
+	golang.org/x/sync v0.21.0
+	golang.org/x/text v0.39.0
 )
 
 require (
