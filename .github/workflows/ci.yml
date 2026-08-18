@@ -14,7 +14,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
+          go-version: '1.25.x'
           cache-dependency-path: backend/go.sum
 
       - name: golangci-lint
@@ -35,7 +37,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
+          go-version: '1.25.x'
           cache-dependency-path: backend/go.sum
 
       - name: Install govulncheck
@@ -56,7 +60,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
+          go-version: '1.25.x'
           cache-dependency-path: backend/go.sum
 
       # ubuntu-latest 自带 Docker，testcontainers 直接可用
@@ -82,7 +88,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
+          go-version: '1.25.x'
           cache-dependency-path: backend/go.sum
 
       - name: Verify go.mod/go.sum tidy
