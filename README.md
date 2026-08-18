@@ -44,10 +44,11 @@
 | Go | 1.25+ | 编译/测试 | [go.dev/dl](https://go.dev/dl/) |
 | Docker | 20.10+ | 起 PG/Redis、全栈体验 | [docker.com](https://www.docker.com/) |
 | golang-migrate | 4.17+ | 数据库迁移 | `go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest` |
-| sqlc | 1.27+ | 生成类型安全 SQL 代码 | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest` |
+| sqlc | 1.30 | 生成类型安全 SQL 代码（CI 钉住 v1.30.0，勿单独升级，见下注） | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0` |
 | golangci-lint | 2.12+ | 代码检查 | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` |
 
 > 仅 `make up`（Docker 全栈）时不需要本地安装 Go/migrate/sqlc；本地开发（`make run`）需要全部安装。
+> sqlc 版本说明：gen/ 生成物由 v1.30.0 产出，CI 会校验生成物一致性；升级 sqlc 需同步重新生成并提交 gen/。
 
 ## 快速开始
 

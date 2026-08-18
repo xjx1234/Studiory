@@ -80,7 +80,13 @@ jobs:
         run: go test -tags=integration ./internal/repo/pg/...
 
       - name: Integration tests (app startup/health/shutdown)
-        run: go test -tags=integration -count=1 ./internal/app/...
+        # 失败时把测试输出平铺进 annotation，不登 GitHub 也能在 run 页面看到失败原因
+        run: |
+          if ! go test -tags=integration -count=1 ./internal/app/... 2>&1 | tee /tmp/app-it.log; then
+            MSG=$(tail -n 30 /tmp/app-it.log | tr '\n' '|' | cut -c1-1500)
+            echo "::error title=app-integration-failure::$MSG"
+            exit 1
+          fi
 
       - name: E2E tests (HTTP + PG + Redis)
         run: go test -tags=integration -count=1 ./e2e/...
@@ -109,7 +115,9 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Install sqlc
-        run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+        # 钉住与已提交生成物一致的版本：@latest 会拉到新版（如 v1.31.x），
+        # 生成结果与 gen/ 产生 diff 导致校验失败
+        run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
 
       - name: Verify sqlc generated files
         run: |
