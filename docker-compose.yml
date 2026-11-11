@@ -71,5 +71,61 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  mysql:
+    image: mysql:8.4
+    profiles: ["mysql"]
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: app
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate-mysql:
+    image: migrate/migrate:v4.17.0
+    profiles: ["mysql"]
+    volumes:
+      - ./backend/migrations/mysql:/migrations:ro
+    command:
+      - "-path"
+      - "/migrations"
+      - "-database"
+      - "mysql://root:password@tcp(mysql:3306)/app?multiStatements=true"
+      - "up"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  api-mysql:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: studiory-api:mysql-local
+    profiles: ["mysql"]
+    environment:
+      APP_ENV: development
+      DB_DRIVER: mysql
+      SERVER_ADDR: ":8080"
+      DATABASE_URL: root:password@tcp(mysql:3306)/app?parseTime=true&loc=UTC
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: dev-secret-change-in-production
+    ports:
+      - "8081:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate-mysql:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  mysql_data:

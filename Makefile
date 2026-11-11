@@ -1,5 +1,12 @@
 BACKEND_DIR := backend
 DATABASE_URL ?= postgres://postgres:password@localhost:5432/app?sslmode=disable
+DB_DRIVER ?= postgres
+MIGRATIONS_DIR ?= $(BACKEND_DIR)/migrations
+MIGRATE_DATABASE_URL ?= $(DATABASE_URL)
+ifeq ($(DB_DRIVER),mysql)
+MIGRATIONS_DIR := $(BACKEND_DIR)/migrations/mysql
+MIGRATE_DATABASE_URL := mysql://root:password@tcp(localhost:3306)/app?multiStatements=true
+endif
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -63,10 +70,10 @@ compose-down:
 	docker compose down
 
 migrate-up:
-	migrate -path $(BACKEND_DIR)/migrations -database "$(DATABASE_URL)" up
+	migrate -path $(MIGRATIONS_DIR) -database "$(MIGRATE_DATABASE_URL)" up
 
 migrate-down:
-	migrate -path $(BACKEND_DIR)/migrations -database "$(DATABASE_URL)" down 1
+	migrate -path $(MIGRATIONS_DIR) -database "$(MIGRATE_DATABASE_URL)" down 1
 
 sqlc:
 	cd $(BACKEND_DIR) && sqlc generate

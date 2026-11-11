@@ -79,6 +79,10 @@ jobs:
       - name: Integration tests (repo layer)
         run: go test -tags=integration ./internal/repo/pg/...
 
+      - name: Integration tests (mysql repo layer)
+        # 与 PG 侧同源的关键行为：OAuth JOIN、UTC 时间戳、CHECK 约束
+        run: go test -tags=integration -count=1 ./internal/repo/mysql/...
+
       - name: Integration tests (app startup/health/shutdown)
         # 失败时把测试输出平铺进 annotation，不登 GitHub 也能在 run 页面看到失败原因
         run: |

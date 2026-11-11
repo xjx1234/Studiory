@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 
@@ -11,6 +12,8 @@ import (
 	"backend/internal/http/middleware"
 	"backend/internal/metrics"
 	"backend/internal/oauth"
+	"backend/internal/repo"
+	mysqlrepo "backend/internal/repo/mysql"
 	"backend/internal/repo/pg"
 	"backend/internal/sender"
 	adminservice "backend/internal/service/admin"
@@ -33,9 +36,10 @@ type App struct {
 	Logger *zap.Logger
 
 	PGPool *pgxpool.Pool
+	SQLDB  *sql.DB
 	Redis  redis.UniversalClient
 
-	Store *pg.Store
+	Store repo.Storage
 
 	HTTP   *internalhttp.Deps
 	Router *gin.Engine
@@ -51,12 +55,33 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 
 	tokenIssuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTAccessTokenTTL, cfg.JWTRefreshTokenTTL)
 
-	pool, err := store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{
-		MaxConns:    cfg.DBMaxConns,
-		MinConns:    cfg.DBMinConns,
-		MaxConnIdle: cfg.DBMaxConnIdle,
-		MaxConnLife: cfg.DBMaxConnLife,
-	}, logger)
+	var (
+		err     error
+		storage repo.Storage
+		pool    *pgxpool.Pool
+		sqlDB   *sql.DB
+	)
+	if cfg.DBDriver == "mysql" {
+		sqlDB, err = store.NewMySQL(ctx, cfg.DatabaseURL, store.MySQLOptions{
+			MaxOpenConns:    cfg.DBMaxConns,
+			MaxIdleConns:    cfg.DBMinConns,
+			ConnMaxIdleTime: cfg.DBMaxConnIdle,
+			ConnMaxLifetime: cfg.DBMaxConnLife,
+		}, logger)
+		if err == nil {
+			storage = mysqlrepo.NewStore(sqlDB)
+		}
+	} else {
+		pool, err = store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{
+			MaxConns:    cfg.DBMaxConns,
+			MinConns:    cfg.DBMinConns,
+			MaxConnIdle: cfg.DBMaxConnIdle,
+			MaxConnLife: cfg.DBMaxConnLife,
+		}, logger)
+		if err == nil {
+			storage = pg.NewStore(pool)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -65,11 +90,9 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		PoolSize: cfg.RedisPoolSize,
 	}, logger)
 	if err != nil {
-		pool.Close()
+		storage.Close()
 		return nil, err
 	}
-
-	pgStore := pg.NewStore(pool)
 
 	sessionStore := session.NewStore(rdb, cfg.RedisKeyPrefix, cfg.AuthMultiDeviceEnabled, tokenIssuer.RefreshTokenTTL(), cfg.AuthRedisFailOpen)
 
@@ -78,17 +101,20 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 	var metricsHandler http.Handler
 	if cfg.MetricsEnabled {
 		m := metrics.New()
-		m.Registerer().MustRegister(
-			metrics.NewPgxPoolCollector(pool),
-			metrics.NewRedisCollector(rdb),
-		)
+		if pool != nil {
+			m.Registerer().MustRegister(metrics.NewPgxPoolCollector(pool))
+		}
+		if sqlDB != nil {
+			m.Registerer().MustRegister(metrics.NewSQLDBCollector(sqlDB))
+		}
+		m.Registerer().MustRegister(metrics.NewRedisCollector(rdb))
 		metricsMiddleware = m.Middleware()
 		metricsHandler = m.Handler()
 	}
 
 	codeSender, err := buildCodeSender(cfg, logger)
 	if err != nil {
-		pool.Close()
+		storage.Close()
 		_ = rdb.Close()
 		return nil, err
 	}
@@ -97,10 +123,10 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		Cfg:    cfg,
 		Logger: logger,
 
-		AuthService: authservice.New(pgStore.Users(), authservice.NewRedisCacheStore(rdb),
+		AuthService: authservice.New(storage.Users(), authservice.NewRedisCacheStore(rdb),
 			authservice.WithTokenIssuer(tokenIssuer),
-			authservice.WithOAuthRepo(pgStore.OAuth()),
-			authservice.WithUserOAuthTxRunner(pgStore),
+			authservice.WithOAuthRepo(storage.OAuth()),
+			authservice.WithUserOAuthTxRunner(storage),
 			authservice.WithLogger(logger),
 			authservice.WithCodePrefix(cfg.RedisKeyPrefix),
 			authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
@@ -111,17 +137,17 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithSessionStore(sessionStore),
 			authservice.WithRedisFailOpen(cfg.AuthRedisFailOpen),
 		),
-		UserService: userservice.New(pgStore.Users(),
+		UserService: userservice.New(storage.Users(),
 			userservice.WithLogger(logger),
 			userservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
 			userservice.WithSessionStore(sessionStore),
 		),
-		AdminService: adminservice.New(pgStore.Users(),
+		AdminService: adminservice.New(storage.Users(),
 			adminservice.WithLogger(logger),
 			adminservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
 			adminservice.WithSessionStore(sessionStore),
 		),
-		TodoService: todoservice.New(pgStore.Todos(), todoservice.WithLogger(logger)),
+		TodoService: todoservice.New(storage.Todos(), todoservice.WithLogger(logger)),
 
 		AuthMiddleware:          middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, cfg.AuthRedisFailOpen, logger),
 		RateLimitMiddleware:     middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
@@ -129,14 +155,14 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		MetricsMiddleware:       metricsMiddleware,
 		MetricsHandler:          metricsHandler,
 		ReadyChecks: []internalhttp.ReadyCheck{
-			{Name: "PostgreSQL", Check: postgresReadyCheck(pgStore.Pool())},
+			{Name: cfg.DBDriver, Check: databaseReadyCheck(storage)},
 			{Name: "Redis", Check: redisReadyCheck(rdb)},
 		},
 	}
 
 	router, err := internalhttp.NewRouter(deps)
 	if err != nil {
-		pool.Close()
+		storage.Close()
 		_ = rdb.Close()
 		return nil, err
 	}
@@ -154,15 +180,25 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		Cfg:    cfg,
 		Logger: logger,
 		PGPool: pool,
+		SQLDB:  sqlDB,
 		Redis:  rdb,
-		Store:  pgStore,
+		Store:  storage,
 		HTTP:   deps,
 		Router: router,
 		Server: server,
 	}, nil
 }
 
-// postgresReadyCheck 构造 /ready 使用的 PostgreSQL 探针：连接池未初始化或 Ping 失败均视为不可用。
+// databaseReadyCheck 构造 /ready 使用的数据库探针。
+func databaseReadyCheck(db repo.Storage) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		if db == nil {
+			return errors.New("database storage is nil")
+		}
+		return db.Ping(ctx)
+	}
+}
+
 func postgresReadyCheck(pool *pgxpool.Pool) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		if pool == nil {
@@ -245,8 +281,12 @@ func (a *App) Shutdown(ctx context.Context) {
 
 // Close 关闭基础资源（PG、Redis）。
 func (a *App) Close() {
-	if a.PGPool != nil {
+	if a.Store != nil {
+		a.Store.Close()
+	} else if a.PGPool != nil {
 		a.PGPool.Close()
+	} else if a.SQLDB != nil {
+		_ = a.SQLDB.Close()
 	}
 	if a.Redis != nil {
 		_ = a.Redis.Close()

@@ -50,6 +50,10 @@ func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
+func (s *Store) Close() { s.pool.Close() }
+
 // WithinTx 在一个事务内执行 fn，成功则 commit，失败则 rollback。
 func (s *Store) WithinTx(ctx context.Context, fn func(txStore *Store) error) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})

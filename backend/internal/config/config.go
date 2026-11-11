@@ -10,6 +10,7 @@ import (
 
 	"backend/pkg/strutil"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/viper"
 	"github.com/subosito/gotenv"
 )
@@ -31,7 +32,8 @@ type Config struct {
 	ServerWriteTimeout      time.Duration
 	ServerIdleTimeout       time.Duration
 
-	// ── PostgreSQL ────────────────────────────────────────────────────────
+	// ── Database ──────────────────────────────────────────────────────────
+	DBDriver      string
 	DatabaseURL   string
 	DBHost        string
 	DBPort        string
@@ -108,6 +110,7 @@ func Load() *Config {
 		ServerWriteTimeout:      v.GetDuration("app.write_timeout"),
 		ServerIdleTimeout:       v.GetDuration("app.idle_timeout"),
 
+		DBDriver:      strings.ToLower(v.GetString("database.driver")),
 		DBHost:        v.GetString("database.host"),
 		DBPort:        v.GetString("database.port"),
 		DBUser:        v.GetString("database.user"),
@@ -161,8 +164,19 @@ func Load() *Config {
 	}
 
 	// DATABASE_URL 和 REDIS_URL 优先（为空时从分项拼接）
+	if cfg.DBDriver == "" {
+		cfg.DBDriver = "postgres"
+	}
 	cfg.DatabaseURL = strutil.FirstNonEmpty(v.GetString("database.url"), cfg.buildDatabaseURL())
 	cfg.RedisURL = strutil.FirstNonEmpty(v.GetString("redis.url"), cfg.buildRedisURL())
+
+	// MySQL DSN 归一化：database.url / DATABASE_URL 会旁路 buildDatabaseURL，
+	// 此处兜底强制 parseTime/loc/time_zone，保证 DATETIME 读写与 PG 的 UTC 语义一致。
+	if cfg.DBDriver == "mysql" {
+		if normalized, err := NormalizeMySQLDSN(cfg.DatabaseURL); err == nil {
+			cfg.DatabaseURL = normalized
+		}
+	}
 
 	if cfg.RateLimitUserPerMinute <= 0 {
 		cfg.RateLimitUserPerMinute = cfg.RateLimitPerMinute
@@ -173,6 +187,13 @@ func Load() *Config {
 
 // Validate 检查启动所需的关键配置，避免生产环境带着不安全默认值运行。
 func (c *Config) Validate() error {
+	driver := c.DBDriver
+	if driver == "" {
+		driver = "postgres"
+	}
+	if driver != "postgres" && driver != "mysql" {
+		return fmt.Errorf("database.driver 不支持 %q（可选 postgres、mysql）", driver)
+	}
 	if c.ServerAddr == "" {
 		return errors.New("app.server_addr 不能为空")
 	}
@@ -235,10 +256,14 @@ func (c *Config) Validate() error {
 		// DATABASE_URL 优先于分项配置，database.ssl_mode 对完整 DSN 不生效，
 		// 必须要求 DSN 显式携带安全的 sslmode，防止 TLS 被静默绕过
 		// （sslmode 缺省时 pgx 按 prefer 处理，服务端不支持 TLS 会静默回落明文连接）。
-		switch databaseSSLMode(c.DatabaseURL) {
-		case "require", "verify-ca", "verify-full":
-		default:
-			return errors.New("production 环境的 database.url 必须显式携带 sslmode=require/verify-ca/verify-full")
+		if driver == "postgres" {
+			switch databaseSSLMode(c.DatabaseURL) {
+			case "require", "verify-ca", "verify-full":
+			default:
+				return errors.New("production 环境的 PostgreSQL database.url 必须显式携带 sslmode=require/verify-ca/verify-full")
+			}
+		} else if !strings.Contains(c.DatabaseURL, "tls=true") {
+			return errors.New("production 环境的 MySQL database.url 必须显式携带 tls=true")
 		}
 	}
 	if c.RateLimitPerMinute <= 0 {
@@ -341,6 +366,7 @@ func mergeConfig(base *viper.Viper, path, name string) {
 //nolint:gosec // G101 误报：这是「配置项 -> 环境变量名」的映射表，值均为变量名，不含真实密钥。
 func bindEnvs(v *viper.Viper) {
 	bindings := map[string]string{
+		"database.driver":             "DB_DRIVER",
 		"app.env":                     "APP_ENV",
 		"app.server_addr":             "SERVER_ADDR",
 		"app.read_header_timeout":     "SERVER_READ_HEADER_TIMEOUT",
@@ -403,6 +429,14 @@ func loadDotEnv() {
 }
 
 func (c *Config) buildDatabaseURL() string {
+	if c.DBDriver == "mysql" {
+		return (&mysql.Config{
+			User: c.DBUser, Passwd: c.DBPassword, Net: "tcp",
+			Addr: c.DBHost + ":" + c.DBPort, DBName: c.DBName,
+			ParseTime: true, Loc: time.UTC,
+			Params: map[string]string{"time_zone": "'+00:00'", "loc": "UTC"},
+		}).FormatDSN()
+	}
 	u := &url.URL{
 		Scheme:   "postgres",
 		Host:     fmt.Sprintf("%s:%s", c.DBHost, c.DBPort),
@@ -415,6 +449,31 @@ func (c *Config) buildDatabaseURL() string {
 		u.User = url.User(c.DBUser)
 	}
 	return u.String()
+}
+
+// NormalizeMySQLDSN 为 MySQL DSN 强制补齐 parseTime=true、loc=UTC 与
+// time_zone='+00:00'：DATETIME 列不带时区，会话时区钉在 UTC 才能保证
+// CURRENT_TIMESTAMP 写入的就是 UTC 时刻、回读不再产生本地时区偏移。
+// 解析失败时返回错误，调用方保留原值（连接阶段会暴露真正的语法问题）。
+func NormalizeMySQLDSN(dsn string) (string, error) {
+	mc, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return "", err
+	}
+	mc.ParseTime = true
+	mc.Loc = time.UTC
+	if mc.Params == nil {
+		mc.Params = map[string]string{}
+	}
+	// FormatDSN 在 Loc 为零值默认外不会输出 loc 参数（UTC 时直接省略），
+	// 而驱动解析 DSN 时缺省 loc=Local，必须显式写入避免读回时刻漂移。
+	if _, ok := mc.Params["loc"]; !ok {
+		mc.Params["loc"] = "UTC"
+	}
+	if _, ok := mc.Params["time_zone"]; !ok {
+		mc.Params["time_zone"] = "'+00:00'"
+	}
+	return mc.FormatDSN(), nil
 }
 
 func (c *Config) buildRedisURL() string {

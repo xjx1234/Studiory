@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -17,10 +18,12 @@ import (
 
 	"backend/internal/config"
 	"backend/internal/repo"
+	mysqlrepo "backend/internal/repo/mysql"
 	"backend/internal/repo/pg"
 	"backend/internal/store"
 	"backend/pkg/strutil"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -53,17 +56,30 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pool, err := store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{
-		MaxConns: 2,
-		MinConns: 1,
-	}, logger)
+	var (
+		users   repo.UserRepo
+		closeDB func()
+		err     error
+	)
+	if cfg.DBDriver == "mysql" {
+		var db *sql.DB
+		db, err = store.NewMySQL(ctx, cfg.DatabaseURL, store.MySQLOptions{MaxOpenConns: 2, MaxIdleConns: 1}, logger)
+		if err == nil {
+			users = mysqlrepo.NewStore(db).Users()
+			closeDB = func() { _ = db.Close() }
+		}
+	} else {
+		var pool *pgxpool.Pool
+		pool, err = store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{MaxConns: 2, MinConns: 1}, logger)
+		if err == nil {
+			users = pg.NewStore(pool).Users()
+			closeDB = pool.Close
+		}
+	}
 	if err != nil {
 		logger.Fatal("连接数据库失败", zap.Error(err))
 	}
-	defer pool.Close()
-
-	pgStore := pg.NewStore(pool)
-	users := pgStore.Users()
+	defer closeDB()
 
 	// 检查账号是否已存在
 	existing, lookupErr := findUser(ctx, users, *phone, *email)

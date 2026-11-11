@@ -12,6 +12,7 @@ app:
   idle_timeout: 120s         # keep-alive 空闲连接超时
 
 database:
+  driver: postgres          # postgres | mysql
   url: ""                    # 非空则优先使用，忽略以下分项
   host: localhost
   port: 5432
