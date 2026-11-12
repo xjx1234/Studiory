@@ -582,9 +582,10 @@ return count
 ```
 
 **限流分层**（`internal/http/middleware/rate_limit.go`）：
-- `RateLimit(IP)`：跳过 `/api/v1/user` 和 `/api/v1/admin`，避免同 NAT 误伤
+- `RateLimit(IP)`：跳过 `/api/v1/user`、`/api/v1/admin`（避免同 NAT 误伤），也跳过 `/health`、`/ready`、`/metrics`（探针与监控端点不能被 429 或限流层自身的依赖故障干扰）
 - `RateLimitByUser(user_id)`：挂在 Auth 中间件之后，按用户 ID 独立计数
 - Redis 不可用时回退到内存 store
+- store 报错时返回统一 JSON 信封 `503 / code 50002`：limiter 库默认的 `OnError` 会 panic，被 Recovery 兜成"500 + 空 body"，客户端无法解析（见 `WithErrorHandler`）
 
 ---
 

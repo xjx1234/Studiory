@@ -19,14 +19,26 @@ import (
 // RateLimit 对未登录/公开路由按客户端 IP 限流。
 //
 // /api/v1/user 与 /api/v1/admin 由 RateLimitByUser 单独按 user_id 限流，此处跳过以免同 NAT 误伤。
+// /health、/ready、/metrics 是探针与监控端点，同样跳过：LB 高频探活不该被 429 干扰，
+// 更重要的是 /ready 必须真实反映依赖状态，不能被限流层（也依赖 Redis）短路掉。
 // rdb 非空时使用 Redis 分布式 store，否则回退进程内 memory store。
 func RateLimit(perMinute int, rdb redis.UniversalClient, redisKeyPrefix string) gin.HandlerFunc {
 	return newRateLimiter(perMinute, rdb, redisKeyPrefix, "ip", func(c *gin.Context) string {
-		if isUserScopedAPIPath(c.Request.URL.Path) {
+		if isInfraPath(c.Request.URL.Path) || isUserScopedAPIPath(c.Request.URL.Path) {
 			return ""
 		}
 		return c.ClientIP()
 	})
+}
+
+// isInfraPath 判断是否为不参与限流的基础设施端点。
+func isInfraPath(path string) bool {
+	switch path {
+	case "/health", "/ready", "/metrics":
+		return true
+	default:
+		return false
+	}
 }
 
 // RateLimitByUser 对已鉴权路由按 user_id 限流，应挂在 Auth 中间件之后。
@@ -70,6 +82,13 @@ func newRateLimiter(
 		ginmiddleware.WithExcludedKey(func(key string) bool { return key == "" }),
 		ginmiddleware.WithLimitReachedHandler(func(c *gin.Context) {
 			resp.Fail(c, errcode.ErrTooManyRequests)
+		}),
+		// limiter 库默认的 OnError 会 panic，被 Recovery 兜成「500 + 空 body」——
+		// Redis 抖动时全站接口都会变成无法解析的错误响应。这里换成统一 JSON 信封，
+		// 并把原始错误挂到 c.Errors 供访问日志与排障使用。
+		ginmiddleware.WithErrorHandler(func(c *gin.Context, err error) {
+			_ = c.Error(err) //nolint:errcheck // gin 内部记录用，不影响响应
+			resp.Fail(c, errcode.ErrServiceUnavailable)
 		}),
 	)
 }

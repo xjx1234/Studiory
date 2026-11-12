@@ -81,12 +81,13 @@
 
 | 维度 | Redis 前缀 | 适用路由 | 配置项 |
 |------|------------|----------|--------|
-| 客户端 IP | `${REDIS_KEY_PREFIX}:limiter:ip*` | `/api/v1/auth/*`、`/health`、`/ready` 等（**不含** `/user`、`/admin`） | `rate_limit.per_minute` / `RATE_LIMIT_PER_MINUTE` |
+| 客户端 IP | `${REDIS_KEY_PREFIX}:limiter:ip*` | `/api/v1/auth/*` 等公开业务路由（**不含** `/user`、`/admin`，也不含 `/health`、`/ready`、`/metrics`） | `rate_limit.per_minute` / `RATE_LIMIT_PER_MINUTE` |
 | 用户 ID | `${REDIS_KEY_PREFIX}:limiter:uid*` | `/api/v1/user/*`、`/api/v1/admin/*`（Auth 之后按 JWT `uid`） | `rate_limit.user_per_minute` / `RATE_LIMIT_USER_PER_MINUTE` |
 
 - 已鉴权路由跳过 IP 限流，避免同 NAT 下多用户共享配额；未配置 `user_per_minute` 时默认与 `per_minute` 相同。
 - 库内部会在上述前缀下生成计数与时间窗口相关键（具体后缀随实现变化）。
 - Redis 不可用时回退到进程内 memory store（多实例限流不一致）。
+- store 在运行期报错（如 Redis 中途断连）时返回 `503` + `code 50002` 的统一 JSON 信封，而不是 panic 后被 Recovery 兜成"500 + 空 body"；`/health`、`/ready`、`/metrics` 不参与限流，探针始终反映真实依赖状态。
 
 ---
 
