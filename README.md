@@ -41,14 +41,20 @@
 
 | 工具 | 版本 | 用途 | 安装 |
 |------|------|------|------|
-| Go | 1.25+ | 编译/测试 | [go.dev/dl](https://go.dev/dl/) |
+| Go | 1.26+ | 编译/测试 | [go.dev/dl](https://go.dev/dl/) |
 | Docker | 20.10+ | 起 PG/Redis、全栈体验 | [docker.com](https://www.docker.com/) |
 | golang-migrate | 4.17+ | 数据库迁移 | `go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest` |
 | sqlc | 1.30 | 生成类型安全 SQL 代码（CI 钉住 v1.30.0，勿单独升级，见下注） | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0` |
-| golangci-lint | 2.12+ | 代码检查 | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` |
+| golangci-lint | 2.15+ | 代码检查 | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` |
 
 > 仅 `make up`（Docker 全栈）时不需要本地安装 Go/migrate/sqlc；本地开发（`make run`）需要全部安装。
 > sqlc 版本说明：gen/ 生成物由 v1.30.0 产出，CI 会校验生成物一致性；升级 sqlc 需同步重新生成并提交 gen/。
+> Go 版本说明：`golang.org/x/net ≥ v0.60.0`（HTTP/2 漏洞修复版）要求 go.mod 声明 `go 1.26.0`，
+> 并用 `toolchain go1.26.11` 与 CI 对齐；golangci-lint 也必须是随 go1.26 构建的 2.15+，
+> 旧版会直接拒绝分析 1.26 模块。
+> 若本机 Go 低于 1.26 且 `go env GOSUMDB` 为 `off`，自动下载工具链会报
+> `checksum database disabled by GOSUMDB=off`，执行一次 `go env -w GOSUMDB=sum.golang.org`
+> （或升级到 Go 1.26+）即可恢复。
 
 ## 快速开始
 

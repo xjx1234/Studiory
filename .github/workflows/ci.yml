@@ -5,11 +5,14 @@ on:
   pull_request:
 
 env:
-  # 钉住最新 1.25 补丁版，确保标准库漏洞（govulncheck）及时修复。
-  # setup-go 的 '1.25.x' 版本解析可能命中 runner 缓存的旧补丁版，
-  # GOTOOLCHAIN 让所有 go 命令强制切换到该精确版本（自动从 GOPROXY 下载）。
-  # 新补丁发布时（如 go1.25.14）在此更新即可。
-  GOTOOLCHAIN: go1.25.13+auto
+  # 工具链必须落在 1.26 线：2026-11 起一批 net/http、net/textproto、crypto/tls、
+  # crypto/x509 漏洞只在 go1.26.9+ 修复，1.25 线（含 go1.25.14）已无对应补丁；
+  # golang.org/x/net ≥ v0.60.0 的 go.mod 也要求 go >= 1.26.0。
+  # setup-go 的 '1.26.x' 解析可能命中 runner 缓存的旧补丁版，
+  # GOTOOLCHAIN 让所有 go 命令强制使用该精确版本（自动从 GOPROXY 下载）。
+  # 新补丁发布时（如 go1.26.12）在此更新，并同步 backend/go.mod 的 toolchain 行，
+  # 否则本地/镜像与 CI 用的补丁版会不一致。
+  GOTOOLCHAIN: go1.26.11+auto
 
 jobs:
   lint:
@@ -21,15 +24,19 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
-          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
-          go-version: '1.25.x'
+          # 用 1.26.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 无法随补丁版自动修复标准库漏洞；精确钉扎由 workflow 级 GOTOOLCHAIN 负责
+          go-version: '1.26.x'
           cache-dependency-path: backend/go.sum
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.12.2
+          # 必须 ≥ v2.13（本仓库用 v2.15.0，随 go1.26.11 构建）：
+          # 用 go1.25 构建的版本遇到 go.mod 声明 1.26 会直接报
+          # "can't load config: the Go language version (go1.25) used to build
+          # golangci-lint is lower than the targeted Go version"
+          version: v2.15.0
           working-directory: backend
 
   vuln:
@@ -44,9 +51,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
-          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
-          go-version: '1.25.x'
+          # 用 1.26.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 无法随补丁版自动修复标准库漏洞；精确钉扎由 workflow 级 GOTOOLCHAIN 负责
+          go-version: '1.26.x'
           cache-dependency-path: backend/go.sum
 
       - name: Verify Go version
@@ -56,7 +63,8 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
-        run: govulncheck ./...
+        # 失败时把 Vulnerability #N / Found in / Fixed in 关键行写进 annotation
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" govulncheck govulncheck ./...
 
   integration:
     runs-on: ubuntu-latest
@@ -70,30 +78,25 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
-          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
-          go-version: '1.25.x'
+          # 用 1.26.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 无法随补丁版自动修复标准库漏洞；精确钉扎由 workflow 级 GOTOOLCHAIN 负责
+          go-version: '1.26.x'
           cache-dependency-path: backend/go.sum
 
       # ubuntu-latest 自带 Docker，testcontainers 直接可用
+      # 各步统一走 run-and-annotate.sh：保留真实退出码 + 失败原因写进 annotation
       - name: Integration tests (repo layer)
-        run: go test -tags=integration ./internal/repo/pg/...
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" pg-integration go test -tags=integration -count=1 ./internal/repo/pg/...
 
       - name: Integration tests (mysql repo layer)
         # 与 PG 侧同源的关键行为：OAuth JOIN、UTC 时间戳、CHECK 约束
-        run: go test -tags=integration -count=1 ./internal/repo/mysql/...
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" mysql-integration go test -tags=integration -count=1 ./internal/repo/mysql/...
 
       - name: Integration tests (app startup/health/shutdown)
-        # 失败时把测试输出平铺进 annotation，不登 GitHub 也能在 run 页面看到失败原因
-        run: |
-          if ! go test -tags=integration -count=1 ./internal/app/... 2>&1 | tee /tmp/app-it.log; then
-            MSG=$(tail -n 30 /tmp/app-it.log | tr '\n' '|' | cut -c1-1500)
-            echo "::error title=app-integration-failure::$MSG"
-            exit 1
-          fi
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" app-integration go test -tags=integration -count=1 ./internal/app/...
 
       - name: E2E tests (HTTP + PG + Redis)
-        run: go test -tags=integration -count=1 ./e2e/...
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" e2e go test -tags=integration -count=1 ./e2e/...
 
   backend:
     runs-on: ubuntu-latest
@@ -108,15 +111,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # 用 1.25.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
-          # 导致标准库漏洞（如 GO-2026-5856，go1.25.12 修复）无法随补丁版自动修复
-          go-version: '1.25.x'
+          # 用 1.26.x 而非 go-version-file：后者会钉死 go.mod 里的精确版本，
+          # 无法随补丁版自动修复标准库漏洞；精确钉扎由 workflow 级 GOTOOLCHAIN 负责
+          go-version: '1.26.x'
           cache-dependency-path: backend/go.sum
 
       - name: Verify go.mod/go.sum tidy
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" mod-tidy bash -c 'go mod tidy && git diff --exit-code -- go.mod go.sum'
 
       - name: Install sqlc
         # 钉住与已提交生成物一致的版本：@latest 会拉到新版（如 v1.31.x），
@@ -124,15 +125,13 @@ jobs:
         run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
 
       - name: Verify sqlc generated files
-        run: |
-          sqlc generate
-          git diff --exit-code -- internal/repo/sqlc/gen
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" sqlc-drift bash -c 'sqlc generate && git diff --exit-code -- internal/repo/sqlc/gen'
 
       - name: Verify OpenAPI contract
         run: go test -run 'Test(OpenAPI|LoadDocument)' ./internal/openapi/... ./internal/http/...
 
       - name: Test
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" unit-tests go test -race -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
