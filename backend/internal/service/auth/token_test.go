@@ -3,13 +3,18 @@ package authservice
 import (
 	"context"
 	"testing"
+	"time"
 
+	"backend/internal/auth"
 	"backend/internal/repo"
 	"backend/internal/testutil"
 	"backend/pkg/errcode"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 )
+
+const ttlTestSecret = "test-secret-key-for-unit-tests"
 
 // tokenTestSvc 创建带 miniredis 的 AuthService 并预置一个活跃用户。
 // 返回 service、预置用户和该用户的 refresh token。
@@ -146,7 +151,7 @@ func TestRefresh_UserNotFound(t *testing.T) {
 	}
 }
 
-// TestRefresh_IssuesNewSessionID 验证刷新后的 token 携带原 sessionID（用于会话延续）。
+// TestRefresh_PreservesSessionID 验证刷新后的 token 携带原 sessionID（用于会话延续）。
 func TestRefresh_PreservesSessionID(t *testing.T) {
 	_, rdb := newTestRDB(t)
 	users := testutil.NewFakeUserRepo()
@@ -184,5 +189,126 @@ func TestRefresh_PreservesSessionID(t *testing.T) {
 	}
 	if claims.SessionID != originalSessionID {
 		t.Errorf("sessionID = %q, want %q", claims.SessionID, originalSessionID)
+	}
+}
+
+// ── 黑名单 TTL：跟随 token 自身寿命，而非硬编码 7 天 ────────────────────────────
+
+// tokenSvcWithIssuers 装配「service 用 svcIssuer 校验、票由 tokenIssuer 签发」的组合。
+// 两个签发器共用同一密钥才能互认——这正是「TTL 跟着票的 exp 走」与「跟着 jwt.refresh_ttl 走」
+// 可以被区分开的原因。
+func tokenSvcWithIssuers(t *testing.T, svcIssuer, tokenIssuer *auth.TokenIssuer) (*AuthServiceImpl, *miniredis.Miniredis, string) {
+	t.Helper()
+	mr, rdb := newTestRDB(t)
+	users := testutil.NewFakeUserRepo()
+
+	svc, ok := New(users, NewRedisCacheStore(rdb), WithTokenIssuer(svcIssuer)).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+
+	uid := uuid.New()
+	phone := "13700000009"
+	users.Users[uid] = &repo.User{
+		ID:       uid,
+		Phone:    &phone,
+		Nickname: "ttl-test-user",
+		Role:     repo.RoleUser,
+		Status:   repo.StatusActive,
+	}
+
+	pair, err := tokenIssuer.IssueTokenPair(uid.String(), repo.RoleUser, "sess-ttl")
+	if err != nil {
+		t.Fatalf("issue token pair: %v", err)
+	}
+	return svc, mr, pair.RefreshToken
+}
+
+// TestRefresh_BlacklistTTLFollowsTokenExpiry 验证刷新写入的黑名单 key 只保留到这张票自然过期。
+// 配置里的 jwt.refresh_ttl 是 1 小时，但票本身只有 12 分钟——TTL 应该跟票，不跟配置，
+// 更不是修复前那个硬编码的 7 天。
+func TestRefresh_BlacklistTTLFollowsTokenExpiry(t *testing.T) {
+	svc, mr, refreshToken := tokenSvcWithIssuers(t,
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, time.Hour),
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, 12*time.Minute),
+	)
+
+	if _, e := svc.Refresh(context.Background(), refreshToken); e != nil {
+		t.Fatalf("refresh failed: %+v", e)
+	}
+
+	ttl := mr.TTL(svc.blacklistKey(refreshToken))
+	switch {
+	case ttl <= 0:
+		t.Fatal("expected a positive blacklist TTL (miniredis 里 0 表示没设过期/永不回收)")
+	case ttl > 12*time.Minute:
+		t.Errorf("blacklist TTL = %v, want <= 票的剩余寿命 12m（修复前是硬编码 7 天）", ttl)
+	case ttl < 10*time.Minute:
+		t.Errorf("blacklist TTL = %v, 比票的实际寿命短太多，防重放窗口会提前失效", ttl)
+	}
+}
+
+// TestRefresh_BlacklistTTLCappedByConfiguredRefreshTTL 验证异常长的票不会让黑名单超过配置上限。
+func TestRefresh_BlacklistTTLCappedByConfiguredRefreshTTL(t *testing.T) {
+	svc, mr, refreshToken := tokenSvcWithIssuers(t,
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, 5*time.Minute),
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, time.Hour),
+	)
+
+	if _, e := svc.Refresh(context.Background(), refreshToken); e != nil {
+		t.Fatalf("refresh failed: %+v", e)
+	}
+
+	if ttl := mr.TTL(svc.blacklistKey(refreshToken)); ttl <= 0 || ttl > 5*time.Minute {
+		t.Errorf("blacklist TTL = %v, want (0, 5m]（不得超过配置里的 jwt.refresh_ttl）", ttl)
+	}
+}
+
+// TestRefresh_ExpiredTokenLeavesNoBlacklistKey 验证过期票被拒绝时不在 Redis 留下任何 key。
+func TestRefresh_ExpiredTokenLeavesNoBlacklistKey(t *testing.T) {
+	svc, mr, refreshToken := tokenSvcWithIssuers(t,
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, time.Hour),
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, -time.Minute), // 签发即过期
+	)
+
+	if _, e := svc.Refresh(context.Background(), refreshToken); e != errcode.ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken for expired token, got %+v", e)
+	}
+	if keys := mr.Keys(); len(keys) != 0 {
+		t.Errorf("expired refresh left %d redis keys: %v", len(keys), keys)
+	}
+}
+
+// TestLogout_BlacklistTTLFollowsTokenExpiry 验证登出的黑名单 TTL 同样跟着票的剩余寿命。
+func TestLogout_BlacklistTTLFollowsTokenExpiry(t *testing.T) {
+	svc, mr, refreshToken := tokenSvcWithIssuers(t,
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, time.Hour),
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, 20*time.Minute),
+	)
+
+	if e := svc.Logout(context.Background(), refreshToken); e != nil {
+		t.Fatalf("logout failed: %+v", e)
+	}
+	if ttl := mr.TTL(svc.blacklistKey(refreshToken)); ttl <= 0 || ttl > 20*time.Minute {
+		t.Errorf("logout blacklist TTL = %v, want (0, 20m]", ttl)
+	}
+}
+
+// TestLogout_UnparseableTokenWritesNoBlacklistKey 验证乱码 token 登出是幂等空操作。
+// 修复前它照样会按 sha256(token) 写一个 7 天 TTL 的 key，等于给攻击者一个免费的 Redis 内存放大器。
+func TestLogout_UnparseableTokenWritesNoBlacklistKey(t *testing.T) {
+	svc, mr, _ := tokenSvcWithIssuers(t,
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, time.Hour),
+		auth.NewTokenIssuer(ttlTestSecret, time.Hour, time.Hour),
+	)
+	before := len(mr.Keys())
+
+	for _, junk := range []string{"not-a-jwt", "a.b.c", "random garbage"} {
+		if e := svc.Logout(context.Background(), junk); e != nil {
+			t.Fatalf("logout(%q) = %+v, want nil", junk, e)
+		}
+	}
+	if after := len(mr.Keys()); after != before {
+		t.Errorf("junk logout created %d redis keys (before=%d, after=%d)", after-before, before, after)
 	}
 }

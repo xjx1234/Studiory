@@ -481,29 +481,28 @@ pair, err := tokenIssuer.IssueTokenPair(userID, role, sessionID)
 
 // 刷新流程
 func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*auth.TokenPair, error) {
-    // 1. 检查 refresh token 是否在黑名单
-    if s.rdb.Exists(ctx, s.blacklistKey(refreshToken)) > 0 {
-        return nil, errcode.ErrInvalidToken
-    }
-
-    // 2. 解析 refresh token 拿到 claims
+    // 1. 解析 refresh token 拿到 claims（过期/伪造在这里就被拒掉，不占用黑名单 key）
     claims := s.tokens.ParseRefreshToken(refreshToken)
 
-    // 3. 检查用户是否被禁用
+    // 2. 检查用户是否被禁用
     user := s.users.GetByID(ctx, claims.UserID)
     if user.Status == repo.StatusDisabled {
         return nil, errcode.ErrAccountDisabled
     }
 
-    // 4. 校验 session 是否有效
+    // 3. 校验 session 是否有效
     if !s.sessions.Validate(ctx, claims.UserID, claims.SessionID) {
         return nil, errcode.ErrInvalidToken
     }
 
-    // 5. 将旧 refresh token 加入黑名单
-    s.rdb.Set(ctx, s.blacklistKey(refreshToken), "1", refreshBlacklistTTL)
+    // 4. SET NX 原子地把旧票写进黑名单：并发重放时只有一个请求能成功，
+    //    TTL = 这张票的剩余有效期（不是硬编码 7 天，也不超过 jwt.refresh_ttl）
+    ttl, ok := s.blacklistTTL(claims)
+    if !s.cache.SetNX(ctx, s.blacklistKey(refreshToken), "1", ttl) {
+        return nil, errcode.ErrInvalidToken
+    }
 
-    // 6. 签发新的 token 对
+    // 5. 签发新的 token 对
     return s.tokens.IssueTokenPair(claims.UserID, claims.Role, claims.SessionID)
 }
 ```
@@ -571,8 +570,8 @@ return count
   ├── I18n                ← 语言解析
   ├── Ginzap              ← 结构化访问日志（request_id + user_id）
   ├── Recovery            ← panic 恢复
-  ├── Safe                ← Body 超限检测（errors.As）
-  ├── RateLimit(IP)       ← 公开路由按客户端 IP 限流
+  ├── Safe                ← Body 2MB 上限（MaxBytesReader）；Bind 已写响应时只做兜底，不二次写
+  ├── RateLimit(IP)       ← 公开路由按客户端 IP 限流（IP 只在 TCP 对端属于 trusted_proxies 时才取 XFF）
   ├── CORS                ← 跨域
   │
   └── [路由分组]
@@ -731,10 +730,11 @@ E2E 测试用 `httptest` 发送真实 HTTP 请求：
 
 ```go
 func TestAuthRegisterLoginProfile(t *testing.T) {
-    // 注册
+    // 注册：密码注册也要带上一次性验证码（开发配置里 mock code 固定为 123456）
     w, body := doJSON(t, http.MethodPost, "/api/v1/auth/register", map[string]any{
         "grant_type": "password",
         "phone":      uniquePhone(),
+        "code":       "123456",
         "password":   "Str0ng!Pass",
     })
 
