@@ -27,11 +27,17 @@ func Safe() gin.HandlerFunc {
 		// Gin 在 ShouldBind/ShouldBindJSON 解析时若触发 MaxBytesReader 限制，
 		// 会返回 *http.MaxBytesError（Go 1.19+）。
 		// 遍历 c.Errors，以标准 errors.As 检测，不依赖错误字符串。
+		//
+		// 这里只给「自己没写响应」的 handler 兜底：走 request.Bind 的接口命中超限时，
+		// Bind 已经写好 400 + err_body_too_large 并把原文塞进 c.Errors 供日志，
+		// 此时再写一次就是 superfluous WriteHeader + 拼接出畸形 JSON。
 		for _, ginErr := range c.Errors {
 			var maxBytesErr *http.MaxBytesError
 			if errors.As(ginErr.Err, &maxBytesErr) {
 				c.Abort()
-				resp.Fail(c, errcode.ErrBadRequest.WithMessage("err_body_too_large"))
+				if !c.Writer.Written() {
+					resp.Fail(c, errcode.ErrBadRequest.WithMessage("err_body_too_large"))
+				}
 				return
 			}
 		}

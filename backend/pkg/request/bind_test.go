@@ -3,8 +3,10 @@ package request
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"backend/pkg/errcode"
@@ -112,8 +114,49 @@ func TestBind_MalformedJSONReturnsBadRequest(t *testing.T) {
 	if resp.Code != errcode.ErrBadRequest.Code {
 		t.Errorf("resp.Code = %d, want %d", resp.Code, errcode.ErrBadRequest.Code)
 	}
-	if resp.Message == "" {
-		t.Error("expected a non-empty raw error message for malformed JSON")
+	// 客户端只拿到固定文案：绑定错误的原文（含 JSON 偏移、类型名等实现细节）不回显。
+	if resp.Message != "请求参数错误" {
+		t.Errorf("resp.Message = %q, want %q（应为 i18n 固定文案，不回显原始错误）", resp.Message, "请求参数错误")
+	}
+	if strings.Contains(resp.Message, "invalid character") {
+		t.Errorf("resp.Message leaks internal JSON error: %q", resp.Message)
+	}
+	// 原文必须仍然进 c.Errors，否则线上无法排障。
+	if len(c.Errors) != 1 {
+		t.Fatalf("len(c.Errors) = %d, want 1（原始错误应记入 c.Errors 供访问日志）", len(c.Errors))
+	}
+	if !strings.Contains(c.Errors[0].Err.Error(), "invalid character") {
+		t.Errorf("c.Errors[0] = %v, want the original JSON syntax error", c.Errors[0].Err)
+	}
+}
+
+// TestBind_OversizedBodyReturnsBodyTooLarge 请求体超过 Safe 中间件的 MaxBytesReader 限制时，
+// 必须给出可本地化的「请求体过大」文案（而不是 err.Error() 原文，也不是第二次写响应）。
+func TestBind_OversizedBodyReturnsBodyTooLarge(t *testing.T) {
+	c, w := newContext(http.MethodPost, "/", []byte(`{"name":"`+strings.Repeat("a", 4096)+`"}`))
+	c.Request.Body = http.MaxBytesReader(w, c.Request.Body, 64)
+
+	var body testBody
+	if ok := Bind(c, &body); ok {
+		t.Fatal("expected Bind to fail for oversized body")
+	}
+	if w.Code != errcode.ErrBadRequest.HTTPStatus {
+		t.Errorf("HTTP status = %d, want %d", w.Code, errcode.ErrBadRequest.HTTPStatus)
+	}
+
+	resp := decodeResponse(t, w)
+	if resp.Code != errcode.ErrBadRequest.Code {
+		t.Errorf("resp.Code = %d, want %d", resp.Code, errcode.ErrBadRequest.Code)
+	}
+	if resp.Message != "请求体过大，请检查提交的数据" {
+		t.Errorf("resp.Message = %q, want %q", resp.Message, "请求体过大，请检查提交的数据")
+	}
+	if len(c.Errors) != 1 {
+		t.Fatalf("len(c.Errors) = %d, want 1", len(c.Errors))
+	}
+	var maxBytesErr *http.MaxBytesError
+	if !errors.As(c.Errors[0].Err, &maxBytesErr) {
+		t.Errorf("c.Errors[0] = %v, want *http.MaxBytesError", c.Errors[0].Err)
 	}
 }
 

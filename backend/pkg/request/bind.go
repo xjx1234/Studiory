@@ -10,6 +10,7 @@ package request
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	"backend/pkg/errcode"
@@ -42,7 +43,13 @@ func BindURI(c *gin.Context, obj any) bool {
 	})
 }
 
-// bindWith 通用绑定逻辑，区分 validator.ValidationErrors 和其他错误。
+// bindWith 通用绑定逻辑，按错误类型分流三种响应：
+//  1. validator.ValidationErrors → 逐字段的本地化校验错误（20002）；
+//  2. *http.MaxBytesError（Safe 中间件的 MaxBytesReader 触发）→ 固定的「请求体过大」文案（20001）；
+//  3. 其他（JSON 语法/类型不匹配/gzip 头损坏等）→ 通用 20001 文案。
+//
+// 后两类都会把原始错误挂到 c.Errors：原文只进访问日志，绝不回显给客户端——
+// err.Error() 里可能带出 Go 运行时信息、内部字段名甚至依赖实现细节。
 func bindWith(c *gin.Context, _ any, bindFn func() error) bool {
 	err := bindFn()
 	if err == nil {
@@ -54,10 +61,19 @@ func bindWith(c *gin.Context, _ any, bindFn func() error) bool {
 		lang := detectLang(c)
 		fields := pkgvalidator.TranslateErrors(ve, lang)
 		resp.FailWithValidation(c, fields)
-	} else {
-		resp.FailWithMessage(c, errcode.ErrBadRequest, err.Error())
+		return false
 	}
 
+	// 记录原始错误，供 ginzap 访问日志与排障使用（c.Error 不会改写响应）。
+	_ = c.Error(err) //nolint:errcheck // gin 内部记录用，不影响响应
+
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		resp.Fail(c, errcode.ErrBadRequest.WithMessage("err_body_too_large"))
+		return false
+	}
+
+	resp.Fail(c, errcode.ErrBadRequest)
 	return false
 }
 

@@ -45,3 +45,17 @@
 
 > `message` 字段在运行时会根据 `locales/*` 做 i18n 翻译；这里只列出稳定的 `MsgID`。
 
+## 同一 code 下的不同 MsgID
+
+`code` 是稳定的机器可读契约，`message` 只用于人读，因此个别场景会在不改 `code` 的前提下换 `MsgID`：
+
+| Code | MsgID | HTTPStatus | 触发条件 |
+|---:|---|---:|---|
+| 20001 | `err_body_too_large` | 400 | 请求体超过 `Safe` 中间件的 2 MB 上限（`http.MaxBytesReader`） |
+
+## 关于 message 的约定
+
+绑定/解析类错误（非法 JSON、类型不匹配、body 超限）**不会**把 Go 侧的原始错误文本回显给客户端，
+客户端只会看到上表中的固定文案；原文通过 `c.Error(err)` 进入访问日志（`gin.Logger` 链路的 `error` 字段），
+排障时按 `request_id` 查日志即可。这样既避免泄露运行时实现细节，也不损失可观测性。
+
