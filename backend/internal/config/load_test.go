@@ -204,6 +204,47 @@ database:
 	}
 }
 
+// TestLoad_TrustedProxies 校验 app.trusted_proxies 支持环境变量逗号列表与 yaml 列表，
+// 且默认（未配置）为「不信任任何代理」。
+func TestLoad_TrustedProxies(t *testing.T) {
+	t.Run("from environment", func(t *testing.T) {
+		t.Setenv("CONFIG_PATH", t.TempDir())
+		t.Setenv("SERVER_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.10")
+
+		cfg := Load()
+		want := []string{"10.0.0.0/8", "192.168.1.10"}
+		if !equalStringSlices(cfg.ServerTrustedProxies, want) {
+			t.Errorf("ServerTrustedProxies = %v, want %v", cfg.ServerTrustedProxies, want)
+		}
+	})
+
+	t.Run("from yaml list", func(t *testing.T) {
+		dir := t.TempDir()
+		writeYAML(t, dir, "base.yaml", `
+app:
+  trusted_proxies:
+    - 10.0.0.0/8
+    - fd00::/64
+`)
+		t.Setenv("CONFIG_PATH", dir)
+
+		cfg := Load()
+		want := []string{"10.0.0.0/8", "fd00::/64"}
+		if !equalStringSlices(cfg.ServerTrustedProxies, want) {
+			t.Errorf("ServerTrustedProxies = %v, want %v", cfg.ServerTrustedProxies, want)
+		}
+	})
+
+	t.Run("defaults to trust no proxy", func(t *testing.T) {
+		t.Setenv("CONFIG_PATH", t.TempDir())
+
+		cfg := Load()
+		if len(cfg.ServerTrustedProxies) != 0 {
+			t.Errorf("ServerTrustedProxies = %v, want empty (不信任任何代理)", cfg.ServerTrustedProxies)
+		}
+	})
+}
+
 func TestLoad_DefaultsToDevelopmentWhenAppEnvUnset(t *testing.T) {
 	t.Setenv("CONFIG_PATH", t.TempDir())
 	t.Setenv("APP_ENV", "") // 显式置空，避免受宿主机真实环境变量影响

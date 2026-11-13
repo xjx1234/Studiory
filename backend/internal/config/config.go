@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -31,6 +32,11 @@ type Config struct {
 	ServerReadTimeout       time.Duration
 	ServerWriteTimeout      time.Duration
 	ServerIdleTimeout       time.Duration
+	// ServerTrustedProxies 反向代理/LB 的来源 IP 或 CIDR 列表（如 "10.0.0.0/8"）。
+	// Gin 默认信任所有代理，这会让客户端能自行伪造 X-Forwarded-For；这里显式收紧：
+	// 列表为空（默认值）时不信任任何代理，XFF 一律忽略，限流与访问日志只认 TCP 对端地址。
+	// 部署在 nginx/SLB 之后时必须填入代理网段，否则所有用户会共享同一个 IP 限流桶。
+	ServerTrustedProxies []string
 
 	// ── Database ──────────────────────────────────────────────────────────
 	DBDriver      string
@@ -64,6 +70,10 @@ type Config struct {
 	AuthMockCodeEnabled    bool
 	AuthMultiDeviceEnabled bool // true=多设备同时在线；false=单设备（新登录踢掉旧会话）
 	AuthRedisFailOpen      bool // Redis故障时鉴权策略：true=fail-open（放行，可用性优先）；false=fail-closed（拒绝，安全性优先）
+	// AuthRequireCodeForPasswordRegister 密码注册是否必须先通过一次性验证码（证明持有手机号/邮箱）。
+	// 默认 true；设为 false 会重新引入「抢注他人号码」和「用 /register 枚举已注册账号」两个问题，
+	// 因此 production 环境启动校验会拒绝 false。
+	AuthRequireCodeForPasswordRegister bool
 
 	// ── 验证码下发（SMTP 邮件，可选）────────────────────────────────────────
 	// SMTPHost 为空时不启用 SMTP Provider；短信服务商按需在 app 层接入。
@@ -109,6 +119,7 @@ func Load() *Config {
 		ServerReadTimeout:       v.GetDuration("app.read_timeout"),
 		ServerWriteTimeout:      v.GetDuration("app.write_timeout"),
 		ServerIdleTimeout:       v.GetDuration("app.idle_timeout"),
+		ServerTrustedProxies:    getStringSlice(v, "app.trusted_proxies"),
 
 		DBDriver:      strings.ToLower(v.GetString("database.driver")),
 		DBHost:        v.GetString("database.host"),
@@ -136,6 +147,8 @@ func Load() *Config {
 		AuthMockCodeEnabled:    v.GetBool("auth.mock_code_enabled"),
 		AuthMultiDeviceEnabled: v.GetBool("auth.multi_device_enabled"),
 		AuthRedisFailOpen:      v.GetBool("auth.redis_fail_open"),
+		// 安全默认值：老配置里没有这个 key 时必须保持「要求验证码」，不能因为缺省而静默降级
+		AuthRequireCodeForPasswordRegister: v.GetBool("auth.require_code_for_password_register"),
 
 		SMTPHost:     v.GetString("smtp.host"),
 		SMTPPort:     v.GetInt("smtp.port"),
@@ -212,6 +225,9 @@ func (c *Config) Validate() error {
 	if c.ServerReadTimeout < c.ServerReadHeaderTimeout {
 		return errors.New("app.read_timeout 不能小于 app.read_header_timeout")
 	}
+	if err := validateTrustedProxies(c.ServerTrustedProxies); err != nil {
+		return err
+	}
 	if c.DatabaseURL == "" {
 		return errors.New("database.url 不能为空")
 	}
@@ -230,6 +246,9 @@ func (c *Config) Validate() error {
 		}
 		if c.AuthMockCodeEnabled {
 			return errors.New("production 环境不能启用 auth.mock_code_enabled")
+		}
+		if !c.AuthRequireCodeForPasswordRegister {
+			return errors.New("production 环境必须要求密码注册通过验证码（auth.require_code_for_password_register=true）")
 		}
 		if c.OAuthDevMode {
 			return errors.New("production 环境不能启用 oauth.dev_mode")
@@ -298,6 +317,23 @@ func databaseSSLMode(dsn string) string {
 	return ""
 }
 
+// validateTrustedProxies 校验 app.trusted_proxies 每一项都是合法 IP 或 CIDR。
+// Gin 会解析同一份列表，非法值在启动阶段就报错比运行期静默降级更好排查。
+func validateTrustedProxies(proxies []string) error {
+	for _, p := range proxies {
+		if strings.Contains(p, "/") {
+			if _, _, err := net.ParseCIDR(p); err != nil {
+				return fmt.Errorf("app.trusted_proxies 中的 %q 不是合法 CIDR：%w", p, err)
+			}
+			continue
+		}
+		if net.ParseIP(p) == nil {
+			return fmt.Errorf("app.trusted_proxies 中的 %q 既不是 IP 也不是 CIDR", p)
+		}
+	}
+	return nil
+}
+
 // IsProd 是否为生产环境。
 func (c *Config) IsProd() bool {
 	return c.AppEnv == "production"
@@ -346,6 +382,10 @@ func loadViper() *viper.Viper {
 	// 显式绑定常用的环境变量（保持对原有 .env 变量名的兼容）
 	bindEnvs(v)
 
+	// 安全相关 bool 的缺省值必须显式声明：viper 对缺失的 key 返回 false，
+	// 而这里的 false 恰好代表「更不安全」。老部署目录里没有该 key 时不能静默降级。
+	v.SetDefault("auth.require_code_for_password_register", true)
+
 	return v
 }
 
@@ -366,56 +406,58 @@ func mergeConfig(base *viper.Viper, path, name string) {
 //nolint:gosec // G101 误报：这是「配置项 -> 环境变量名」的映射表，值均为变量名，不含真实密钥。
 func bindEnvs(v *viper.Viper) {
 	bindings := map[string]string{
-		"database.driver":             "DB_DRIVER",
-		"app.env":                     "APP_ENV",
-		"app.server_addr":             "SERVER_ADDR",
-		"app.read_header_timeout":     "SERVER_READ_HEADER_TIMEOUT",
-		"app.read_timeout":            "SERVER_READ_TIMEOUT",
-		"app.write_timeout":           "SERVER_WRITE_TIMEOUT",
-		"app.idle_timeout":            "SERVER_IDLE_TIMEOUT",
-		"database.url":                "DATABASE_URL",
-		"database.host":               "DB_HOST",
-		"database.port":               "DB_PORT",
-		"database.user":               "DB_USER",
-		"database.password":           "DB_PASSWORD",
-		"database.name":               "DB_NAME",
-		"database.ssl_mode":           "DB_SSL_MODE",
-		"database.pool.max_conns":     "DB_MAX_CONNS",
-		"database.pool.min_conns":     "DB_MIN_CONNS",
-		"database.pool.max_conn_idle": "DB_MAX_CONN_IDLE",
-		"database.pool.max_conn_life": "DB_MAX_CONN_LIFE",
-		"redis.url":                   "REDIS_URL",
-		"redis.host":                  "REDIS_HOST",
-		"redis.port":                  "REDIS_PORT",
-		"redis.password":              "REDIS_PASSWORD",
-		"redis.db":                    "REDIS_DB",
-		"redis.pool_size":             "REDIS_POOL_SIZE",
-		"redis.key_prefix":            "REDIS_KEY_PREFIX",
-		"jwt.secret":                  "JWT_SECRET",
-		"jwt.access_ttl":              "JWT_ACCESS_TTL",
-		"jwt.refresh_ttl":             "JWT_REFRESH_TTL",
-		"auth.mock_code_enabled":      "AUTH_MOCK_CODE_ENABLED",
-		"auth.multi_device_enabled":   "AUTH_MULTI_DEVICE_ENABLED",
-		"auth.redis_fail_open":        "AUTH_REDIS_FAIL_OPEN",
-		"smtp.host":                   "SMTP_HOST",
-		"smtp.port":                   "SMTP_PORT",
-		"smtp.username":               "SMTP_USERNAME",
-		"smtp.password":               "SMTP_PASSWORD",
-		"smtp.from":                   "SMTP_FROM",
-		"oauth.dev_mode":              "OAUTH_DEV_MODE",
-		"oauth.providers":             "OAUTH_PROVIDERS",
-		"oauth.wechat.app_id":         "OAUTH_WECHAT_APP_ID",
-		"oauth.wechat.app_secret":     "OAUTH_WECHAT_APP_SECRET",
-		"oauth.apple.client_id":       "OAUTH_APPLE_CLIENT_ID",
-		"oauth.google.client_id":      "OAUTH_GOOGLE_CLIENT_ID",
-		"log.level":                   "LOG_LEVEL",
-		"log.format":                  "LOG_FORMAT",
-		"rate_limit.per_minute":       "RATE_LIMIT_PER_MINUTE",
-		"rate_limit.user_per_minute":  "RATE_LIMIT_USER_PER_MINUTE",
-		"metrics.enabled":             "METRICS_ENABLED",
-		"metrics.token":               "METRICS_TOKEN",
-		"cors.allow_origins":          "CORS_ALLOW_ORIGINS",
-		"cors.allow_credentials":      "CORS_ALLOW_CREDENTIALS",
+		"database.driver":                         "DB_DRIVER",
+		"app.env":                                 "APP_ENV",
+		"app.server_addr":                         "SERVER_ADDR",
+		"app.read_header_timeout":                 "SERVER_READ_HEADER_TIMEOUT",
+		"app.read_timeout":                        "SERVER_READ_TIMEOUT",
+		"app.write_timeout":                       "SERVER_WRITE_TIMEOUT",
+		"app.idle_timeout":                        "SERVER_IDLE_TIMEOUT",
+		"app.trusted_proxies":                     "SERVER_TRUSTED_PROXIES",
+		"database.url":                            "DATABASE_URL",
+		"database.host":                           "DB_HOST",
+		"database.port":                           "DB_PORT",
+		"database.user":                           "DB_USER",
+		"database.password":                       "DB_PASSWORD",
+		"database.name":                           "DB_NAME",
+		"database.ssl_mode":                       "DB_SSL_MODE",
+		"database.pool.max_conns":                 "DB_MAX_CONNS",
+		"database.pool.min_conns":                 "DB_MIN_CONNS",
+		"database.pool.max_conn_idle":             "DB_MAX_CONN_IDLE",
+		"database.pool.max_conn_life":             "DB_MAX_CONN_LIFE",
+		"redis.url":                               "REDIS_URL",
+		"redis.host":                              "REDIS_HOST",
+		"redis.port":                              "REDIS_PORT",
+		"redis.password":                          "REDIS_PASSWORD",
+		"redis.db":                                "REDIS_DB",
+		"redis.pool_size":                         "REDIS_POOL_SIZE",
+		"redis.key_prefix":                        "REDIS_KEY_PREFIX",
+		"jwt.secret":                              "JWT_SECRET",
+		"jwt.access_ttl":                          "JWT_ACCESS_TTL",
+		"jwt.refresh_ttl":                         "JWT_REFRESH_TTL",
+		"auth.mock_code_enabled":                  "AUTH_MOCK_CODE_ENABLED",
+		"auth.multi_device_enabled":               "AUTH_MULTI_DEVICE_ENABLED",
+		"auth.redis_fail_open":                    "AUTH_REDIS_FAIL_OPEN",
+		"auth.require_code_for_password_register": "AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER",
+		"smtp.host":                               "SMTP_HOST",
+		"smtp.port":                               "SMTP_PORT",
+		"smtp.username":                           "SMTP_USERNAME",
+		"smtp.password":                           "SMTP_PASSWORD",
+		"smtp.from":                               "SMTP_FROM",
+		"oauth.dev_mode":                          "OAUTH_DEV_MODE",
+		"oauth.providers":                         "OAUTH_PROVIDERS",
+		"oauth.wechat.app_id":                     "OAUTH_WECHAT_APP_ID",
+		"oauth.wechat.app_secret":                 "OAUTH_WECHAT_APP_SECRET",
+		"oauth.apple.client_id":                   "OAUTH_APPLE_CLIENT_ID",
+		"oauth.google.client_id":                  "OAUTH_GOOGLE_CLIENT_ID",
+		"log.level":                               "LOG_LEVEL",
+		"log.format":                              "LOG_FORMAT",
+		"rate_limit.per_minute":                   "RATE_LIMIT_PER_MINUTE",
+		"rate_limit.user_per_minute":              "RATE_LIMIT_USER_PER_MINUTE",
+		"metrics.enabled":                         "METRICS_ENABLED",
+		"metrics.token":                           "METRICS_TOKEN",
+		"cors.allow_origins":                      "CORS_ALLOW_ORIGINS",
+		"cors.allow_credentials":                  "CORS_ALLOW_CREDENTIALS",
 	}
 
 	for key, envVar := range bindings {

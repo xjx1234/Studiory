@@ -3,6 +3,7 @@ package http
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -25,6 +26,16 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	}
 
 	r := gin.New()
+	// Gin 出厂默认信任所有代理（0.0.0.0/0），客户端只要带上 X-Forwarded-For 就能自定义
+	// 限流分桶键，IP 限流形同虚设。这里改成按配置收紧：trusted_proxies 为空时不信任任何
+	// 代理，XFF 被完全忽略，只认 TCP 对端地址；部署在 nginx/SLB 之后才填入代理网段。
+	if err := r.SetTrustedProxies(deps.Cfg.ServerTrustedProxies); err != nil {
+		return nil, fmt.Errorf("invalid server.trusted_proxies: %w", err)
+	}
+	if deps.Cfg.IsProd() && len(deps.Cfg.ServerTrustedProxies) == 0 {
+		zap.L().Warn("server.trusted_proxies 为空：忽略 X-Forwarded-For，限流按 TCP 对端地址计数；" +
+			"若部署在反向代理/LB 之后，所有用户会共享同一个 IP 限流桶，请配置代理网段")
+	}
 
 	r.Use(middleware.RequestID())
 	if deps.MetricsMiddleware != nil {

@@ -24,7 +24,7 @@ log:
 | `path` | string | ginzap | 请求路径（不含 query） |
 | `status` | int | ginzap | HTTP 状态码 |
 | `latency` | duration | ginzap | 请求耗时 |
-| `ip` | string | ginzap | 客户端 IP |
+| `ip` | string | ginzap | 客户端 IP（取自 `c.ClientIP()`：仅当 TCP 对端在 `server.trusted_proxies` 内才采信 `X-Forwarded-For`，否则为对端地址） |
 | `error` | string | zap.Error | 错误详情（仅 Error 级别） |
 
 ### 关联规则

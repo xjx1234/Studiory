@@ -15,6 +15,8 @@ func TestValidateRejectsUnsafeProductionDefaults(t *testing.T) {
 		RateLimitPerMinute:  60,
 		CORSAllowOrigins:    []string{"https://example.com"},
 		AuthMockCodeEnabled: false,
+		// 其余生产项保持安全默认，让这条用例只因 JWT 默认密钥而失败。
+		AuthRequireCodeForPasswordRegister: true,
 	}
 
 	if err := cfg.Validate(); err == nil {
@@ -24,15 +26,16 @@ func TestValidateRejectsUnsafeProductionDefaults(t *testing.T) {
 
 func TestValidateRejectsOAuthDevModeInProduction(t *testing.T) {
 	cfg := &Config{
-		AppEnv:              "production",
-		ServerAddr:          ":8080",
-		DatabaseURL:         "postgres://postgres:password@localhost:5432/app?sslmode=disable",
-		RedisURL:            "redis://localhost:6379/0",
-		JWTSecret:           "prod-secret-that-is-at-least-32-bytes-long",
-		RateLimitPerMinute:  60,
-		CORSAllowOrigins:    []string{"https://example.com"},
-		AuthMockCodeEnabled: false,
-		OAuthDevMode:        true,
+		AppEnv:                             "production",
+		ServerAddr:                         ":8080",
+		DatabaseURL:                        "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		RedisURL:                           "redis://localhost:6379/0",
+		JWTSecret:                          "prod-secret-that-is-at-least-32-bytes-long",
+		RateLimitPerMinute:                 60,
+		CORSAllowOrigins:                   []string{"https://example.com"},
+		AuthMockCodeEnabled:                false,
+		AuthRequireCodeForPasswordRegister: true,
+		OAuthDevMode:                       true,
 	}
 
 	if err := cfg.Validate(); err == nil {
@@ -42,14 +45,15 @@ func TestValidateRejectsOAuthDevModeInProduction(t *testing.T) {
 
 func TestValidateRejectsShortJWTSecretInProduction(t *testing.T) {
 	cfg := &Config{
-		AppEnv:              "production",
-		ServerAddr:          ":8080",
-		DatabaseURL:         "postgres://postgres:password@localhost:5432/app?sslmode=disable",
-		RedisURL:            "redis://localhost:6379/0",
-		JWTSecret:           "short-secret-only-20ch",
-		RateLimitPerMinute:  60,
-		CORSAllowOrigins:    []string{"https://example.com"},
-		AuthMockCodeEnabled: false,
+		AppEnv:                             "production",
+		ServerAddr:                         ":8080",
+		DatabaseURL:                        "postgres://postgres:password@localhost:5432/app?sslmode=disable",
+		RedisURL:                           "redis://localhost:6379/0",
+		JWTSecret:                          "short-secret-only-20ch",
+		RateLimitPerMinute:                 60,
+		CORSAllowOrigins:                   []string{"https://example.com"},
+		AuthMockCodeEnabled:                false,
+		AuthRequireCodeForPasswordRegister: true,
 	}
 
 	if err := cfg.Validate(); err == nil {
@@ -71,6 +75,8 @@ func TestValidateAccepts32ByteJWTSecretInProduction(t *testing.T) {
 		RateLimitPerMinute:      60,
 		CORSAllowOrigins:        []string{"https://example.com"},
 		AuthMockCodeEnabled:     false,
+
+		AuthRequireCodeForPasswordRegister: true,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -135,6 +141,29 @@ func prodBaseConfig() Config {
 		RateLimitPerMinute:      60,
 		CORSAllowOrigins:        []string{"https://example.com"},
 		AuthMockCodeEnabled:     false,
+		// 默认安全值（base.yaml 里就是 true）：关掉它会让密码注册回到「不验归属」的旧行为。
+		AuthRequireCodeForPasswordRegister: true,
+	}
+}
+
+// TestValidateRejectsPasswordRegisterWithoutCodeInProduction 生产环境不允许把密码注册退回「不验验证码」，
+// 否则任何人都能抢注他人手机号/邮箱，并用 /register 枚举已注册账号。
+func TestValidateRejectsPasswordRegisterWithoutCodeInProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.AuthRequireCodeForPasswordRegister = false
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected disabling the password-register code check to be rejected in production")
+	}
+}
+
+func TestValidateAcceptsPasswordRegisterWithoutCodeOutsideProduction(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.AppEnv = "development"
+	cfg.AuthRequireCodeForPasswordRegister = false
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("开发/内网部署允许显式关掉该开关: %v", err)
 	}
 }
 
@@ -227,5 +256,46 @@ func TestValidateAcceptsMetricsWithTokenInProduction(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected metrics with token to be accepted in production: %v", err)
+	}
+}
+
+// TestValidateAcceptsTrustedProxies 合法的 IP / IPv6 / CIDR 都应通过校验。
+// 这些值会原样交给 gin 的 SetTrustedProxies，校验口径必须与 gin 一致，
+// 否则会出现「配置能读、启动即挂」的假阳性。
+func TestValidateAcceptsTrustedProxies(t *testing.T) {
+	valid := [][]string{
+		nil,
+		{},
+		{"192.168.1.10"},
+		{"10.0.0.0/8"},
+		{"::1"},
+		{"fd00::/64"},
+		{"10.0.0.0/8", "172.16.0.1", "fd00::/64"},
+	}
+
+	for _, proxies := range valid {
+		cfg := prodBaseConfig()
+		cfg.ServerTrustedProxies = proxies
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected trusted proxies %v to be accepted, got %v", proxies, err)
+		}
+	}
+}
+
+func TestValidateRejectsInvalidTrustedProxies(t *testing.T) {
+	invalid := []string{
+		"not-an-ip",
+		"192.168.1.256",
+		"10.0.0.0/33",
+		"10.0.0.0/8/1",
+		"",
+	}
+
+	for _, proxy := range invalid {
+		cfg := prodBaseConfig()
+		cfg.ServerTrustedProxies = []string{proxy}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected trusted proxy %q to be rejected", proxy)
+		}
 	}
 }
