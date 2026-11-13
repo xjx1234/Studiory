@@ -10,9 +10,12 @@ env:
   # golang.org/x/net ≥ v0.60.0 的 go.mod 也要求 go >= 1.26.0。
   # setup-go 的 '1.26.x' 解析可能命中 runner 缓存的旧补丁版，
   # GOTOOLCHAIN 让所有 go 命令强制使用该精确版本（自动从 GOPROXY 下载）。
-  # 注意 setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（见 check-go-toolchain.sh 注释），
-  # 所以每个 job 在 Setup Go 后都要跑一次该脚本把这里的钉扎重新写回 $GITHUB_ENV。
-  # 新补丁发布时（如 go1.26.12）在此更新，并同步 backend/go.mod 的 toolchain 行，
+  # ⚠ 这里只是「Setup Go 之前」的默认值：setup-go v6+ 起会用 GITHUB_ENV 把
+  # GOTOOLCHAIN 覆写成 local，实测连 ${{ env.GOTOOLCHAIN }} 都跟着变成 local。
+  # 真正把钉扎守住的是每个 job 里的 Verify Go toolchain 步骤
+  # （.github/scripts/check-go-toolchain.sh），它从 backend/go.mod 的 toolchain 行
+  # 取版本、写回 $GITHUB_ENV，再校验实际 go 版本不低于它。
+  # 新补丁发布时（如 go1.26.12）改 backend/go.mod 的 toolchain 行并同步这里，
   # 否则本地/镜像与 CI 用的补丁版会不一致。
   GOTOOLCHAIN: go1.26.11+auto
 
@@ -32,9 +35,10 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Verify Go toolchain
-        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），
-        # 本步把 workflow 级钉扎写回 $GITHUB_ENV，并确认实际 go 版本不低于钉扎
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh" '${{ env.GOTOOLCHAIN }}'
+        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），且实测
+        # 连 ${{ env.GOTOOLCHAIN }} 都会取到 local——钉扎由脚本从 backend/go.mod 的
+        # toolchain 行推导、写回 $GITHUB_ENV，并确认实际 go 版本不低于它
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh"
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -65,9 +69,10 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Verify Go toolchain
-        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），
-        # 本步把 workflow 级钉扎写回 $GITHUB_ENV，并确认实际 go 版本不低于钉扎
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh" '${{ env.GOTOOLCHAIN }}'
+        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），且实测
+        # 连 ${{ env.GOTOOLCHAIN }} 都会取到 local——钉扎由脚本从 backend/go.mod 的
+        # toolchain 行推导、写回 $GITHUB_ENV，并确认实际 go 版本不低于它
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh"
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -94,9 +99,10 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Verify Go toolchain
-        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），
-        # 本步把 workflow 级钉扎写回 $GITHUB_ENV，并确认实际 go 版本不低于钉扎
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh" '${{ env.GOTOOLCHAIN }}'
+        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），且实测
+        # 连 ${{ env.GOTOOLCHAIN }} 都会取到 local——钉扎由脚本从 backend/go.mod 的
+        # toolchain 行推导、写回 $GITHUB_ENV，并确认实际 go 版本不低于它
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh"
 
       # ubuntu-latest 自带 Docker，testcontainers 直接可用
       # 各步统一走 run-and-annotate.sh：保留真实退出码 + 失败原因写进 annotation
@@ -132,9 +138,10 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Verify Go toolchain
-        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），
-        # 本步把 workflow 级钉扎写回 $GITHUB_ENV，并确认实际 go 版本不低于钉扎
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh" '${{ env.GOTOOLCHAIN }}'
+        # setup-go v6+ 会把 GOTOOLCHAIN 覆写成 local（只跑 runner 装的那份），且实测
+        # 连 ${{ env.GOTOOLCHAIN }} 都会取到 local——钉扎由脚本从 backend/go.mod 的
+        # toolchain 行推导、写回 $GITHUB_ENV，并确认实际 go 版本不低于它
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh"
 
       - name: Verify go.mod/go.sum tidy
         run: bash "$GITHUB_WORKSPACE/.github/scripts/run-and-annotate.sh" mod-tidy bash -c 'go mod tidy && git diff --exit-code -- go.mod go.sum'

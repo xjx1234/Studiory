@@ -810,8 +810,10 @@ jobs:
 
 每个 Job 在 Setup Go 之后都会跑一次 `.github/scripts/check-go-toolchain.sh`：
 `actions/setup-go` v6 起会无条件 `export GOTOOLCHAIN=local`（只跑 runner 装的那份 Go），
-这会让 workflow 级 `GOTOOLCHAIN: go1.26.11+auto` 的「不低于该补丁版」保证失效——
-脚本先把钉扎写回 `$GITHUB_ENV`，再比较 `go env GOVERSION` 与钉扎版本，低于就红。
+这会让 `GOTOOLCHAIN: go1.26.11+auto` 的「不低于该补丁版」保证失效——而且实测
+Setup Go 之后连 `${{ env.GOTOOLCHAIN }}` 都取到 `local`，workflow 级 `env` 已被 `GITHUB_ENV` 盖掉。
+所以脚本从 `backend/go.mod` 的 `toolchain` 行取钉扎（不受运行时环境变量影响），写回
+`$GITHUB_ENV`，再按钉扎量一次 `go env GOVERSION`，低于下限就红。
 
 ### 5.2 OpenAPI 契约校验
 
