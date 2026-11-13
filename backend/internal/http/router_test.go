@@ -15,6 +15,7 @@ import (
 	"backend/internal/http/middleware"
 	"backend/internal/repo"
 	adminservice "backend/internal/service/admin"
+	authservice "backend/internal/service/auth"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
 	"backend/pkg/errcode"
@@ -214,13 +215,85 @@ func TestLogin_AccountLocked(t *testing.T) {
 }
 
 func TestRegister_Success(t *testing.T) {
-	r, _ := newTestServer(t)
+	r, ts := newTestServer(t)
+
+	var got *authservice.RegisterInput
+	ts.auth.registerFn = func(_ context.Context, in *authservice.RegisterInput) (*auth.LoginResult, *errcode.Error) {
+		got = in
+		return defaultLoginResult(), nil
+	}
+
 	w, body := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", gin.H{
 		"grant_type": "password",
 		"phone":      "13800138000",
+		"code":       "123456",
 		"password":   "Str0ng!Pass",
 	})
 	assertStatusCode(t, w, body, http.StatusOK, 0)
+
+	// 验证码必须原样透传到 service：归属校验（防抢注）只在 service 层做。
+	if got == nil {
+		t.Fatal("register service was not called")
+	}
+	if got.Code != "123456" {
+		t.Errorf("service input code = %q, want 123456（handler 不能丢掉验证码字段）", got.Code)
+	}
+	if got.Phone != "13800138000" || got.Email != "" {
+		t.Errorf("service input identifiers = phone %q email %q", got.Phone, got.Email)
+	}
+}
+
+// TestRegister_PasswordIdentifierRules 覆盖 handler 的跨字段规则：
+// 标识必填、只能填一个、code_type 要与标识一致（service 层还有同样的兜底）。
+func TestRegister_PasswordIdentifierRules(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload gin.H
+	}{
+		{"missing identifier", gin.H{"grant_type": "password", "password": "Str0ng!Pass", "code": "123456"}},
+		{"both identifiers", gin.H{
+			"grant_type": "password", "phone": "13800138000", "email": "a@example.com",
+			"password": "Str0ng!Pass", "code": "123456",
+		}},
+		{"code_type mismatch", gin.H{
+			"grant_type": "password", "phone": "13800138000", "code_type": "email",
+			"password": "Str0ng!Pass", "code": "123456",
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, ts := newTestServer(t)
+			ts.auth.registerFn = func(context.Context, *authservice.RegisterInput) (*auth.LoginResult, *errcode.Error) {
+				t.Error("service must not be reached when the identifier rules fail")
+				return defaultLoginResult(), nil
+			}
+
+			w, body := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", tt.payload)
+			assertStatusCode(t, w, body, http.StatusBadRequest, errcode.ErrBadRequest.Code)
+		})
+	}
+}
+
+func TestRegister_CodeGrantStillWorks(t *testing.T) {
+	r, ts := newTestServer(t)
+
+	var got *authservice.RegisterInput
+	ts.auth.registerFn = func(_ context.Context, in *authservice.RegisterInput) (*auth.LoginResult, *errcode.Error) {
+		got = in
+		return defaultLoginResult(), nil
+	}
+
+	w, body := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", gin.H{
+		"grant_type": "code",
+		"code_type":  "email",
+		"email":      "new@example.com",
+		"code":       "123456",
+	})
+	assertStatusCode(t, w, body, http.StatusOK, 0)
+	if got == nil || got.CodeType != "email" || got.Email != "new@example.com" {
+		t.Errorf("service input = %+v, want email code grant", got)
+	}
 }
 
 // ── 用户资料（受保护）─────────────────────────────────────────────────────────

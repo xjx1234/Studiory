@@ -136,6 +136,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithOAuthVerifier(buildOAuthVerifier(cfg, logger)),
 			authservice.WithSessionStore(sessionStore),
 			authservice.WithRedisFailOpen(cfg.AuthRedisFailOpen),
+			authservice.WithRequireCodeForPasswordRegister(cfg.AuthRequireCodeForPasswordRegister),
 		),
 		UserService: userservice.New(storage.Users(),
 			userservice.WithLogger(logger),

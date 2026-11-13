@@ -20,6 +20,7 @@
 | `SERVER_READ_TIMEOUT` | `15s` | 否 | 读取完整请求（含 body） |
 | `SERVER_WRITE_TIMEOUT` | `30s` | 否 | 写入响应超时 |
 | `SERVER_IDLE_TIMEOUT` | `120s` | 否 | keep-alive 空闲连接超时 |
+| `SERVER_TRUSTED_PROXIES` | 空 | **反代部署必填** | 可信反向代理/LB 的来源 IP 或 CIDR，逗号分隔（如 `10.0.0.0/8,192.168.1.10`）。为空时不信任任何代理：`X-Forwarded-For` 一律忽略，IP 限流与访问日志只认 TCP 对端地址。Gin 出厂默认信任所有代理，客户端因此可伪造 XFF 随意换限流桶，本项目启动时按本配置收紧 |
 
 ---
 
@@ -86,6 +87,7 @@
 | `AUTH_MOCK_CODE_ENABLED` | `true` | 否 | 开发环境固定验证码 `123456`，**生产必须为 `false`** |
 | `AUTH_MULTI_DEVICE_ENABLED` | `true` | 否 | `true`=多设备同时在线；`false`=单设备（新登录踢掉旧会话） |
 | `AUTH_REDIS_FAIL_OPEN` | `true`（生产 `false`） | 否 | Redis 故障时鉴权策略：`true`=放行（可用性优先）；`false`=拒绝（安全性优先）。生产环境默认 fail-closed |
+| `AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER` | `true` | 否 | 密码注册（`grant_type=password`）是否必须先通过一次性验证码，证明持有该手机号/邮箱。`true`（默认，生产强制）：注册即归属证明，同时消除 `/register` 的账号存在性枚举 oracle；`false`：回到「只凭账号+密码就能建号」的旧行为，号码可被抢注，仅适合不对公网开放注册的部署，**production 启动校验会直接拒绝** |
 
 ---
 
@@ -156,6 +158,7 @@
 |------|------|
 | `JWT_SECRET` | 默认值是公开的开发密钥，必须替换为强随机字符串（≥32 字节） |
 | `AUTH_MOCK_CODE_ENABLED` | 必须为 `false`，否则任何人可用 `123456` 登录 |
+| `AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER` | 必须保持 `true`（默认）：关掉后密码注册不校验手机号/邮箱归属，攻击者可抢注他人号码，`/register` 还会变成账号存在性查询接口；production 启动校验会拒绝 `false` |
 | `OAUTH_DEV_MODE` | 必须为 `false`，否则可绕过第三方 token 校验 |
 | `OAUTH_GOOGLE_CLIENT_ID` | 启用 google 登录时必填；未配置时 google 登录直接拒绝（`ErrNotConfigured`），生产启动时强制校验 |
 | `OAUTH_APPLE_CLIENT_ID` | 启用 apple 登录时必填 |
@@ -165,3 +168,4 @@
 | `DATABASE_URL` / `DB_PASSWORD` | 使用真实数据库凭据；DSN 必须显式携带 `sslmode=require/verify-ca/verify-full`（启动强制校验） |
 | `REDIS_URL` / `REDIS_PASSWORD` | 使用真实 Redis 凭据 |
 | `CORS_ALLOW_ORIGINS` | 配置为实际前端域名，不要用 `*` |
+| `SERVER_TRUSTED_PROXIES` | 服务在 nginx / SLB / Ingress 之后时必须填代理网段：留空则所有用户共用代理那一个 IP 限流桶；填 `0.0.0.0/0`（等于 Gin 默认）则任何人都能伪造 XFF 绕过限流 |

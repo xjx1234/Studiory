@@ -93,6 +93,41 @@ var (
 	errInvalidEmailTarget = errors.New("invalid email target")
 )
 
+// Validate 补齐绑定标签表达不了的跨字段规则（密码注册）。
+//
+//   - 至少要有一个标识：两者皆空会注册出「无法登录、无法找回」的僵尸账号；
+//   - 密码注册只允许一个标识：只校验其中一个的话，另一个就是未验证的悬空地址；
+//   - code_type 若显式传入，必须与实际填写的标识一致，否则等于对着没填的渠道验码。
+//
+// 安全兜底在 service 层（authservice.registrationTarget 同样会拒掉），这里只是更早、更便宜的 400。
+func (r *RegisterReq) Validate() error {
+	if r.GrantType != "password" {
+		return nil
+	}
+
+	switch {
+	case r.Phone == "" && r.Email == "":
+		return errRegisterNeedsIdentifier
+	case r.Phone != "" && r.Email != "":
+		return errRegisterSingleIdentifier
+	}
+
+	wantType := "sms"
+	if r.Email != "" {
+		wantType = "email"
+	}
+	if r.CodeType != "" && r.CodeType != wantType {
+		return errRegisterCodeTypeMismatch
+	}
+	return nil
+}
+
+var (
+	errRegisterNeedsIdentifier  = errors.New("password register requires phone or email")
+	errRegisterSingleIdentifier = errors.New("password register accepts either phone or email")
+	errRegisterCodeTypeMismatch = errors.New("code_type does not match the submitted identifier")
+)
+
 type RefreshReq struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
@@ -107,6 +142,12 @@ type LogoutReq struct {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterReq
 	if !request.Bind(c, &req) {
+		return
+	}
+
+	// 跨字段规则（标识必填/唯一、code_type 一致性）先在这里挡掉，service 层还有同样的兜底。
+	if err := req.Validate(); err != nil {
+		resp.Fail(c, errcode.ErrBadRequest)
 		return
 	}
 

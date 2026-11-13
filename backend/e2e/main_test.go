@@ -81,16 +81,19 @@ func testConfig(databaseURL, redisURL string) *config.Config {
 		JWTAccessTokenTTL:       2 * time.Hour,
 		JWTRefreshTokenTTL:      168 * time.Hour,
 		AuthMockCodeEnabled:     true,
-		AuthMultiDeviceEnabled:  true,
-		OAuthDevMode:            true,
-		OAuthProviders:          []string{"wechat", "apple", "google"},
-		LogLevel:                "error",
-		LogFormat:               "json",
-		RateLimitPerMinute:      1000,
-		RateLimitUserPerMinute:  1000,
-		MetricsEnabled:          false,
-		CORSAllowOrigins:        []string{"http://localhost:5173"},
-		CORSAllowCredentials:    true,
+		// 密码注册必须带验证码：mock 模式下 Redis 无码时固定码 123456 直接通过，
+		// 所以用例里不需要真的走一遍 send-code（也就不会踩 60s 冷却）。
+		AuthRequireCodeForPasswordRegister: true,
+		AuthMultiDeviceEnabled:             true,
+		OAuthDevMode:                       true,
+		OAuthProviders:                     []string{"wechat", "apple", "google"},
+		LogLevel:                           "error",
+		LogFormat:                          "json",
+		RateLimitPerMinute:                 1000,
+		RateLimitUserPerMinute:             1000,
+		MetricsEnabled:                     false,
+		CORSAllowOrigins:                   []string{"http://localhost:5173"},
+		CORSAllowCredentials:               true,
 	}
 }
 
@@ -174,8 +177,11 @@ func registerAndLogin(t *testing.T, phone, password string) loginData {
 	w, body := doJSON(t, http.MethodPost, "/api/v1/auth/register", map[string]any{
 		"grant_type": "password",
 		"phone":      phone,
-		"password":   password,
-		"nickname":   "e2e-user",
+		// 密码注册要先证明持有该手机号（auth.require_code_for_password_register），
+		// 测试配置开着 mock code，固定码 123456 即可通过。
+		"code":     "123456",
+		"password": password,
+		"nickname": "e2e-user",
 	})
 	if w.Code != http.StatusOK || body.Code != 0 {
 		t.Fatalf("register: http=%d code=%d body=%s", w.Code, body.Code, w.Body.String())

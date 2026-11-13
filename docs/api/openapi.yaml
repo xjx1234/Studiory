@@ -184,6 +184,13 @@ components:
     RegisterReq:
       type: object
       required: [grant_type]
+      description: |
+        注册请求。两种 grant 都必须先证明「持有该标识」：
+          - grant_type=password：phone / email 二选一（同时提供或都不提供返回 20001），
+            并且必须先调 /api/v1/auth/send-code 拿到验证码，把 code 一起提交（校验通过才建号）。
+            关闭该前置校验需要 auth.require_code_for_password_register=false，生产环境启动校验会拒绝。
+          - grant_type=code：code_type + 对应标识 + code 必填。
+        顺序是「先验码、后查重」，因此响应不会泄露某个手机号/邮箱是否已注册。
       properties:
         grant_type:
           type: string
@@ -192,15 +199,19 @@ components:
           type: string
           enum: [sms, email]
           nullable: true
+          description: grant_type=code 时必填；grant_type=password 时可省略，由 phone/email 推断，与标识不一致时返回 20001
         phone:
           type: string
           nullable: true
+          description: 手机号标识；password grant 下与 email 二选一
         email:
           type: string
           nullable: true
+          description: 邮箱标识；password grant 下与 phone 二选一
         code:
           type: string
           nullable: true
+          description: 一次性验证码（/api/v1/auth/send-code 下发）；password、code 两种 grant 均必填
         password:
           type: string
           nullable: true
@@ -356,6 +367,28 @@ paths:
                     properties:
                       data:
                         $ref: '#/components/schemas/LoginResult'
+        '400':
+          description: |
+            参数不合法（code 20001 err_bad_request / 20002 err_validation）或验证码错误（code 10005 err_invalid_code）。
+            password grant 缺少 code、同时给出 phone 与 email 或两者都缺，都会落在这里。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '409':
+          description: 该手机号/邮箱已注册（code 30002 err_already_exists）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '429':
+          description: |
+            注册验证码连续猜错过多，账号被临时锁定（code 10010 err_account_locked）；
+            锁定期间即使验证码正确也不放行。也可由 IP 限流（20003）触发。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
 
   /api/v1/auth/login:
     post:

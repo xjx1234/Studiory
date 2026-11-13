@@ -10,6 +10,11 @@ app:
   read_timeout: 15s          # 读取完整请求（含 body）
   write_timeout: 30s         # 写入响应超时
   idle_timeout: 120s         # keep-alive 空闲连接超时
+  # 可信反向代理/LB 的来源 IP 或 CIDR，逗号分隔（如 "10.0.0.0/8, 192.168.1.1"）。
+  # 留空 = 不信任任何代理：X-Forwarded-For 一律忽略，IP 限流与日志只认 TCP 对端地址，
+  # 客户端无法靠伪造请求头绕过限流。部署在 nginx/SLB/Ingress 之后必须填入代理网段，
+  # 否则所有用户会共用代理服务器那一个限流桶。
+  trusted_proxies: []
 
 database:
   driver: postgres          # postgres | mysql
@@ -44,6 +49,10 @@ auth:
   mock_code_enabled: true     # 仅开发环境使用固定验证码 123456
   multi_device_enabled: true  # true=多设备同时在线；false=单设备（新登录踢掉旧会话）
   redis_fail_open: true       # Redis故障时鉴权策略：true=放行（可用性优先）；false=拒绝（安全性优先）
+  # 密码注册是否必须先通过一次性验证码（证明持有该手机号/邮箱）。
+  # true（默认）：防止抢注他人号码，也防止把 /register 当成「号码是否已注册」的枚举接口。
+  # false 只适合不对公网开放注册的部署；production 环境启动会拒绝 false。
+  require_code_for_password_register: true
 
 # 验证码下发（SMTP 邮件，可选）。host 为空则不启用，回退到 mock。
 # 短信运营商在 internal/app/app.go 的 buildCodeSender 中按需接入。

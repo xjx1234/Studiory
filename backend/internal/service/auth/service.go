@@ -50,6 +50,10 @@ type AuthServiceImpl struct {
 	oauthDevMode          bool
 	oauthProviders        map[string]struct{}
 	failOpen              bool // Redis故障时鉴权策略：true=放行（可用性优先）；false=拒绝（安全性优先）
+
+	// requireCodeForPasswordRegister 密码注册是否必须带一次性验证码（证明手机号/邮箱归属）。
+	// 默认 true；关闭只适合无公网注册入口的开发/内网部署，production 由配置校验强制为 true。
+	requireCodeForPasswordRegister bool
 }
 
 type Option func(*AuthServiceImpl)
@@ -64,6 +68,8 @@ func New(users repo.UserRepo, cache CacheStore, opts ...Option) Service {
 		oauthDevMode:          false,
 		oauthProviders:        defaultOAuthProviderSet(),
 		failOpen:              true, // 默认 fail-open（可用性优先）
+
+		requireCodeForPasswordRegister: true, // 默认要求验证码，安全优先
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -90,6 +96,15 @@ func WithCodePrefix(prefix string) Option {
 func WithMockCodeFallback(enabled bool) Option {
 	return func(s *AuthServiceImpl) {
 		s.allowMockCodeFallback = enabled
+	}
+}
+
+// WithRequireCodeForPasswordRegister 控制「密码注册是否必须先通过一次性验证码」。
+// true（默认）：注册即证明持有该手机号/邮箱，同时消除 /register 的账号存在性枚举 oracle；
+// false：保留纯账号+密码注册的旧行为，仅适合不对公网开放注册的部署，生产启动校验会拒绝。
+func WithRequireCodeForPasswordRegister(enabled bool) Option {
+	return func(s *AuthServiceImpl) {
+		s.requireCodeForPasswordRegister = enabled
 	}
 }
 

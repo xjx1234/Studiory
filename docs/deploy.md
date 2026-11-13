@@ -82,6 +82,7 @@ make run
 |------|------|
 | `JWT_SECRET` | 不能为默认值 `dev-secret-change-in-production`，长度 ≥32 字节 |
 | `AUTH_MOCK_CODE_ENABLED` | 必须为 `false` |
+| `AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER` | 必须为 `true`（默认值）：密码注册要先通过一次性验证码，证明持有该手机号/邮箱 |
 | `OAUTH_DEV_MODE` | 必须为 `false` |
 | `OAUTH_GOOGLE_CLIENT_ID` | 启用 google 登录时必填（强制校验 `aud`） |
 | `OAUTH_APPLE_CLIENT_ID` | 启用 apple 登录时必填 |
@@ -288,6 +289,25 @@ kubectl apply -f deploy/k8s/ingress.yaml
 ```
 
 > 如果使用云厂商 Ingress Controller（如 AWS ALB、GCP GCE），需调整 `ingressClassName` 和 annotations。
+
+#### 让应用认识真实客户端 IP（`SERVER_TRUSTED_PROXIES`）
+
+Gin 默认信任所有代理，本项目已改为按 `SERVER_TRUSTED_PROXIES` 收紧：**不配置时不信任任何代理**，
+`X-Forwarded-For` 被完全忽略，IP 限流与访问日志只认 TCP 对端地址。这在直连场景是安全的，
+但经 Ingress 转发时所有请求的对端都是 Ingress Pod，用户会共用同一个限流桶（启动日志会给出 Warn）。
+
+因此经 Ingress 暴露时必须把代理来源网段配进 ConfigMap：
+
+```yaml
+# deploy/k8s/configmap.yaml
+data:
+  SERVER_TRUSTED_PROXIES: "10.244.0.0/16"   # ingress-nginx / Pod 所在 CIDR，按实际 CNI 填写
+```
+
+填写原则：只写真正可控的代理地址（CNI Pod/Node CIDR 或上游 LB 的 IP 段）。
+切勿写 `0.0.0.0/0` —— 那等于把 Gin 的出厂隐患放回来，任何人都能用一个请求头指定自己的限流桶。
+ingress-nginx 默认会把真实客户端写入 `X-Forwarded-For`，因此 Ingress 侧无需额外 annotations；
+改完记得 `kubectl rollout restart deployment/studiory-api`。
 
 ### 部署步骤（示例）
 

@@ -20,6 +20,9 @@ data:
 
   # Auth
   AUTH_MULTI_DEVICE_ENABLED: "true"
+  # 密码注册必须先通过一次性验证码（证明持有该手机号/邮箱）。生产环境必须为 true：
+  # 关掉后任何人都能抢注别人的号码，且 /register 退化成账号存在性查询接口。
+  AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER: "true"
 
   # OAuth（生产关闭 dev 模式）
   OAUTH_DEV_MODE: "false"
@@ -28,6 +31,12 @@ data:
   # 限流
   RATE_LIMIT_PER_MINUTE: "60"
   RATE_LIMIT_USER_PER_MINUTE: "120"
+
+  # 可信反向代理网段（Ingress/nginx 的 Pod 或 Node CIDR）。
+  # 留空 = 不信任任何代理：X-Forwarded-For 被忽略，限流按 TCP 对端计数——
+  # 集群内所有用户会共用 Ingress 那一个桶，因此经 Ingress 暴露时必须按实际 CNI 网段填写。
+  # 反过来说，填 0.0.0.0/0 会让任何人都能伪造 XFF 绕过限流，切勿这么做。
+  # SERVER_TRUSTED_PROXIES: "10.244.0.0/16"
 
   # Metrics
   METRICS_ENABLED: "true"
