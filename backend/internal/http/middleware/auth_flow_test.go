@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -310,5 +312,34 @@ func TestIsAccessTokenRevoked_RedisErrorFailsClosed(t *testing.T) {
 
 	if !isAccessTokenRevoked(context.Background(), rdb, "test", claims, false, zap.NewNop()) {
 		t.Error("expected fail-closed (revoked) when redis is unavailable")
+	}
+}
+
+// TestIsAccessTokenRevoked_NormalizesClaimUserID 验证吊销键的读取形式与写入形式一致：
+// 写入方（admin 禁用 / 用户改密）把键写在 canonical UUID 上，而 claim 里的 uid 是历史 token
+// 的裸字符串，形式可能不同。不一致时「已吊销」会被读成「未吊销」，被禁用的用户仍能继续打接口。
+func TestIsAccessTokenRevoked_NormalizesClaimUserID(t *testing.T) {
+	uid := uuid.New()
+	canonical := uid.String()
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+
+	revokeAt := time.Now().Add(-time.Minute)
+	if err := rdb.Set(ctx, "test:revoke:uid:"+canonical, revokeAt.Unix(), time.Hour).Err(); err != nil {
+		t.Fatalf("seed revoke key: %v", err)
+	}
+
+	for _, form := range []string{canonical, strings.ToUpper(canonical), "{" + canonical + "}"} {
+		claims := &auth.Claims{
+			UserID: form,
+			RegisteredClaims: jwt.RegisteredClaims{
+				IssuedAt: jwt.NewNumericDate(revokeAt.Add(-time.Hour)),
+			},
+		}
+		if !isAccessTokenRevoked(ctx, rdb, "test", claims, true, zap.NewNop()) {
+			t.Errorf("claim uid %q 没有命中 canonical 吊销键", form)
+		}
 	}
 }

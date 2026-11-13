@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"backend/internal/auth"
+	baseservice "backend/internal/service"
 	"backend/internal/session"
 	"backend/pkg/errcode"
 	"backend/pkg/resp"
@@ -63,7 +64,10 @@ func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPre
 		return false
 	}
 
-	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", keyPrefix, claims.UserID)
+	// 读取的键名必须与写入方（admin/user service 的吊销路径）完全一致：
+	// claims.UserID 是历史 token 里的裸字符串，签发方未必规范化过形式，
+	// 统一按 canonical UUID 读取，才不会因为大小写差异把「已吊销」读成「未吊销」。
+	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", keyPrefix, baseservice.CanonicalUserID(claims.UserID))
 	revokeAt, err := rdb.Get(ctx, revokeKey).Int64()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {

@@ -3,6 +3,7 @@ package userservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -375,6 +376,53 @@ func TestChangePassword_RevokesSessionsAndAccessTokens(t *testing.T) {
 	revokeKey := "test:revoke:uid:" + id.String()
 	if exists, _ := rdb.Exists(context.Background(), revokeKey).Result(); exists == 0 {
 		t.Error("expected access-token revoke marker to be set after password change")
+	}
+}
+
+// TestChangePassword_NormalizesUserIDForRevocation 验证改密吊销用的键名与 JWT claim 的形式无关：
+// 传入大写/urn 形式的 userID 时，revoke:uid 仍写在 canonical UUID 上，会话也被真正吊销。
+func TestChangePassword_NormalizesUserIDForRevocation(t *testing.T) {
+	forms := []func(string) string{
+		strings.ToUpper,
+		func(s string) string { return "{" + s + "}" },
+		func(s string) string { return "urn:uuid:" + s },
+	}
+
+	for _, mutate := range forms {
+		id := uuid.New()
+		canonical := id.String()
+		in := mutate(canonical)
+
+		hash := hashPassword(t, "OldPass123")
+		fakeRepo := testutil.NewFakeUserRepo()
+		fakeRepo.Users[id] = &repo.User{ID: id, PasswordHash: &hash}
+
+		mr := miniredis.RunT(t)
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		sessions := session.NewStore(rdb, "test", true, time.Hour, true)
+		if err := sessions.Register(context.Background(), canonical, "session-1"); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+
+		svc := New(fakeRepo, WithSessionStore(sessions), WithRevokeSupport(rdb, "test", time.Hour))
+
+		e := svc.ChangePassword(context.Background(), in, &ChangePasswordInput{
+			OldPassword: "OldPass123",
+			NewPassword: "NewPass456",
+		})
+		if e != nil {
+			t.Fatalf("ChangePassword(%q): %+v", in, e)
+		}
+
+		if sessions.Validate(context.Background(), canonical, "session-1") {
+			t.Errorf("ChangePassword(%q) left the canonical session alive", in)
+		}
+		if !mr.Exists("test:revoke:uid:" + canonical) {
+			t.Errorf("ChangePassword(%q) did not write the canonical revoke key", in)
+		}
+		if in != canonical && mr.Exists("test:revoke:uid:"+in) {
+			t.Errorf("ChangePassword(%q) wrote a non-canonical revoke key that no reader looks up", in)
+		}
 	}
 }
 

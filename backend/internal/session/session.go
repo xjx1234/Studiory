@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	baseservice "backend/internal/service"
+
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -59,7 +61,8 @@ func (s *Store) Register(ctx context.Context, userID, sessionID string) error {
 	}
 
 	sessionKey := s.sessionKey(sessionID)
-	if err := s.rdb.Set(ctx, sessionKey, userID, s.sessionTTL).Err(); err != nil {
+	// 值同样存归一化后的 ID：Validate 的兜底分支要拿它做字符串比较。
+	if err := s.rdb.Set(ctx, sessionKey, baseservice.CanonicalUserID(userID), s.sessionTTL).Err(); err != nil {
 		return err
 	}
 
@@ -113,7 +116,7 @@ func (s *Store) Validate(ctx context.Context, userID, sessionID string) bool {
 
 	// 兜底：session 键仍存在也视为有效（应对 set/active 过期但 session 键尚在的边界）
 	uid, err := s.rdb.Get(ctx, s.sessionKey(sessionID)).Result()
-	if err == nil && uid == userID {
+	if err == nil && uid == baseservice.CanonicalUserID(userID) {
 		return true
 	}
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -198,9 +201,9 @@ func (s *Store) sessionKey(sessionID string) string {
 }
 
 func (s *Store) userSessionsKey(userID string) string {
-	return fmt.Sprintf("%s:sessions:uid:%s", s.prefix, userID)
+	return fmt.Sprintf("%s:sessions:uid:%s", s.prefix, baseservice.CanonicalUserID(userID))
 }
 
 func (s *Store) activeSessionKey(userID string) string {
-	return fmt.Sprintf("%s:active_session:uid:%s", s.prefix, userID)
+	return fmt.Sprintf("%s:active_session:uid:%s", s.prefix, baseservice.CanonicalUserID(userID))
 }

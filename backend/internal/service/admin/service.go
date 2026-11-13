@@ -210,6 +210,11 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 }
 
 func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string) {
+	// 吊销键必须和中间件读取的那把完全一致：路径参数允许大写/`{}`/`urn:uuid:` 形式，
+	// 而读取方用的是 JWT 里的 canonical uid。不归一化等于写了一把没人读的键——
+	// 接口返回 200，旧 token 却在剩余 TTL 内继续可用。
+	userID = baseservice.CanonicalUserID(userID)
+
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
 			s.LogInternal("revoke all sessions", err, baseservice.UserIDField(userID))

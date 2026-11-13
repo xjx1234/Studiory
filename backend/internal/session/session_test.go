@@ -2,10 +2,12 @@ package session
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -90,6 +92,49 @@ func TestStore_RevokeAll(t *testing.T) {
 	}
 	if store.Validate(ctx, uid, sid1) || store.Validate(ctx, uid, sid2) {
 		t.Fatal("all sessions should be revoked")
+	}
+}
+
+// TestStore_UserIDFormsShareOneKeySpace 验证会话/吊销键不受 UUID 书写形式影响：
+// 登录时用 canonical 形式注册，管理端用大写/花括号/urn 形式吊销，也必须命中同一把键。
+// 修复前 RevokeAll 会对错误形式的键做 SMembers（返回空集），禁用账号表面成功、旧 token 照样能用。
+func TestStore_UserIDFormsShareOneKeySpace(t *testing.T) {
+	uid := uuid.New()
+	canonical := uid.String()
+	forms := []string{
+		canonical,
+		strings.ToUpper(canonical),
+		"{" + canonical + "}",
+		"urn:uuid:" + canonical,
+	}
+
+	for _, multiDevice := range []bool{true, false} {
+		mode := "single-device"
+		if multiDevice {
+			mode = "multi-device"
+		}
+		t.Run(mode, func(t *testing.T) {
+			for _, form := range forms {
+				t.Run(form, func(t *testing.T) {
+					store, _ := testStore(t, multiDevice)
+					ctx := context.Background()
+					sid := NewSessionID()
+
+					if err := store.Register(ctx, canonical, sid); err != nil {
+						t.Fatalf("register: %v", err)
+					}
+					if !store.Validate(ctx, form, sid) {
+						t.Fatalf("Validate(%q) = false, want true：读取方形同不一致", form)
+					}
+					if err := store.RevokeAll(ctx, form); err != nil {
+						t.Fatalf("revoke all: %v", err)
+					}
+					if store.Validate(ctx, canonical, sid) {
+						t.Errorf("RevokeAll(%q) 没有吊销用 canonical 形式注册的会话", form)
+					}
+				})
+			}
+		})
 	}
 }
 

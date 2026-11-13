@@ -2,10 +2,12 @@ package adminservice
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"backend/internal/repo"
+	"backend/internal/session"
 	"backend/internal/testutil"
 	"backend/pkg/errcode"
 	"backend/pkg/pagination"
@@ -149,6 +151,64 @@ func TestSetStatus_DisableRevokesTokens(t *testing.T) {
 	revokeKey := "test:revoke:uid:" + target.ID.String()
 	if !mr.Exists(revokeKey) {
 		t.Fatalf("expected revoke key %s to be set after disabling", revokeKey)
+	}
+}
+
+// TestSetStatus_NonCanonicalUserIDStillRevokes 验证管理员用非 canonical 形式（大写）的 id
+// 禁用用户时，吊销键依然写在 canonical UUID 上——中间件读的是 JWT 里的 canonical uid，
+// 写错形式等于「200 OK 但一个 token 都没吊销」。
+func TestSetStatus_NonCanonicalUserIDStillRevokes(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	target := seedUser(r, repo.RoleUser, repo.StatusActive, "13800000001", time.Now())
+
+	mr, rdb := newRDB(t)
+	sessions := session.NewStore(rdb, "test", true, time.Hour, true)
+	svc := New(r,
+		WithRevokeSupport(rdb, "test", time.Hour),
+		WithSessionStore(sessions),
+	)
+
+	ctx := context.Background()
+	sid := session.NewSessionID()
+	if err := sessions.Register(ctx, target.ID.String(), sid); err != nil {
+		t.Fatalf("register session: %v", err)
+	}
+
+	canonical := target.ID.String()
+	upper := strings.ToUpper(canonical)
+	if upper == canonical {
+		t.Fatal("test precondition broken: uppercase form equals canonical")
+	}
+
+	if _, e := svc.SetStatus(ctx, uuid.New().String(), upper, repo.StatusDisabled); e != nil {
+		t.Fatalf("set status with uppercase id failed: %+v", e)
+	}
+
+	if !mr.Exists("test:revoke:uid:" + canonical) {
+		t.Errorf("expected canonical revoke key test:revoke:uid:%s to be set", canonical)
+	}
+	if mr.Exists("test:revoke:uid:" + upper) {
+		t.Error("revoke key written under the non-canonical form — nobody reads it back")
+	}
+	if sessions.Validate(ctx, canonical, sid) {
+		t.Error("session registered under canonical id survived RevokeAll(non-canonical id)")
+	}
+
+	// 改角色同样要吊销（旧 token 携带旧 role）。
+	other := seedUser(r, repo.RoleUser, repo.StatusActive, "13800000002", time.Now())
+	mr.FlushAll()
+	sid2 := session.NewSessionID()
+	if err := sessions.Register(ctx, other.ID.String(), sid2); err != nil {
+		t.Fatalf("register session: %v", err)
+	}
+	if _, e := svc.UpdateRole(ctx, uuid.New().String(), "{"+other.ID.String()+"}", repo.RoleAdmin); e != nil {
+		t.Fatalf("update role with braced id failed: %+v", e)
+	}
+	if !mr.Exists("test:revoke:uid:" + other.ID.String()) {
+		t.Errorf("role change did not revoke canonical key for %s", other.ID.String())
+	}
+	if sessions.Validate(ctx, other.ID.String(), sid2) {
+		t.Error("role change left the old session alive")
 	}
 }
 

@@ -25,6 +25,9 @@
 | `app:revoke:uid:{user_id}` | string（Unix 时间戳） | 与 Access Token 有效期一致 | 改密或禁用账号后，吊销该用户此前签发的 access token |
 
 - 写入当前时间戳；`Auth` 中间件校验 token 的 `iat` 是否早于该时间戳。
+- `{user_id}` 一律是 canonical UUID 字符串（小写 + 连字符）。写入方是管理员请求里的路径参数，读取方是 JWT `uid` claim，
+  两者形式不同（大写、`{...}`、`urn:uuid:`）时键会对不上：接口照样返回成功，旧 token 却一个都没吊销。
+  归一化在 `service.CanonicalUserID` 一处完成，任何新增的写入/读取方都应先过它。
 - **不再用于普通登出**（登出改为按 session 吊销，见第 7 节），避免多设备模式下误伤其他设备。
 - 改密、后台禁用账号仍会写入该键，作为 access token 的兜底吊销。
 - Redis 故障时按 `auth.redis_fail_open` 策略降级（默认开发 `true`=放行，生产 `false`=拒绝），打 Warn 日志。
@@ -42,6 +45,8 @@
 | `app:active_session:uid:{user_id}` | string（session_id） | 与 Refresh Token 一致 | **单设备模式**：当前唯一有效 session |
 
 - JWT 的 `sid` 声明与 Redis 会话一一对应。
+- `{user_id}` 与第 2 节同样按 canonical UUID 拼键（`session` 包在键构造点统一归一化），
+  所以「用 canonical 形式登录、用大写形式吊销」仍然命中同一把键；`app:session:{id}` 的 value 也存归一化后的 ID。
 - **多设备模式**（`multi_device_enabled=true`，默认）：每次登录新建 session，互不影响；登出仅 `Revoke` 当前 session。
 - **单设备模式**（`multi_device_enabled=false`）：新登录前 `RevokeAll` 并写入新的 `active_session`，旧设备 token 立即失效。
 - `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 是否仍在 Redis 中有效。Session 校验同样按 `auth.redis_fail_open` 策略降级。
@@ -52,11 +57,15 @@
 
 | 键格式 | 类型 | TTL | 说明 |
 |--------|------|-----|------|
-| `app:blacklist:refresh:{sha256_hex}` | string | 与 Refresh Token 有效期一致 | 已失效的 refresh token（登出或轮换后） |
+| `app:blacklist:refresh:{sha256_hex}` | string | 该 token 的剩余有效期（自然过期即回收） | 已失效的 refresh token（登出或轮换后） |
 
 - 键后缀为 refresh token 的 SHA-256 十六进制摘要，避免 key 过长与截断冲突。
 - 登出时：将 token 写入黑名单。
 - 刷新 token 时：先查黑名单；签发新 token 后，将旧 refresh token 加入黑名单（轮换）。
+- TTL 取自 token 自身的 `exp`（并以配置的 `jwt.refresh_ttl` 为上限），不再硬编码 7 天：
+  票一旦自然过期，JWT 解析就会拒绝，黑名单 key 继续留着没有防护价值，只会白占内存。
+- 解析失败（伪造/乱码）或已过期的 token **不写黑名单**：这类票本来就换不到新 token，
+  写进去等于给 `/auth/logout` 一个「随便发垃圾字符串就能堆 key」的内存放大器。
 
 ---
 

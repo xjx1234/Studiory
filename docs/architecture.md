@@ -140,8 +140,10 @@ cd backend && sqlc generate
 
 `POST /api/v1/auth/logout` 需提交 `refresh_token`，服务端会：
 
-1. 将 refresh token 写入 Redis 黑名单（后续 Refresh 拒绝）。
+1. 将 refresh token 写入 Redis 黑名单（后续 Refresh 拒绝），TTL 等于这张票的剩余有效期。
 2. 吊销当前 `sid` 对应 session（**仅当前设备**；多设备下其他设备不受影响）。
+
+伪造/乱码或已过期的 `refresh_token` 是**幂等空操作**：它本来就换不到新 token，服务端不再为它生成黑名单 key。
 
 ### 全端吊销（改密 / 禁用）
 
@@ -162,6 +164,9 @@ cd backend && sqlc generate
 
 ### 行为约定
 
+- **吊销键按 canonical UUID**：`revoke:uid` 与会话键的用户 ID 部分一律先归一化成小写带连字符的 UUID
+  （`service.CanonicalUserID`）。写入方（管理端路径参数）与读取方（JWT claim）形式不一致时，
+  吊销会写成一把没人读的键，表面成功而旧 token 继续可用。
 - **登出失败即报错**：refresh 黑名单或 session 吊销写入失败时返回 `ErrInternal`。
 - **吊销检查 fail-open**：Redis 宕机时 `revoke:uid` / session 检查放行并打 Warn 日志，避免缓存故障拖垮全站鉴权；极高安全需求可自行改为 fail-closed。
 

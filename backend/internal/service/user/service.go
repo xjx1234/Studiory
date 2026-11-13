@@ -185,16 +185,19 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		return errcode.ErrInternal
 	}
 
-	// 改密后吊销该用户所有会话与旧 access token
+	// 改密后吊销该用户所有会话与旧 access token。
+	// 键名一律用 canonical UUID（id.String()）：userID 是 JWT claim 原样传进来的字符串，
+	// 管理员那边用的又是路径参数，两者形式不一致时写出的键没人读，旧 token 会继续存活。
+	revokedUserID := id.String()
 	if s.sessions != nil {
-		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
-			s.LogInternal("ChangePassword revoke all sessions", err, baseservice.UserIDField(userID))
+		if err := s.sessions.RevokeAll(ctx, revokedUserID); err != nil {
+			s.LogInternal("ChangePassword revoke all sessions", err, baseservice.UserIDField(revokedUserID))
 		}
 	}
 	if s.rdb != nil {
-		revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
+		revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, revokedUserID)
 		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
-			s.LogInternal("ChangePassword revoke access tokens", err, baseservice.UserIDField(userID))
+			s.LogInternal("ChangePassword revoke access tokens", err, baseservice.UserIDField(revokedUserID))
 		}
 	}
 
