@@ -6,6 +6,7 @@ sql:
       - "migrations/000001_init_schema.up.sql"
       - "migrations/000002_example_todos.up.sql"
       - "migrations/000003_user_status.up.sql"
+      - "migrations/000004_optimize_indexes.up.sql"
     queries:
       - "internal/repo/sqlc/query"
     gen:
