@@ -10,16 +10,17 @@
 # 退出码 0，不会自己报错，所以必须显式比一次。
 #
 # 实测（2026-11-13，run 43376824593）：GITHUB_ENV 里导出的变量连 `${{ env.* }}` 上下文
-# 都会被改写——Setup Go 之后 `${{ env.GOTOOLCHAIN }}` 取到的是 'local'，
-# 不是 ci.yml workflow 级 env 写的 `go1.26.11+auto`。所以钉扎不从环境变量取，
-# 而是从 backend/go.mod 的 toolchain 行推导（同一份声明，本地/镜像/CI 共用，也改不掉）。
+# 都会被改写——Setup Go 之后 `${{ env.GOTOOLCHAIN }}` 取到的是 'local'。所以 ci.yml
+# 不再声明同名 env（两处声明必然漂移，且 workflow 级那份根本不生效），
+# 钉扎只从 backend/go.mod 的 toolchain 行推导（本地/镜像/CI 共用同一份声明）。
 #
-# 做三件事：
-#   1. 把推导出的钉扎写进 $GITHUB_ENV（同名变量后写覆盖先写），抵消 setup-go 的 local，
+# 做四件事：
+#   1. 拒绝 ci.yml 重新声明 GOTOOLCHAIN——单一来源被破坏时直接失败，而不是静默漂移；
+#   2. 把推导出的钉扎写进 $GITHUB_ENV（同名变量后写覆盖先写），抵消 setup-go 的 local，
 #      恢复升级 action 之前的语义；
-#   2. 按钉扎量一次 `go env GOVERSION`——+auto 需要时会切换/下载，
+#   3. 按钉扎量一次 `go env GOVERSION`——+auto 需要时会切换/下载，
 #      所以这一步同时验证「钉扎版本可达」，量出来的就是后续步骤真正用的版本；
-#   3. 量到的版本低于钉扎就失败并写 annotation（工具链被静默降级必须变红，
+#   4. 量到的版本低于钉扎就失败并写 annotation（工具链被静默降级必须变红，
 #      而不是等 govulncheck 兜底）。
 #
 # 用法：bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh" [pin]
@@ -39,6 +40,18 @@ gomod="$(find_gomod || true)"
 if [ -z "$gomod" ]; then
   echo "::error title=go-toolchain-pin::找不到 go.mod（GITHUB_WORKSPACE=${GITHUB_WORKSPACE:-<未设>}, cwd=$(pwd)），无法推导钉扎版本"
   exit 2
+fi
+
+# ── 单一来源守卫：ci.yml 不允许再声明 GOTOOLCHAIN ────────────────────────────────
+# 同名时 GITHUB_ENV 的写入会覆盖 workflow 级 env，两处声明只会漂移且很难察觉。
+# 只匹配 2-10 空格缩进的 YAML 键，覆盖 workflow(2) / job(6) / step(10) 三级 env；
+# 注释以 # 开头不会命中；run: | 的内容通常更深，且只有整行恰好形如 `GOTOOLCHAIN: 值`
+# 才会误报——真误报也是显式失败，改一下注释措辞即可，不会静默放过。
+if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -f "$GITHUB_WORKSPACE/.github/workflows/ci.yml" ]; then
+  if grep -Eq '^ {2,10}GOTOOLCHAIN:[[:space:]]*[^[:space:]]' "$GITHUB_WORKSPACE/.github/workflows/ci.yml"; then
+    echo "::error title=go-toolchain-pin::ci.yml 又声明了 GOTOOLCHAIN；工具链版本只允许在 backend/go.mod 的 toolchain 行声明，避免 GITHUB_ENV 与 workflow env 两处漂移"
+    exit 2
+  fi
 fi
 
 # ── 钉扎：argv 优先，其次 go.mod 的 toolchain 行，最后退化为 go 行 ────────────────────
