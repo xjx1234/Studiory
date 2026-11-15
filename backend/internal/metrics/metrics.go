@@ -90,8 +90,24 @@ func (m *Metrics) Middleware() gin.HandlerFunc {
 			route = "unmatched"
 		}
 		status := strconv.Itoa(c.Writer.Status())
+		method := normalizeMethod(c.Request.Method)
 
-		m.reqTotal.WithLabelValues(c.Request.Method, route, status).Inc()
-		m.reqDuration.WithLabelValues(c.Request.Method, route, status).Observe(time.Since(start).Seconds())
+		m.reqTotal.WithLabelValues(method, route, status).Inc()
+		m.reqDuration.WithLabelValues(method, route, status).Observe(time.Since(start).Seconds())
+	}
+}
+
+// normalizeMethod 把请求方法收敛到有限集合。
+//
+// HTTP 方法是一个由客户端控制的 token（net/http 只要求它是合法 token），
+// 攻击者可以持续发送自定义方法（如 `FOOBAR /x`）为 method label 制造
+// 无限时间序列。只保留标准方法，其余统一记为 OTHER。
+func normalizeMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace:
+		return method
+	default:
+		return "OTHER"
 	}
 }

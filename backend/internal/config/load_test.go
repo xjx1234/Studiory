@@ -15,6 +15,16 @@ func setEnvs(t *testing.T, envs map[string]string) {
 	}
 }
 
+// mustLoad 调用 Load 并在出错时立即失败。
+func mustLoad(t *testing.T) *Config {
+	t.Helper()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	return cfg
+}
+
 func TestLoad_ReadsFromEnvironmentVariables(t *testing.T) {
 	// 隔离真实 backend/config 目录，避免受本机/CI 上已存在的 yaml 文件影响。
 	t.Setenv("CONFIG_PATH", t.TempDir())
@@ -43,7 +53,7 @@ func TestLoad_ReadsFromEnvironmentVariables(t *testing.T) {
 		"CORS_ALLOW_CREDENTIALS":     "true",
 	})
 
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	if cfg.AppEnv != "development" {
 		t.Errorf("AppEnv = %q, want development", cfg.AppEnv)
@@ -113,7 +123,7 @@ func TestLoad_DatabaseURLFallsBackToComponents(t *testing.T) {
 		"REDIS_PORT":  "6379",
 	})
 
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	want := "postgres://app:s3cr3t@db.internal:5432/appdb?sslmode=require"
 	if cfg.DatabaseURL != want {
@@ -130,7 +140,7 @@ func TestLoad_RedisURLFallsBackToComponents(t *testing.T) {
 		"REDIS_DB":       "3",
 	})
 
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	want := "redis://:r3dis@redis.internal:6379/3"
 	if cfg.RedisURL != want {
@@ -143,7 +153,7 @@ func TestLoad_RateLimitUserPerMinuteFallsBackWhenUnset(t *testing.T) {
 	t.Setenv("RATE_LIMIT_PER_MINUTE", "90")
 	// 不设置 RATE_LIMIT_USER_PER_MINUTE，期望回落到 RATE_LIMIT_PER_MINUTE。
 
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	if cfg.RateLimitUserPerMinute != 90 {
 		t.Errorf("RateLimitUserPerMinute = %d, want 90 (fallback to RateLimitPerMinute)", cfg.RateLimitUserPerMinute)
@@ -171,7 +181,7 @@ database:
 	t.Setenv("CONFIG_PATH", dir)
 	t.Setenv("APP_ENV", "development")
 
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	// local.yaml 优先级最高，应覆盖 development.yaml 和 base.yaml 的同名字段。
 	if cfg.DBHost != "local-host" {
@@ -197,7 +207,7 @@ database:
 	t.Setenv("CONFIG_PATH", dir)
 	t.Setenv("DB_HOST", "env-host")
 
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	if cfg.DBHost != "env-host" {
 		t.Errorf("DBHost = %q, want env-host (环境变量应拥有最高优先级)", cfg.DBHost)
@@ -211,7 +221,7 @@ func TestLoad_TrustedProxies(t *testing.T) {
 		t.Setenv("CONFIG_PATH", t.TempDir())
 		t.Setenv("SERVER_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.10")
 
-		cfg := Load()
+		cfg := mustLoad(t)
 		want := []string{"10.0.0.0/8", "192.168.1.10"}
 		if !equalStringSlices(cfg.ServerTrustedProxies, want) {
 			t.Errorf("ServerTrustedProxies = %v, want %v", cfg.ServerTrustedProxies, want)
@@ -228,7 +238,7 @@ app:
 `)
 		t.Setenv("CONFIG_PATH", dir)
 
-		cfg := Load()
+		cfg := mustLoad(t)
 		want := []string{"10.0.0.0/8", "fd00::/64"}
 		if !equalStringSlices(cfg.ServerTrustedProxies, want) {
 			t.Errorf("ServerTrustedProxies = %v, want %v", cfg.ServerTrustedProxies, want)
@@ -238,7 +248,7 @@ app:
 	t.Run("defaults to trust no proxy", func(t *testing.T) {
 		t.Setenv("CONFIG_PATH", t.TempDir())
 
-		cfg := Load()
+		cfg := mustLoad(t)
 		if len(cfg.ServerTrustedProxies) != 0 {
 			t.Errorf("ServerTrustedProxies = %v, want empty (不信任任何代理)", cfg.ServerTrustedProxies)
 		}
@@ -249,11 +259,38 @@ func TestLoad_DefaultsToDevelopmentWhenAppEnvUnset(t *testing.T) {
 	t.Setenv("CONFIG_PATH", t.TempDir())
 	t.Setenv("APP_ENV", "") // 显式置空，避免受宿主机真实环境变量影响
 
-	cfg := Load()
+	cfg := mustLoad(t)
 
 	if !cfg.IsDev() {
 		t.Errorf("expected IsDev() to be true when APP_ENV is unset, AppEnv = %q", cfg.AppEnv)
 	}
+}
+
+// TestLoad_InvalidYAMLFailsFast 确认语法错误不会再被静默吞掉。
+// base.yaml 与 local.yaml 各自覆盖一次，避免只修了第一层。
+func TestLoad_InvalidYAMLFailsFast(t *testing.T) {
+	t.Run("base.yaml", func(t *testing.T) {
+		dir := t.TempDir()
+		writeYAML(t, dir, "base.yaml", "database: [unclosed\n")
+		t.Setenv("CONFIG_PATH", dir)
+		t.Setenv("APP_ENV", "development")
+
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() should fail on invalid base.yaml, got nil error")
+		}
+	})
+
+	t.Run("local.yaml", func(t *testing.T) {
+		dir := t.TempDir()
+		writeYAML(t, dir, "base.yaml", "app:\n  env: development\n")
+		writeYAML(t, dir, "local.yaml", "app: {env: broken\n")
+		t.Setenv("CONFIG_PATH", dir)
+		t.Setenv("APP_ENV", "development")
+
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() should fail on invalid local.yaml, got nil error")
+		}
+	})
 }
 
 func writeYAML(t *testing.T, dir, filename, content string) {

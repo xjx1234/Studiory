@@ -103,7 +103,8 @@ make run
 ```bash
 # 1. 健康检查
 curl http://localhost:8080/health
-# {"code":0,"message":"ok","data":{"status":"ok"}}
+# {"code":0,"message":"ok","data":{"status":"ok","service":"api","version":"unknown","commit":"unknown","build_time":"unknown"}}
+# 三个构建信息由 -ldflags 注入，未注入时均为 unknown（本地开发正常）
 
 # 2. 发送验证码（开发环境固定返回 123456）
 curl -X POST http://localhost:8080/api/v1/auth/send-code \

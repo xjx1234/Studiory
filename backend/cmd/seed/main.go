@@ -44,7 +44,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg := config.Load()
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "错误：加载配置失败: %v\n", cfgErr)
+		os.Exit(1)
+	}
 	if cfg.DatabaseURL == "" {
 		fmt.Fprintln(os.Stderr, "错误：DATABASE_URL 未配置，请检查 .env 或环境变量")
 		os.Exit(1)

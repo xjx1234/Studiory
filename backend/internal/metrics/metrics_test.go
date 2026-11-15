@@ -101,6 +101,22 @@ func TestMiddleware_SkipsMetricsEndpoint(t *testing.T) {
 	}
 }
 
+func TestMiddleware_NormalizesUnknownMethod(t *testing.T) {
+	m := New()
+	r := newTestRouter(m)
+
+	// 客户端可以发任意合法 token 作为方法；不应原样进入 label。
+	do(r, "FOOBAR", "/ping")
+
+	body := scrape(t, r)
+	if !strings.Contains(body, `http_requests_total{method="OTHER",route="unmatched",status="404"} 1`) {
+		t.Errorf("expected method label collapsed to OTHER, body:\n%s", body)
+	}
+	if strings.Contains(body, `method="FOOBAR"`) {
+		t.Errorf("raw method leaked into metrics labels:\n%s", body)
+	}
+}
+
 func TestRedisCollector(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {

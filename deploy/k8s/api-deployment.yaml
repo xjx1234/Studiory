@@ -87,7 +87,7 @@ spec:
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
-            # distroless 静态二进制，无任何写盘需求（日志写 stdout），根文件系统可只读
+            # 运行时镜像为 alpine（静态链接二进制）；日志写 stdout、不需要写盘，因此根文件系统可只读
             readOnlyRootFilesystem: true
             runAsNonRoot: true
           lifecycle:

@@ -6,7 +6,6 @@
 //   - sendcode.go    验证码生成与下发
 //   - token.go       Token 刷新、登出、登录成功后颁发 Token
 //   - brute_force.go 登录暴力破解防护
-//   - helpers.go     通用小工具函数
 package authservice
 
 import (

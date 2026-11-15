@@ -894,7 +894,7 @@ HEALTHCHECK CMD wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1
 - `CGO_ENABLED=0`：纯静态链接，alpine 也能跑
 - `-trimpath`：去掉编译路径，安全 + 可重现
 - `-s -w`：去符号表 + DWARF，缩小镜像体积
-- `GOTOOLCHAIN=go${GO_VERSION}+auto`：按 go.mod 声明的版本自动切换/下载工具链。当前 go.mod 是 `go 1.26.0` + `toolchain go1.26.11`——前者是语言/依赖下限（`golang.org/x/net ≥ v0.60.0` 要求 go 1.26），后者给出期望的精确补丁版，与 CI 的 workflow 级 `GOTOOLCHAIN: go1.26.11+auto` 对齐。`+auto` 只在需要时向上切换，不会把已装的更新工具链降级。之所以必须跟到 1.26 线：2026-11 一批 net/http、net/textproto、crypto/tls、crypto/x509 漏洞只在 go1.26.9+ 修复，1.25 线已无对应补丁，钉在 1.25 会让 `make vuln`/CI 长期红。注意若本机 `go env GOSUMDB` 为 `off`，自动下载工具链会报 `checksum database disabled by GOSUMDB=off`，需 `go env -w GOSUMDB=sum.golang.org` 或直接安装 Go 1.26+
+- `GOTOOLCHAIN=go${GO_VERSION}+auto`：按 go.mod 声明的版本自动切换/下载工具链。当前 go.mod 是 `go 1.26.0` + `toolchain go1.26.11`——前者是语言/依赖下限（`golang.org/x/net ≥ v0.60.0` 要求 go 1.26），后者给出期望的精确补丁版。CI **不再**声明 workflow 级 `GOTOOLCHAIN`：由 `.github/scripts/check-go-toolchain.sh` 从 `toolchain` 行读取钉扎、写回 `GITHUB_ENV` 后再实测 `go env GOVERSION`，偏低即失败；若 workflow 里重新声明同名变量，脚本会直接报错，避免出现第二份可漂移的来源。`+auto` 只在需要时向上切换，不会把已装的更新工具链降级。之所以必须跟到 1.26 线：2026-11 一批 net/http、net/textproto、crypto/tls、crypto/x509 漏洞只在 go1.26.9+ 修复，1.25 线已无对应补丁，钉在 1.25 会让 `make vuln`/CI 长期红。注意若本机 `go env GOSUMDB` 为 `off`，自动下载工具链会报 `checksum database disabled by GOSUMDB=off`，需 `go env -w GOSUMDB=sum.golang.org` 或直接安装 Go 1.26+
 
 ### 6.2 K8s 部署模板
 

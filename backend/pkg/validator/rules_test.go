@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin/binding"
@@ -59,6 +60,7 @@ func TestStrongPassword_Valid(t *testing.T) {
 		"Password1",
 		"a1b2c3d4",
 		"StrongPass123!",
+		strings.Repeat("a1", 36), // 恰好 72 字节：bcrypt 的上限
 	}
 	for _, pw := range valid {
 		if err := v.Var(pw, "strong_password"); err != nil {
@@ -70,11 +72,12 @@ func TestStrongPassword_Valid(t *testing.T) {
 func TestStrongPassword_Invalid(t *testing.T) {
 	v := engine(t)
 	invalid := []string{
-		"",                  // 空
-		"short1",            // 长度 < 8
-		"alllettersnodigit", // 无数字
-		"12345678",          // 无字母
-		"1234567",           // 太短且无字母
+		"",                             // 空
+		"short1",                       // 长度 < 8
+		"alllettersnodigit",            // 无数字
+		"12345678",                     // 无字母
+		"1234567",                      // 太短且无字母
+		strings.Repeat("a1", 36) + "x", // 73 字节：超过 bcrypt 上限，必须在校验层拦下
 	}
 	for _, pw := range invalid {
 		if err := v.Var(pw, "strong_password"); err == nil {

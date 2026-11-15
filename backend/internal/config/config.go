@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -109,8 +110,14 @@ type Config struct {
 }
 
 // Load 按 base → {env} → local → 环境变量 的顺序加载并合并配置。
-func Load() *Config {
-	v := loadViper()
+//
+// 只有「配置文件不存在」会被忽略（允许完全依赖环境变量）；YAML 语法错误、
+// 读取失败或合并失败都会返回 error，避免带着零值配置静默启动。
+func Load() (*Config, error) {
+	v, err := loadViper()
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := &Config{
 		AppEnv:                  v.GetString("app.env"),
@@ -195,7 +202,7 @@ func Load() *Config {
 		cfg.RateLimitUserPerMinute = cfg.RateLimitPerMinute
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 // Validate 检查启动所需的关键配置，避免生产环境带着不安全默认值运行。
@@ -341,7 +348,7 @@ func (c *Config) IsProd() bool {
 
 // ── 内部 ─────────────────────────────────────────────────────────────────────
 
-func loadViper() *viper.Viper {
+func loadViper() (*viper.Viper, error) {
 	loadDotEnv()
 
 	v := viper.New()
@@ -357,8 +364,10 @@ func loadViper() *viper.Viper {
 	v.SetConfigName("base")
 	v.AddConfigPath(configPath)
 	if err := v.ReadInConfig(); err != nil {
-		// base.yaml 不存在时不中断，继续用空配置
-		_ = err
+		if !isConfigNotFound(err) {
+			return nil, fmt.Errorf("读取 %s: %w", filepath.Join(configPath, "base.yaml"), err)
+		}
+		// base.yaml 不存在时继续：所有配置仍可由环境变量提供
 	}
 
 	// 第二层：合并 {env}.yaml（环境专用配置）
@@ -370,10 +379,14 @@ func loadViper() *viper.Viper {
 	if env == "" {
 		env = "development"
 	}
-	mergeConfig(v, configPath, env)
+	if err := mergeConfig(v, configPath, env); err != nil {
+		return nil, err
+	}
 
 	// 第三层：合并 local.yaml（本地私有，不提交到 git）
-	mergeConfig(v, configPath, "local")
+	if err := mergeConfig(v, configPath, "local"); err != nil {
+		return nil, err
+	}
 
 	// 第四层：环境变量覆盖（点路径 → 下划线大写，如 database.password → DATABASE_PASSWORD）
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
@@ -386,19 +399,36 @@ func loadViper() *viper.Viper {
 	// 而这里的 false 恰好代表「更不安全」。老部署目录里没有该 key 时不能静默降级。
 	v.SetDefault("auth.require_code_for_password_register", true)
 
-	return v
+	return v, nil
 }
 
-// mergeConfig 合并指定名称的 yaml 文件（文件不存在时静默跳过）。
-func mergeConfig(base *viper.Viper, path, name string) {
+// mergeConfig 合并指定名称的 yaml 文件；文件不存在时跳过，其余错误向上返回。
+func mergeConfig(base *viper.Viper, path, name string) error {
 	v := viper.New()
 	v.SetConfigType("yaml")
 	v.SetConfigName(name)
 	v.AddConfigPath(path)
 
-	if err := v.ReadInConfig(); err == nil {
-		_ = base.MergeConfigMap(v.AllSettings())
+	file := filepath.Join(path, name+".yaml")
+	if err := v.ReadInConfig(); err != nil {
+		if isConfigNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("读取 %s: %w", file, err)
 	}
+	if err := base.MergeConfigMap(v.AllSettings()); err != nil {
+		return fmt.Errorf("合并 %s: %w", file, err)
+	}
+	return nil
+}
+
+// isConfigNotFound 判断错误是否为「配置文件不存在」。
+//
+// viper 的 ConfigFileNotFoundError 没有实现 Unwrap(fs.ErrNotExist)，
+// 因此不能用 errors.Is(err, fs.ErrNotExist)，只能按具体类型判断。
+func isConfigNotFound(err error) bool {
+	var notFound viper.ConfigFileNotFoundError
+	return errors.As(err, &notFound)
 }
 
 // bindEnvs 显式绑定关键环境变量，保持与原有 .env 变量名兼容。
