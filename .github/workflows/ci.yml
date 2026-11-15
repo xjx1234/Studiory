@@ -181,3 +181,41 @@ jobs:
 
       - name: Build
         run: go build -o /tmp/app-api .
+
+  # 验证「一键起栈」入口本身可用：Dockerfile、.dockerignore、基础镜像、静态二进制
+  # 与 config/ 的拷贝路径。其余 job 都不构建镜像，Dockerfile 坏掉只能等部署时才发现。
+  # 与其它 job 并行（不设 needs），不进入关键路径；镜像层与 Go 模块走 GHA 缓存。
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: studiory-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test binary startup
+        # 不依赖 DB/Redis：镜像内默认 APP_ENV=production，应在配置校验阶段
+        # 打印「配置错误」并以 1 退出。能同时验证二进制可执行、config/ 已进镜像、
+        # ENTRYPOINT 正确；若哪天配置校验被绕过而进程卡住，这一步会超时报错。
+        run: |
+          set +e
+          out=$(timeout 30 docker run --rm studiory-api:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -ne 1 ] || ! printf '%s' "$out" | grep -q "配置错误"; then
+            echo "::error::image smoke test failed (exit=$code)"
+            exit 1
+          fi
