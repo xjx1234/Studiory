@@ -33,12 +33,21 @@ data:
   RATE_LIMIT_USER_PER_MINUTE: "120"
 
   # 可信反向代理网段（Ingress/nginx 的 Pod 或 Node CIDR）。
-  # 留空 = 不信任任何代理：X-Forwarded-For 被忽略，限流按 TCP 对端计数——
-  # 集群内所有用户会共用 Ingress 那一个桶，因此经 Ingress 暴露时必须按实际 CNI 网段填写。
-  # 反过来说，填 0.0.0.0/0 会让任何人都能伪造 XFF 绕过限流，切勿这么做。
-  # SERVER_TRUSTED_PROXIES: "10.244.0.0/16"
+  #
+  # 这里给出 RFC1918 私网段的可用默认值，保证本示例清单开箱即可用：
+  # 经 Ingress 转发时 TCP 对端是 ingress-nginx 的 Pod（通常落在 CNI Pod 网段，
+  # 如 Flannel 10.244.0.0/16、Calico 默认 192.168.0.0/16、k3s 10.42.0.0/16）。
+  # 信任这些网段后，Gin 才会采纳 XFF，每个真实客户端各自成桶；否则全站共用
+  # Ingress 那一个桶（60/min），高峰期整站 429。
+  #
+  # 公网地址永远不在默认列表里，所以外部客户端无法伪造 XFF 绕过限流。
+  # 生产建议按 `kubectl get pods -n ingress-nginx -o wide` 的实际 CIDR 收窄；
+  # 若 Service 以 NodePort/LoadBalancer 直接暴露给办公网，请去掉 192.168.0.0/16，
+  # 避免内网客户端伪造 XFF。
+  # 切勿写 0.0.0.0/0 —— 那等于信任任何来源，XFF 可被任意伪造。
+  SERVER_TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
-  # Metrics
+  # Metrics：/metrics 需要 Bearer token，对应 Secret 里的 METRICS_TOKEN
   METRICS_ENABLED: "true"
 
   # CORS（按实际前端域名修改，敏感度低但非默认值）

@@ -233,8 +233,30 @@ kubectl apply -f deploy/k8s/pdb.yaml
 
 - **经典 Prometheus**（`kubernetes_sd_configs`）：`api-deployment.yaml` 的 Pod template 已经带了
   `prometheus.io/scrape`、`prometheus.io/port`、`prometheus.io/path` annotation，配合对应的 relabel 规则即可自动发现。
+  但 `METRICS_ENABLED=true` 时 `/metrics` 需要 Bearer token，annotation 本身不携带凭据，scrape_config 必须补上鉴权：
+
+  ```yaml
+  scrape_configs:
+    - job_name: studiory-api
+      kubernetes_sd_configs: [{ role: pod }]
+      authorization:
+        type: Bearer
+        credentials_file: /etc/prometheus/secrets/metrics-token   # 内容即 METRICS_TOKEN
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: "true"
+  ```
+
+  也可以改用 `bearer_token_file`；两种写法都需要把 Secret 里的 `METRICS_TOKEN` 挂进 Prometheus。
+
+  > ⚠️ `secret.example.yaml` 里的 `METRICS_TOKEN` 是公开的占位值，必须在部署前替换。
+  > 示例 [`ingress.yaml`](../deploy/k8s/ingress.yaml) 以 `path: /` 转发全部路径，`/metrics` 也会被暴露到公网；
+  > 未替换 token 之前，建议在 Ingress 层单独 deny `/metrics`，或把 Ingress 收敛为只转发 `/api`。
+
 - **Prometheus Operator**：应用 [`service-monitor.yaml`](../deploy/k8s/service-monitor.yaml)（需要集群已安装
-  `ServiceMonitor` CRD）：
+  `ServiceMonitor` CRD）。该文件已声明 `bearerTokenSecret` 指向 `studiory-api-secret` 的 `METRICS_TOKEN`，
+  与 Secret 模板、启动校验三处使用同一个键名：
 
 ```bash
 kubectl apply -f deploy/k8s/service-monitor.yaml
@@ -246,8 +268,8 @@ kubectl apply -f deploy/k8s/service-monitor.yaml
 
 | 来源 | 文件 | 存放内容 | 更新方式 |
 |------|------|----------|----------|
-| **ConfigMap** | [`configmap.yaml`](../deploy/k8s/configmap.yaml) | 非敏感配置：`APP_ENV`、`LOG_FORMAT`、`CORS_ALLOW_ORIGINS`、`RATE_LIMIT_*` 等 | `kubectl apply -f` |
-| **Secret** | [`secret.example.yaml`](../deploy/k8s/secret.example.yaml) | 敏感信息：`DATABASE_URL`、`REDIS_URL`、`JWT_SECRET` 等 | 复制为 `secret.yaml` 编辑后 apply |
+| **ConfigMap** | [`configmap.yaml`](../deploy/k8s/configmap.yaml) | 非敏感配置：`APP_ENV`、`LOG_FORMAT`、`CORS_ALLOW_ORIGINS`、`RATE_LIMIT_*`、`SERVER_TRUSTED_PROXIES` 等 | `kubectl apply -f` |
+| **Secret** | [`secret.example.yaml`](../deploy/k8s/secret.example.yaml) | 敏感信息：`DATABASE_URL`、`REDIS_URL`、`JWT_SECRET`、`METRICS_TOKEN`、`OAUTH_*` 等 | 复制为 `secret.yaml` 编辑后 apply |
 
 ```bash
 kubectl apply -f deploy/k8s/configmap.yaml
@@ -292,22 +314,38 @@ kubectl apply -f deploy/k8s/ingress.yaml
 
 #### 让应用认识真实客户端 IP（`SERVER_TRUSTED_PROXIES`）
 
-Gin 默认信任所有代理，本项目已改为按 `SERVER_TRUSTED_PROXIES` 收紧：**不配置时不信任任何代理**，
+Gin 默认信任所有代理，本项目已改为按 `SERVER_TRUSTED_PROXIES` 收紧：不配置时**不信任任何代理**，
 `X-Forwarded-For` 被完全忽略，IP 限流与访问日志只认 TCP 对端地址。这在直连场景是安全的，
 但经 Ingress 转发时所有请求的对端都是 Ingress Pod，用户会共用同一个限流桶（启动日志会给出 Warn）。
 
-因此经 Ingress 暴露时必须把代理来源网段配进 ConfigMap：
+示例 ConfigMap 因此**预置了一组可用默认值**，而不是留空：
 
 ```yaml
 # deploy/k8s/configmap.yaml
 data:
-  SERVER_TRUSTED_PROXIES: "10.244.0.0/16"   # ingress-nginx / Pod 所在 CIDR，按实际 CNI 填写
+  SERVER_TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+```
+
+选择理由：
+
+- **为什么给默认值而不是设为必填**：设为必填会让"照抄清单部署"重新变成启动失败或全站单桶，
+  与本模板"开箱可跑"的目标冲突；而写死某个 CNI 网段（如 `10.244.0.0/16`）只对 Flannel 成立，
+  Calico 默认的 `192.168.0.0/16`、k3s 的 `10.42.0.0/16` 都会落空。
+- **为什么是 RFC1918 而不是 `0.0.0.0/0`**：公网来源永远不在列表里，外部客户端无法通过伪造
+  `X-Forwarded-For` 绕过限流——这正是原始漏洞的利用面；私网段覆盖了常见 CNI 的 Pod/Node 地址。
+- **代价**：如果 TCP 对端落在私网（例如办公网直连 NodePort），该客户端仍可伪造 XFF。
+  生产应把列表收窄到真实代理网段来消除这一点：
+
+```yaml
+# 例：只看 ingress-nginx 的 Pod CIDR
+SERVER_TRUSTED_PROXIES: "10.244.0.0/16"
 ```
 
 填写原则：只写真正可控的代理地址（CNI Pod/Node CIDR 或上游 LB 的 IP 段）。
 切勿写 `0.0.0.0/0` —— 那等于把 Gin 的出厂隐患放回来，任何人都能用一个请求头指定自己的限流桶。
-ingress-nginx 默认会把真实客户端写入 `X-Forwarded-For`，因此 Ingress 侧无需额外 annotations；
-改完记得 `kubectl rollout restart deployment/studiory-api`。
+ingress-nginx 默认会把真实客户端追加进 `X-Forwarded-For`，Gin 从右向左跳过可信代理后取到的
+就是真实客户端，因此 Ingress 侧无需额外 annotations；改完记得
+`kubectl rollout restart deployment/studiory-api`。
 
 ### 部署步骤（示例）
 
@@ -325,6 +363,9 @@ kubectl apply -f deploy/k8s/configmap.yaml
 
 # 3. 创建 Secret（勿提交真实 secret.yaml）
 cp deploy/k8s/secret.example.yaml secret.yaml
+# 必须替换其中的占位值：JWT_SECRET、METRICS_TOKEN（可用 `openssl rand -hex 32` 生成）、
+# DATABASE_URL、REDIS_URL，以及 ConfigMap 的 OAUTH_PROVIDERS 中每个渠道对应的凭据。
+# 不需要某个 OAuth 渠道时，从 configmap.yaml 的 OAUTH_PROVIDERS 里移除它即可。
 # 编辑 secret.yaml 后：
 kubectl apply -f secret.yaml
 

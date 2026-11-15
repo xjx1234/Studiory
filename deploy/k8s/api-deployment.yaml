@@ -21,6 +21,9 @@ spec:
       annotations:
         # 供未使用 Prometheus Operator 的经典 Prometheus（kubernetes_sd_configs）直接发现抓取；
         # 使用 Prometheus Operator 的话改用 service-monitor.yaml，两者不必同时启用。
+        # 注意：METRICS_ENABLED=true 时 /metrics 需要 Bearer token，经典 Prometheus 的
+        # scrape_config 必须额外配置 authorization.credentials（或 bearer_token_file）指向
+        # Secret 里的 METRICS_TOKEN；只有下面这些 annotation 会拿到 401。
         prometheus.io/scrape: "true"
         prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
