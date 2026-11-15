@@ -189,7 +189,8 @@ components:
           - grant_type=password：phone / email 二选一（同时提供或都不提供返回 20001），
             并且必须先调 /api/v1/auth/send-code 拿到验证码，把 code 一起提交（校验通过才建号）。
             关闭该前置校验需要 auth.require_code_for_password_register=false，生产环境启动校验会拒绝。
-          - grant_type=code：code_type + 对应标识 + code 必填。
+          - grant_type=code：code_type + 对应标识 + code 必填；同样只允许一个标识
+            （验证码只证明其中一个渠道的归属，另一个会被原样写入账号）。
         顺序是「先验码、后查重」，因此响应不会泄露某个手机号/邮箱是否已注册。
       properties:
         grant_type:
@@ -370,7 +371,7 @@ paths:
         '400':
           description: |
             参数不合法（code 20001 err_bad_request / 20002 err_validation）或验证码错误（code 10005 err_invalid_code）。
-            password grant 缺少 code、同时给出 phone 与 email 或两者都缺，都会落在这里。
+            两种 grant 同时给出 phone 与 email 或两者都缺、password grant 缺少 code，都会落在这里。
           content:
             application/json:
               schema:

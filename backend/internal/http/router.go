@@ -18,7 +18,10 @@ import (
 
 // NewRouter 构建 Gin 路由，挂载全局中间件与所有路由分组。
 //
-// 中间件顺序：RequestID → … → Safe → RateLimit(IP) → CORS
+// 中间件顺序：RequestID → … → Safe → CORS → RateLimit(IP)
+// CORS 必须在限流之前：429/503 也是浏览器要读的响应，缺了 Access-Control-Allow-Origin
+// 前端只会看到 CORS 报错，看不到「请求过于频繁」或「服务不可用」。
+// 预检 OPTIONS 由 CORS 直接 204 结束，不会被计入 IP 限流。
 // 已鉴权分组额外挂载 UserRateLimit(user_id)，在 Auth 之后执行。
 func NewRouter(deps *Deps) (*gin.Engine, error) {
 	if err := validateDeps(deps); err != nil {
@@ -51,11 +54,12 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	}))
 	r.Use(ginzap.RecoveryWithZap(zap.L(), true))
 	r.Use(middleware.Safe())
-	r.Use(deps.RateLimitMiddleware)
+	// CORS 先于限流：让 429/503 也带上跨域头；预检在这里直接结束，不占用限流配额。
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowOrigins:     deps.Cfg.CORSAllowOrigins,
 		AllowCredentials: deps.Cfg.CORSAllowCredentials,
 	}))
+	r.Use(deps.RateLimitMiddleware)
 
 	registerHealthRoutes(r, deps)
 

@@ -113,6 +113,33 @@ func TestRegisterWithCode_Success(t *testing.T) {
 	}
 }
 
+// TestRegisterWithCode_RejectsSecondIdentifier 验证码注册也只允许一个标识：
+// 验证码只能证明其中一个渠道的归属，另一个会被原样写进账号，
+// 否则「用自己的手机号收码 + 填受害者的邮箱」仍然可以抢注邮箱。
+func TestRegisterWithCode_RejectsSecondIdentifier(t *testing.T) {
+	_, rdb := newTestRDB(t)
+	svc := registerSvc(t, rdb)
+	fakeRepo := svc.users.(*testutil.FakeUserRepo)
+
+	if e := svc.SendCode(context.Background(), "sms", "13900000005"); e != nil {
+		t.Fatalf("SendCode failed: %+v", e)
+	}
+
+	_, e := svc.Register(context.Background(), &RegisterInput{
+		GrantType: "code",
+		CodeType:  "sms",
+		Phone:     "13900000005",
+		Email:     "victim@example.com",
+		Code:      MockVerificationCode,
+	})
+	if e != errcode.ErrBadRequest {
+		t.Fatalf("expected ErrBadRequest, got %+v", e)
+	}
+	if len(fakeRepo.Created) != 0 {
+		t.Fatalf("expected no user created, got %d", len(fakeRepo.Created))
+	}
+}
+
 // TestRegisterWithCode_InvalidCode 验证错误验证码被拒绝。
 func TestRegisterWithCode_InvalidCode(t *testing.T) {
 	_, rdb := newTestRDB(t)

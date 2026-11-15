@@ -93,18 +93,14 @@ var (
 	errInvalidEmailTarget = errors.New("invalid email target")
 )
 
-// Validate 补齐绑定标签表达不了的跨字段规则（密码注册）。
+// Validate 补齐绑定标签表达不了的跨字段规则（两种注册 grant 都适用）。
 //
 //   - 至少要有一个标识：两者皆空会注册出「无法登录、无法找回」的僵尸账号；
-//   - 密码注册只允许一个标识：只校验其中一个的话，另一个就是未验证的悬空地址；
+//   - 只允许一个标识：验证码仅证明其中一个的归属，另一个会被原样存入账号；
 //   - code_type 若显式传入，必须与实际填写的标识一致，否则等于对着没填的渠道验码。
 //
 // 安全兜底在 service 层（authservice.registrationTarget 同样会拒掉），这里只是更早、更便宜的 400。
 func (r *RegisterReq) Validate() error {
-	if r.GrantType != "password" {
-		return nil
-	}
-
 	switch {
 	case r.Phone == "" && r.Email == "":
 		return errRegisterNeedsIdentifier
@@ -123,8 +119,8 @@ func (r *RegisterReq) Validate() error {
 }
 
 var (
-	errRegisterNeedsIdentifier  = errors.New("password register requires phone or email")
-	errRegisterSingleIdentifier = errors.New("password register accepts either phone or email")
+	errRegisterNeedsIdentifier  = errors.New("register requires phone or email")
+	errRegisterSingleIdentifier = errors.New("register accepts either phone or email")
 	errRegisterCodeTypeMismatch = errors.New("code_type does not match the submitted identifier")
 )
 

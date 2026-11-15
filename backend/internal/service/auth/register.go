@@ -141,11 +141,17 @@ func (s *AuthServiceImpl) verifyRegistrationOwnership(ctx context.Context, input
 
 // registrationTarget 推断本次注册要校验的验证码类型与目标。
 //
-//   - grant_type=code：沿用显式 code_type（历史上允许「两个标识都填、只验其中一个」，保持不变）。
+//   - grant_type=code：沿用显式 code_type，但同样只允许一个标识——验证码只能证明其中一个的归属，
+//     另一个若被原样存下，就等于允许「用自己收到的码 + 别人的邮箱/手机号」抢注。
 //   - 其他（密码注册）：只允许一个标识，验证码类型由它推断——避免「手机号验了、邮箱悬空」，
 //     也保证「没填任何标识」直接被拒（否则能注册出一个既不能登录也找不回密码的账号）。
 func registrationTarget(input *RegisterInput) (codeType, target string, e *errcode.Error) {
 	if input.GrantType == "code" {
+		// 只允许一个标识：验证码只证明其中一个的归属，另一个会被原样存进账号。
+		// 不拦的话，「用自己的手机号收码 + 填受害者的邮箱」仍然可以抢占邮箱。
+		if input.Phone != "" && input.Email != "" {
+			return "", "", errcode.ErrBadRequest
+		}
 		switch input.CodeType {
 		case "sms":
 			if input.Phone == "" {

@@ -28,7 +28,15 @@
 | Provider | 渠道 | 说明 |
 |----------|------|------|
 | `MockProvider` | 全部 | 只打日志，不真实发送，开发/测试默认 |
-| `SMTPProvider` | email | 基于标准库 `net/smtp` 的可用邮件实现 |
+| `SMTPProvider` | email | 基于标准库 `net/smtp`，带连接超时、整体 deadline 与 STARTTLS 约束 |
+
+### SMTPProvider 的连接与 TLS 约束
+
+`/api/v1/auth/send-code` 是同步调用 `Provider.Send`，所以 `net/smtp.SendMail` 那种「无超时」的写法会把请求 goroutine 一直挂在慢连接上。`SMTPProvider` 显式处理三件事：
+
+- **建连超时** 5s（`net.Dialer.Timeout`），**整体 deadline** 10s，并收敛到 `ctx` 更早的 deadline；
+- **ctx 取消立即打断阻塞读写**：`context.AfterFunc` 在取消时把连接 deadline 拉到当前时刻；
+- **有凭据时强制 STARTTLS**：`username` 非空但服务端未声明 STARTTLS 时直接报错，避免 `net/smtp` 明文提交邮箱密码。未配置凭据（内网中继）时允许明文，此时没有可泄漏的认证信息。
 
 ## 配置（SMTP，可选）
 

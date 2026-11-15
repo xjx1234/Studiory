@@ -571,8 +571,8 @@ return count
   ├── Ginzap              ← 结构化访问日志（request_id + user_id）
   ├── Recovery            ← panic 恢复
   ├── Safe                ← Body 2MB 上限（MaxBytesReader）；Bind 已写响应时只做兜底，不二次写
+  ├── CORS                ← 跨域；先于限流，保证 429/503 也带 ACAO，预检 204 不计配额
   ├── RateLimit(IP)       ← 公开路由按客户端 IP 限流（IP 只在 TCP 对端属于 trusted_proxies 时才取 XFF）
-  ├── CORS                ← 跨域
   │
   └── [路由分组]
         ├── /api/v1/auth/*        ← 无需鉴权

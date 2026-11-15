@@ -168,7 +168,7 @@ cd backend && sqlc generate
   （`service.CanonicalUserID`）。写入方（管理端路径参数）与读取方（JWT claim）形式不一致时，
   吊销会写成一把没人读的键，表面成功而旧 token 继续可用。
 - **登出失败即报错**：refresh 黑名单或 session 吊销写入失败时返回 `ErrInternal`。
-- **吊销检查 fail-open**：Redis 宕机时 `revoke:uid` / session 检查放行并打 Warn 日志，避免缓存故障拖垮全站鉴权；极高安全需求可自行改为 fail-closed。
+- **吊销检查的 Redis 故障策略可配**：由 `auth.redis_fail_open` 决定。开发默认 `true`（Redis 宕机时 `revoke:uid` / session 检查放行并打 Warn，避免缓存故障拖垮本地调试）；生产在 `config.Validate()` 中强制为 `false`（fail-closed，宁可 503 也不放行无法确认的 token）。
 
 Redis 键说明见 [redis-keys.md](redis-keys.md) 第 2、7 节。
 
@@ -191,7 +191,9 @@ Redis 键说明见 [redis-keys.md](redis-keys.md) 第 2、7 节。
 
 ## 中间件顺序
 
-`RequestID` → `I18n` → `Zap` → `Recovery` → `Safe` → `RateLimit(IP)` → `CORS` → 路由级 `Auth` → `RateLimit(user_id)` → `RequireRole`。
+`RequestID` → `Metrics` → `SecurityHeaders` → `I18n` → `Zap` → `Recovery` → `Safe` → `CORS` → `RateLimit(IP)` → 路由级 `Auth` → `RateLimit(user_id)` → `RequireRole`。
+
+`CORS` 必须在 `RateLimit` 之前：429/503 也是浏览器要读取的响应，缺少 `Access-Control-Allow-Origin` 时前端只能看到 CORS 报错；预检 `OPTIONS` 由 CORS 直接 204 结束，不占用 IP 限流配额。
 
 ## 健康检查
 

@@ -108,7 +108,7 @@ curl http://localhost:8080/health
 # 2. 发送验证码（开发环境固定返回 123456）
 curl -X POST http://localhost:8080/api/v1/auth/send-code \
   -H "Content-Type: application/json" \
-  -d '{"code_type":"sms","target":"13800138000"}'
+  -d '{"type":"sms","target":"13800138000"}'
 
 # 3. 验证码登录
 curl -X POST http://localhost:8080/api/v1/auth/login \
