@@ -20,6 +20,12 @@ auth:
   mock_code_enabled: false
   multi_device_enabled: true   # 高安全场景可改为 false
   redis_fail_open: false       # 生产默认安全优先（Redis故障时拒绝请求）；可用性优先可改为 true 或设 AUTH_REDIS_FAIL_OPEN=true
+  # 验证码渠道：留空 = 自动按已配置 Provider 推导（只接 SMTP 时自动禁用 sms）。
+  # 明确要「只允许邮件」时可写 [email]，此时若未配置 SMTP 会启动失败。
+  code_channels: []
+  # 滚动 24 小时验证码下发上限；生产必须 > 0（成本保护）
+  code_daily_limit_per_target: 10
+  code_daily_limit_per_ip: 100
 
 oauth:
   dev_mode: false

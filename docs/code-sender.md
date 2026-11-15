@@ -16,12 +16,25 @@
 ## 下发流程（SendCode）
 
 ```
-冷却限频(SetNX) → 生成验证码 → 写 Redis(5min) → Router.Send → 选渠道 Provider 依次尝试
+目标日配额 → IP 日配额 → 60s 冷却（同一段 Lua 原子判定）
+  → 生成验证码 → 写 Redis(5min) → Router.Send → 选渠道 Provider 依次尝试
 ```
 
+- 配额与冷却：滚动 24 小时按目标（默认 10 次）与按 IP（默认 100 次）计数，超出返回 429；
+  冷却中的请求不消耗配额。计数与判定在同一个 Lua 脚本里完成，并发请求不会同时穿透。
 - 验证码生成：开发模式（`auth.mock_code_enabled=true`）用固定 `123456` 便于联调；否则生成 6 位 `crypto/rand` 随机码，**rand 失败时返回错误而非回退固定码**。
-- 下发失败：清除冷却键与验证码，允许用户立即重试。
+- 下发失败：清除冷却键与验证码，允许用户立即重试；配额计数保留，避免用「失败重试」绕过上限。
 - 故障转移：同一渠道的多个 Provider 按注册顺序尝试，任一成功即返回；全部失败才报错。
+- 指标：`auth_code_send_total{channel,outcome}`，`channel` 仅 `sms` / `email` / `unknown`，
+  `outcome` 为 `sent` / `cooldown` / `target_quota` / `ip_quota` /
+  `unsupported_channel` / `invalid_request` / `storage_error` / `dispatch_error`。
+
+## 渠道配置（auth.code_channels）
+
+- 留空（默认）：启动时按已接入的 Provider 自动推导。只配了 SMTP 时 `sms` 自动禁用，
+  请求短信返回 `400`（提示「该验证码渠道暂不可用」），不会出现「启动正常、运行期 500」。
+- 显式配置：`auth.code_channels: [email]` 等；列出的渠道必须有 Provider，否则**启动失败**（fail fast），
+  避免把不可用的渠道暴露给调用方。
 
 ## 内置参考实现
 
@@ -82,4 +95,4 @@ providers = append(providers,
 ## 测试
 
 - `internal/sender/sender_test.go`：渠道路由、故障转移、全部失败、无 Provider、mock 行为。
-- `internal/service/auth/sendcode_test.go`：SendCode 生成并下发、随机码、冷却限频、下发失败回滚。
+- `internal/service/auth/sendcode_test.go`：SendCode 生成并下发、随机码、冷却限频、目标/IP 日配额、渠道白名单、下发失败回滚、指标 outcome。

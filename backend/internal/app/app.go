@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"backend/internal/auth"
 	"backend/internal/config"
@@ -97,8 +99,11 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 	sessionStore := session.NewStore(rdb, cfg.RedisKeyPrefix, cfg.AuthMultiDeviceEnabled, tokenIssuer.RefreshTokenTTL(), cfg.AuthRedisFailOpen)
 
 	// 可观测：装配 Prometheus 指标（在 app 层注册 collector，保持 handler 不碰基础设施）。
-	var metricsMiddleware gin.HandlerFunc
-	var metricsHandler http.Handler
+	var (
+		metricsMiddleware gin.HandlerFunc
+		metricsHandler    http.Handler
+		codeObserver      authservice.CodeSendObserver
+	)
 	if cfg.MetricsEnabled {
 		m := metrics.New()
 		if pool != nil {
@@ -110,9 +115,16 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		m.Registerer().MustRegister(metrics.NewRedisCollector(rdb))
 		metricsMiddleware = m.Middleware()
 		metricsHandler = m.Handler()
+		codeObserver = m
 	}
 
 	codeSender, err := buildCodeSender(cfg, logger)
+	if err != nil {
+		storage.Close()
+		_ = rdb.Close()
+		return nil, err
+	}
+	codeChannels, err := resolveCodeChannels(cfg, codeSender, logger)
 	if err != nil {
 		storage.Close()
 		_ = rdb.Close()
@@ -131,6 +143,9 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 			authservice.WithCodePrefix(cfg.RedisKeyPrefix),
 			authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
 			authservice.WithCodeSender(codeSender),
+			authservice.WithCodeChannels(codeChannels),
+			authservice.WithCodeQuota(cfg.AuthCodeDailyLimitPerTarget, cfg.AuthCodeDailyLimitPerIP),
+			authservice.WithCodeSendObserver(codeObserver),
 			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
 			authservice.WithOAuthProviders(cfg.OAuthProviders),
 			authservice.WithOAuthVerifier(buildOAuthVerifier(cfg, logger)),
@@ -227,7 +242,7 @@ func redisReadyCheck(rdb redis.UniversalClient) func(ctx context.Context) error 
 // 生产环境（APP_ENV=production）必须配置至少一个真实 Provider（SMTP 或短信），
 // 否则返回 error 让调用方决定如何处理——避免在装配阶段调用 logger.Fatal
 // 导致资源未清理（PG pool、Redis conn 等已创建但无法 Close）。
-func buildCodeSender(cfg *config.Config, logger *zap.Logger) (sender.Sender, error) {
+func buildCodeSender(cfg *config.Config, logger *zap.Logger) (*sender.Router, error) {
 	var providers []sender.Provider
 
 	// 邮件：配置了 SMTP 即启用真实邮件下发
@@ -252,6 +267,65 @@ func buildCodeSender(cfg *config.Config, logger *zap.Logger) (sender.Sender, err
 	}
 
 	return sender.NewRouter(logger, providers...), nil
+}
+
+// resolveCodeChannels 决定哪些渠道对业务可见。
+//
+// 语义：
+//   - auth.code_channels 为空（默认）：自动按已有 Provider 推导。只接了 SMTP 时 sms 自动禁用，
+//     避免「启动成功、运行期请求 sms 得到 500」；同时打 Warn 提醒运维。
+//   - auth.code_channels 显式配置：每个渠道都必须有 Provider，否则启动失败（fail fast）。
+//
+// 这样默认行为不破坏「只配 SMTP」的既有部署，而需要严格约束的部署可以显式声明。
+func resolveCodeChannels(cfg *config.Config, router *sender.Router, logger *zap.Logger) ([]string, error) {
+	supported := make(map[string]struct{}, len(sender.AllChannels))
+	for _, ch := range router.Channels() {
+		supported[string(ch)] = struct{}{}
+	}
+
+	if len(cfg.AuthCodeChannels) > 0 {
+		out := make([]string, 0, len(cfg.AuthCodeChannels))
+		seen := make(map[string]struct{}, len(cfg.AuthCodeChannels))
+		for _, raw := range cfg.AuthCodeChannels {
+			ch := strings.ToLower(strings.TrimSpace(raw))
+			if _, dup := seen[ch]; dup {
+				continue
+			}
+			if _, ok := supported[ch]; !ok {
+				return nil, fmt.Errorf("auth.code_channels 配置了渠道 %q，但没有可用的 Provider（当前可用：%s）",
+					ch, strings.Join(channelNames(router.Channels()), ", "))
+			}
+			seen[ch] = struct{}{}
+			out = append(out, ch)
+		}
+		return out, nil
+	}
+
+	out := channelNames(router.Channels())
+	if len(out) == 0 {
+		return nil, errors.New("没有任何可用的验证码下发渠道")
+	}
+	if !containsString(out, string(sender.ChannelSMS)) {
+		logger.Warn("短信渠道未配置服务商，已自动禁用 sms；如需启用请接入短信 Provider 或在 auth.code_channels 中显式声明")
+	}
+	return out, nil
+}
+
+func channelNames(channels []sender.Channel) []string {
+	out := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		out = append(out, string(ch))
+	}
+	return out
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 // buildOAuthVerifier 按配置装配第三方登录 token 校验器。

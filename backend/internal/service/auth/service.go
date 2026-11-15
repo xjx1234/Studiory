@@ -27,9 +27,15 @@ import (
 type Service interface {
 	Login(ctx context.Context, req *auth.LoginRequest) (*auth.LoginResult, *errcode.Error)
 	Register(ctx context.Context, input *RegisterInput) (*auth.LoginResult, *errcode.Error)
-	SendCode(ctx context.Context, codeType, target string) *errcode.Error
+	// SendCode 下发验证码。clientIP 用于按 IP 的日配额；为空时跳过该维度（测试/本地调试）。
+	SendCode(ctx context.Context, codeType, target, clientIP string) *errcode.Error
 	Refresh(ctx context.Context, refreshToken string) (*auth.TokenPair, *errcode.Error)
 	Logout(ctx context.Context, refreshToken string) *errcode.Error
+}
+
+// CodeSendObserver 记录验证码下发结果，用于指标与告警（由 metrics 包实现）。
+type CodeSendObserver interface {
+	ObserveCodeSend(channel, outcome string)
 }
 
 // AuthServiceImpl 持有 repo 与 redis，实现业务逻辑。
@@ -49,6 +55,13 @@ type AuthServiceImpl struct {
 	oauthDevMode          bool
 	oauthProviders        map[string]struct{}
 	failOpen              bool // Redis故障时鉴权策略：true=放行（可用性优先）；false=拒绝（安全性优先）
+
+	// codeChannels 允许下发的渠道白名单；nil = 不限制（未注入时的兼容行为）。
+	codeChannels map[string]struct{}
+	// codeDailyLimitPerTarget / codeDailyLimitPerIP 是滚动 24 小时配额；<=0 表示关闭。
+	codeDailyLimitPerTarget int
+	codeDailyLimitPerIP     int
+	codeObserver            CodeSendObserver
 
 	// requireCodeForPasswordRegister 密码注册是否必须带一次性验证码（证明手机号/邮箱归属）。
 	// 默认 true；关闭只适合无公网注册入口的开发/内网部署，production 由配置校验强制为 true。
@@ -112,6 +125,40 @@ func WithRequireCodeForPasswordRegister(enabled bool) Option {
 func WithCodeSender(snd sender.Sender) Option {
 	return func(s *AuthServiceImpl) {
 		s.codeSender = snd
+	}
+}
+
+// WithCodeChannels 设置允许下发的渠道白名单（sms/email）。
+// 传入空表示不限制——只应在测试中依赖该行为，生产装配总会传入非空集合。
+func WithCodeChannels(channels []string) Option {
+	return func(s *AuthServiceImpl) {
+		if len(channels) == 0 {
+			return
+		}
+		set := make(map[string]struct{}, len(channels))
+		for _, ch := range channels {
+			ch = strings.ToLower(strings.TrimSpace(ch))
+			if ch != "" {
+				set[ch] = struct{}{}
+			}
+		}
+		s.codeChannels = set
+	}
+}
+
+// WithCodeQuota 设置验证码下发的滚动 24 小时上限；<=0 表示关闭该维度。
+// 两个维度都在同一个 Lua 脚本里判断，避免并发请求同时通过配额检查。
+func WithCodeQuota(perTarget, perIP int) Option {
+	return func(s *AuthServiceImpl) {
+		s.codeDailyLimitPerTarget = perTarget
+		s.codeDailyLimitPerIP = perIP
+	}
+}
+
+// WithCodeSendObserver 注入下发结果观察者（指标）。
+func WithCodeSendObserver(observer CodeSendObserver) Option {
+	return func(s *AuthServiceImpl) {
+		s.codeObserver = observer
 	}
 }
 

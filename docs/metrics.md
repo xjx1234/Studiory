@@ -31,6 +31,17 @@ metrics:
 
 > `route` 用**路由模板**（如 `/api/v1/user/todos/:id`）而非真实路径，未匹配路由统一记为 `unmatched`，避免 label 基数爆炸。
 
+### 验证码下发
+
+| 指标 | 类型 | label | 说明 |
+|------|------|-------|------|
+| `auth_code_send_total` | counter | `channel`, `outcome` | 验证码下发次数 |
+
+- `channel`：`sms` / `email` / `unknown`（请求体里的其它值统一归为 `unknown`，避免标签基数无上限）。
+- `outcome`：`sent` / `cooldown` / `target_quota` / `ip_quota` / `unsupported_channel` /
+  `invalid_request` / `storage_error` / `dispatch_error`。
+- 只在 `metrics.enabled=true` 时装配；关闭指标时会传 nil observer，业务逻辑不受影响。
+
 ### PostgreSQL 连接池（pgxpool）
 
 | 指标 | 类型 | 说明 |
@@ -71,6 +82,9 @@ histogram_quantile(0.99,
 # 平均延迟
 sum(rate(http_request_duration_seconds_sum[5m]))
   / sum(rate(http_request_duration_seconds_count[5m]))
+
+# 验证码下发结果分布（定位配额/冷却/下发失败）
+sum by (channel, outcome) (rate(auth_code_send_total[5m]))
 
 # PG 连接池占用率
 pgxpool_acquired_conns / pgxpool_max_conns

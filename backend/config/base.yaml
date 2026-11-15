@@ -53,6 +53,15 @@ auth:
   # true（默认）：防止抢注他人号码，也防止把 /register 当成「号码是否已注册」的枚举接口。
   # false 只适合不对公网开放注册的部署；production 环境启动会拒绝 false。
   require_code_for_password_register: true
+  # 允许下发验证码的渠道白名单（sms、email），逗号分隔。
+  # 留空 = 自动按已配置的 Provider 推导：只接了 SMTP 时自动禁用 sms，
+  # 请求 sms 会得到 400（提示「该验证码渠道暂不可用」），而不是运行期 500。
+  # 显式配置时，列出的每个渠道都必须有 Provider，否则启动失败。
+  code_channels: []
+  # 验证码下发的滚动 24 小时上限（成本保护）。
+  # 按目标（手机号/邮箱）与按 IP 各计一次；<=0 关闭该维度，production 启动校验要求 > 0。
+  code_daily_limit_per_target: 10
+  code_daily_limit_per_ip: 100
 
 # 验证码下发（SMTP 邮件，可选）。host 为空则不启用，回退到 mock。
 # 短信运营商在 internal/app/app.go 的 buildCodeSender 中按需接入。

@@ -35,6 +35,9 @@ other = "You cannot perform this operation on yourself"
 [err_invalid_code]
 other = "Invalid or expired verification code"
 
+[err_code_channel_unavailable]
+other = "This verification channel is unavailable, please choose another way"
+
 [err_unsupported_grant]
 other = "Unsupported grant type"
 

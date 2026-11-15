@@ -88,6 +88,9 @@
 | `AUTH_MULTI_DEVICE_ENABLED` | `true` | 否 | `true`=多设备同时在线；`false`=单设备（新登录踢掉旧会话） |
 | `AUTH_REDIS_FAIL_OPEN` | `true`（生产 `false`） | 否 | Redis 故障时鉴权策略：`true`=放行（可用性优先）；`false`=拒绝（安全性优先）。生产环境默认 fail-closed |
 | `AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER` | `true` | 否 | 密码注册（`grant_type=password`）是否必须先通过一次性验证码，证明持有该手机号/邮箱。`true`（默认，生产强制）：注册即归属证明，同时消除 `/register` 的账号存在性枚举 oracle；`false`：回到「只凭账号+密码就能建号」的旧行为，号码可被抢注，仅适合不对公网开放注册的部署，**production 启动校验会直接拒绝** |
+| `AUTH_CODE_CHANNELS` | 空（自动） | 否 | 允许下发验证码的渠道白名单，逗号分隔（`sms,email`）。空=自动按已配置的 Provider 推导：只接 SMTP 时自动禁用 `sms`，请求短信得到 400 而不是运行期 500。显式配置时每个渠道都必须有 Provider，否则启动失败 |
+| `AUTH_CODE_DAILY_LIMIT_PER_TARGET` | `10` | 否 | 同一手机号/邮箱在滚动 24 小时内的下发上限（成本保护）。`<=0` 关闭该维度，**production 启动校验要求 > 0** |
+| `AUTH_CODE_DAILY_LIMIT_PER_IP` | `100` | 否 | 同一客户端 IP 在滚动 24 小时内的下发上限（所有渠道共用）。`<=0` 关闭该维度，**production 启动校验要求 > 0** |
 
 ---
 
@@ -159,6 +162,8 @@
 | `JWT_SECRET` | 默认值是公开的开发密钥，必须替换为强随机字符串（≥32 字节） |
 | `AUTH_MOCK_CODE_ENABLED` | 必须为 `false`，否则任何人可用 `123456` 登录 |
 | `AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER` | 必须保持 `true`（默认）：关掉后密码注册不校验手机号/邮箱归属，攻击者可抢注他人号码，`/register` 还会变成账号存在性查询接口；production 启动校验会拒绝 `false` |
+| `AUTH_CODE_DAILY_LIMIT_PER_TARGET` / `..._PER_IP` | 必须 > 0（默认 10 / 100）：这是短信/邮件成本保护；关闭后单 IP 每分钟可对 60 个不同号码发码 |
+| `AUTH_CODE_CHANNELS` | 可选。留空时按已有 Provider 自动推导；显式写 `sms` 但未接入短信 Provider 会导致启动失败 |
 | `OAUTH_DEV_MODE` | 必须为 `false`，否则可绕过第三方 token 校验 |
 | `OAUTH_GOOGLE_CLIENT_ID` | 启用 google 登录时必填；未配置时 google 登录直接拒绝（`ErrNotConfigured`），生产启动时强制校验 |
 | `OAUTH_APPLE_CLIENT_ID` | 启用 apple 登录时必填 |

@@ -75,6 +75,14 @@ type Config struct {
 	// 默认 true；设为 false 会重新引入「抢注他人号码」和「用 /register 枚举已注册账号」两个问题，
 	// 因此 production 环境启动校验会拒绝 false。
 	AuthRequireCodeForPasswordRegister bool
+	// AuthCodeChannels 允许下发验证码的渠道白名单（sms/email）。
+	// 空 = 自动按已配置的 Provider 推导：未接入短信时自动禁用 sms，避免「启动成功但短信全 500」。
+	// 显式配置时每个渠道都必须有 Provider，否则启动失败。
+	AuthCodeChannels []string
+	// AuthCodeDailyLimitPerTarget / AuthCodeDailyLimitPerIP 是验证码下发的滚动 24 小时上限。
+	// <=0 表示关闭该维度（便于本地/测试）；production 启动校验要求两者都 > 0。
+	AuthCodeDailyLimitPerTarget int
+	AuthCodeDailyLimitPerIP     int
 
 	// ── 验证码下发（SMTP 邮件，可选）────────────────────────────────────────
 	// SMTPHost 为空时不启用 SMTP Provider；短信服务商按需在 app 层接入。
@@ -156,6 +164,9 @@ func Load() (*Config, error) {
 		AuthRedisFailOpen:      v.GetBool("auth.redis_fail_open"),
 		// 安全默认值：老配置里没有这个 key 时必须保持「要求验证码」，不能因为缺省而静默降级
 		AuthRequireCodeForPasswordRegister: v.GetBool("auth.require_code_for_password_register"),
+		AuthCodeChannels:                   getStringSlice(v, "auth.code_channels"),
+		AuthCodeDailyLimitPerTarget:        v.GetInt("auth.code_daily_limit_per_target"),
+		AuthCodeDailyLimitPerIP:            v.GetInt("auth.code_daily_limit_per_ip"),
 
 		SMTPHost:     v.GetString("smtp.host"),
 		SMTPPort:     v.GetInt("smtp.port"),
@@ -235,6 +246,13 @@ func (c *Config) Validate() error {
 	if err := validateTrustedProxies(c.ServerTrustedProxies); err != nil {
 		return err
 	}
+	for _, ch := range c.AuthCodeChannels {
+		switch strings.ToLower(strings.TrimSpace(ch)) {
+		case "sms", "email":
+		default:
+			return fmt.Errorf("auth.code_channels 包含不支持的渠道 %q（可选 sms、email）", ch)
+		}
+	}
 	if c.DatabaseURL == "" {
 		return errors.New("database.url 不能为空")
 	}
@@ -256,6 +274,14 @@ func (c *Config) Validate() error {
 		}
 		if !c.AuthRequireCodeForPasswordRegister {
 			return errors.New("production 环境必须要求密码注册通过验证码（auth.require_code_for_password_register=true）")
+		}
+		// 滚动 24 小时的验证码下发配额是成本保护：生产环境不允许关闭，
+		// 否则单 IP 每分钟可对 60 个不同号码发码，短信账单不可控。
+		if c.AuthCodeDailyLimitPerTarget <= 0 {
+			return errors.New("production 环境必须设置 auth.code_daily_limit_per_target > 0（建议 10）")
+		}
+		if c.AuthCodeDailyLimitPerIP <= 0 {
+			return errors.New("production 环境必须设置 auth.code_daily_limit_per_ip > 0（建议 100）")
 		}
 		if c.OAuthDevMode {
 			return errors.New("production 环境不能启用 oauth.dev_mode")
@@ -399,6 +425,11 @@ func loadViper() (*viper.Viper, error) {
 	// 而这里的 false 恰好代表「更不安全」。老部署目录里没有该 key 时不能静默降级。
 	v.SetDefault("auth.require_code_for_password_register", true)
 
+	// 验证码下发配额：默认 10 次/目标、100 次/IP（滚动 24 小时）。
+	// 老配置目录没有这些 key 时也必须生效，否则升级后配额形同虚设。
+	v.SetDefault("auth.code_daily_limit_per_target", 10)
+	v.SetDefault("auth.code_daily_limit_per_ip", 100)
+
 	return v, nil
 }
 
@@ -469,6 +500,9 @@ func bindEnvs(v *viper.Viper) {
 		"auth.multi_device_enabled":               "AUTH_MULTI_DEVICE_ENABLED",
 		"auth.redis_fail_open":                    "AUTH_REDIS_FAIL_OPEN",
 		"auth.require_code_for_password_register": "AUTH_REQUIRE_CODE_FOR_PASSWORD_REGISTER",
+		"auth.code_channels":                      "AUTH_CODE_CHANNELS",
+		"auth.code_daily_limit_per_target":        "AUTH_CODE_DAILY_LIMIT_PER_TARGET",
+		"auth.code_daily_limit_per_ip":            "AUTH_CODE_DAILY_LIMIT_PER_IP",
 		"smtp.host":                               "SMTP_HOST",
 		"smtp.port":                               "SMTP_PORT",
 		"smtp.username":                           "SMTP_USERNAME",

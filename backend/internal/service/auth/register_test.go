@@ -95,7 +95,7 @@ func TestRegisterWithCode_Success(t *testing.T) {
 	svc := registerSvc(t, rdb)
 
 	// 先发送验证码（mock fallback → 固定码 123456）
-	if e := svc.SendCode(context.Background(), "email", "newuser@example.com"); e != nil {
+	if e := svc.SendCode(context.Background(), "email", "newuser@example.com", ""); e != nil {
 		t.Fatalf("SendCode failed: %+v", e)
 	}
 
@@ -121,7 +121,7 @@ func TestRegisterWithCode_RejectsSecondIdentifier(t *testing.T) {
 	svc := registerSvc(t, rdb)
 	fakeRepo := svc.users.(*testutil.FakeUserRepo)
 
-	if e := svc.SendCode(context.Background(), "sms", "13900000005"); e != nil {
+	if e := svc.SendCode(context.Background(), "sms", "13900000005", ""); e != nil {
 		t.Fatalf("SendCode failed: %+v", e)
 	}
 
@@ -145,7 +145,7 @@ func TestRegisterWithCode_InvalidCode(t *testing.T) {
 	_, rdb := newTestRDB(t)
 	svc := registerSvc(t, rdb)
 
-	if e := svc.SendCode(context.Background(), "sms", "13900000004"); e != nil {
+	if e := svc.SendCode(context.Background(), "sms", "13900000004", ""); e != nil {
 		t.Fatalf("SendCode failed: %+v", e)
 	}
 
@@ -166,7 +166,7 @@ func TestRegisterWithCode_LocksAfterTooManyFailures(t *testing.T) {
 	svc := registerSvc(t, rdb)
 	phone := "13900000010"
 
-	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+	if e := svc.SendCode(context.Background(), "sms", phone, ""); e != nil {
 		t.Fatalf("SendCode failed: %+v", e)
 	}
 
@@ -211,7 +211,7 @@ func TestRegisterWithCode_ClearsCounterOnSuccess(t *testing.T) {
 	svc := registerSvc(t, rdb)
 	phone := "13900000011"
 
-	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+	if e := svc.SendCode(context.Background(), "sms", phone, ""); e != nil {
 		t.Fatalf("SendCode failed: %+v", e)
 	}
 
@@ -392,7 +392,7 @@ func TestRegisterWithPassword_ConsumesCodeOnce(t *testing.T) {
 	fakeRepo := svc.users.(*testutil.FakeUserRepo)
 	const phone = "13900000023"
 
-	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+	if e := svc.SendCode(context.Background(), "sms", phone, ""); e != nil {
 		t.Fatalf("SendCode failed: %+v", e)
 	}
 	key := svc.codeRedisKey("sms", phone)

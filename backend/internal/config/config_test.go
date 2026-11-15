@@ -77,6 +77,8 @@ func TestValidateAccepts32ByteJWTSecretInProduction(t *testing.T) {
 		AuthMockCodeEnabled:     false,
 
 		AuthRequireCodeForPasswordRegister: true,
+		AuthCodeDailyLimitPerTarget:        10,
+		AuthCodeDailyLimitPerIP:            100,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -143,6 +145,29 @@ func prodBaseConfig() Config {
 		AuthMockCodeEnabled:     false,
 		// 默认安全值（base.yaml 里就是 true）：关掉它会让密码注册回到「不验归属」的旧行为。
 		AuthRequireCodeForPasswordRegister: true,
+		// 生产必须开启验证码下发配额（成本保护），默认值与 base.yaml 一致。
+		AuthCodeDailyLimitPerTarget: 10,
+		AuthCodeDailyLimitPerIP:     100,
+	}
+}
+
+// TestValidateRejectsDisabledCodeQuotaInProduction 生产环境不允许关闭验证码下发配额：
+// 否则单个 IP 每分钟可对 60 个不同号码发码，短信账单不可控。
+func TestValidateRejectsDisabledCodeQuotaInProduction(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"target quota", func(c *Config) { c.AuthCodeDailyLimitPerTarget = 0 }},
+		{"ip quota", func(c *Config) { c.AuthCodeDailyLimitPerIP = -1 }},
+	}
+
+	for _, tc := range cases {
+		cfg := prodBaseConfig()
+		tc.mutate(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected disabled %s to be rejected in production", tc.name)
+		}
 	}
 }
 

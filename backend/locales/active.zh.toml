@@ -35,6 +35,9 @@ other = "不能对自己执行该操作"
 [err_invalid_code]
 other = "验证码错误或已过期"
 
+[err_code_channel_unavailable]
+other = "该验证码渠道暂不可用，请更换登录方式"
+
 [err_unsupported_grant]
 other = "不支持的登录方式"
 

@@ -20,7 +20,7 @@ import (
 type fakeAuthService struct {
 	loginFn    func(ctx context.Context, req *auth.LoginRequest) (*auth.LoginResult, *errcode.Error)
 	registerFn func(ctx context.Context, in *authservice.RegisterInput) (*auth.LoginResult, *errcode.Error)
-	sendCodeFn func(ctx context.Context, codeType, target string) *errcode.Error
+	sendCodeFn func(ctx context.Context, codeType, target, clientIP string) *errcode.Error
 	refreshFn  func(ctx context.Context, refreshToken string) (*auth.TokenPair, *errcode.Error)
 	logoutFn   func(ctx context.Context, refreshToken string) *errcode.Error
 }
@@ -48,9 +48,9 @@ func (f *fakeAuthService) Register(ctx context.Context, in *authservice.Register
 	return defaultLoginResult(), nil
 }
 
-func (f *fakeAuthService) SendCode(ctx context.Context, codeType, target string) *errcode.Error {
+func (f *fakeAuthService) SendCode(ctx context.Context, codeType, target, clientIP string) *errcode.Error {
 	if f.sendCodeFn != nil {
-		return f.sendCodeFn(ctx, codeType, target)
+		return f.sendCodeFn(ctx, codeType, target, clientIP)
 	}
 	return nil
 }

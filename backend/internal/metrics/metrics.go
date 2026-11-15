@@ -28,6 +28,8 @@ type Metrics struct {
 	reqTotal    *prometheus.CounterVec
 	reqDuration *prometheus.HistogramVec
 	inFlight    prometheus.Gauge
+
+	codeSendTotal *prometheus.CounterVec
 }
 
 // New 创建 Metrics，注册 Go runtime / process 默认采集器与 HTTP 指标。
@@ -53,9 +55,18 @@ func New() *Metrics {
 			Name: "http_requests_in_flight",
 			Help: "当前正在处理的 HTTP 请求数。",
 		}),
+		codeSendTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "auth_code_send_total",
+			Help: "验证码下发次数（按渠道与结果）。channel 取值：sms/email/unknown（请求体里的其它值统一归为 unknown）；outcome 取值：sent/cooldown/target_quota/ip_quota/unsupported_channel/invalid_request/storage_error/dispatch_error。",
+		}, []string{"channel", "outcome"}),
 	}
-	reg.MustRegister(m.reqTotal, m.reqDuration, m.inFlight)
+	reg.MustRegister(m.reqTotal, m.reqDuration, m.inFlight, m.codeSendTotal)
 	return m
+}
+
+// ObserveCodeSend 记录一次验证码下发结果（实现 authservice.CodeSendObserver）。
+func (m *Metrics) ObserveCodeSend(channel, outcome string) {
+	m.codeSendTotal.WithLabelValues(channel, outcome).Inc()
 }
 
 // Registerer 返回底层注册表，供注册自定义 Collector（pgxpool / Redis）。

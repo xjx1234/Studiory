@@ -80,6 +80,18 @@ func NewRouter(logger *zap.Logger, providers ...Provider) *Router {
 	return r
 }
 
+// Channels 返回当前至少有一个 Provider 的渠道（按 AllChannels 顺序）。
+// 启动阶段用它推导「实际可用渠道」，避免把未接运营商的渠道暴露给调用方。
+func (r *Router) Channels() []Channel {
+	out := make([]Channel, 0, len(r.byChannel))
+	for _, ch := range AllChannels {
+		if len(r.byChannel[ch]) > 0 {
+			out = append(out, ch)
+		}
+	}
+	return out
+}
+
 // Send 选择对应渠道的 Provider 依次尝试，任一成功即返回；全部失败返回最后一个错误。
 func (r *Router) Send(ctx context.Context, msg Message) error {
 	providers := r.byChannel[msg.Channel]

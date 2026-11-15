@@ -205,7 +205,7 @@ func TestCodeLoginClearsCounterOnSuccess(t *testing.T) {
 	}
 
 	// 先发送验证码（mock fallback → 固定码 123456）
-	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+	if e := svc.SendCode(context.Background(), "sms", phone, ""); e != nil {
 		t.Fatalf("SendCode failed: %+v", e)
 	}
 
@@ -219,7 +219,7 @@ func TestCodeLoginClearsCounterOnSuccess(t *testing.T) {
 	mr.FastForward(codeSendCooldown + time.Second)
 
 	// 再次发送验证码（前一次已被 verifyCode 消费）
-	if e := svc.SendCode(context.Background(), "sms", phone); e != nil {
+	if e := svc.SendCode(context.Background(), "sms", phone, ""); e != nil {
 		t.Fatalf("second SendCode failed: %+v", e)
 	}
 

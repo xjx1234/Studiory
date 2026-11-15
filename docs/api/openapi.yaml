@@ -460,6 +460,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UnifiedResponse'
+        '400':
+          description: >-
+            参数错误（code 20001）。包括 type 不是 sms/email、target 与 type 不匹配，或该渠道在当前部署中未启用
+            （例如只配置了 SMTP、未接入短信 Provider 时请求 sms，返回本地化提示「该验证码渠道暂不可用」，
+            而不是运行期 500）。
+        '429':
+          description: >-
+            触发限流（code 20003）：60 秒内重复请求同一目标；或超过滚动 24 小时配额
+            （同一目标默认 10 次、同一 IP 默认 100 次）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
 
   /api/v1/auth/refresh:
     post:

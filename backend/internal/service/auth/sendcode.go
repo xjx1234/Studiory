@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"backend/internal/sender"
@@ -17,6 +18,8 @@ import (
 const (
 	codeExpiry       = 5 * time.Minute
 	codeSendCooldown = 60 * time.Second
+	// codeQuotaWindow 是下发配额的统计窗口（滚动窗口，从首次下发开始计时）。
+	codeQuotaWindow = 24 * time.Hour
 
 	// verifyCodeLua 原子校验验证码：匹配则删除并返回 1；key 不存在返回 -1；不匹配返回 0。
 	verifyCodeLua = `
@@ -30,38 +33,127 @@ if val == ARGV[1] then
 end
 return 0
 `
+
+	// sendCodeQuotaLua 原子完成「目标配额 → IP 配额 → 冷却 → 计数」四步，避免并发请求
+	// 同时通过检查导致配额被击穿，也避免先占冷却再因配额拒绝而白占 60 秒。
+	// KEYS: 1=目标配额键 2=IP 配额键 3=冷却键
+	// ARGV: 1=目标上限 2=IP 上限 3=配额窗口(ms) 4=冷却窗口(ms)；上限 < 0 表示跳过该维度
+	// 返回: >=1 成功；-1 目标配额用尽；-2 IP 配额用尽；-3 冷却中
+	sendCodeQuotaLua = `
+local targetLimit = tonumber(ARGV[1])
+if targetLimit >= 0 then
+    local used = tonumber(redis.call('GET', KEYS[1]) or '0')
+    if used >= targetLimit then
+        return -1
+    end
+end
+local ipLimit = tonumber(ARGV[2])
+if ipLimit >= 0 then
+    local used = tonumber(redis.call('GET', KEYS[2]) or '0')
+    if used >= ipLimit then
+        return -2
+    end
+end
+if not redis.call('SET', KEYS[3], '1', 'NX', 'PX', ARGV[4]) then
+    return -3
+end
+if targetLimit >= 0 then
+    local n = redis.call('INCR', KEYS[1])
+    if n == 1 then
+        redis.call('PEXPIRE', KEYS[1], ARGV[3])
+    end
+end
+if ipLimit >= 0 then
+    local n = redis.call('INCR', KEYS[2])
+    if n == 1 then
+        redis.call('PEXPIRE', KEYS[2], ARGV[3])
+    end
+end
+return 1
+`
+)
+
+// 下发结果标签（指标 auth_code_send_total 的 outcome 维度，必须是有限集合）。
+const (
+	codeOutcomeSent               = "sent"
+	codeOutcomeCooldown           = "cooldown"
+	codeOutcomeTargetQuota        = "target_quota"
+	codeOutcomeIPQuota            = "ip_quota"
+	codeOutcomeUnsupportedChannel = "unsupported_channel"
+	codeOutcomeInvalidRequest     = "invalid_request"
+	codeOutcomeStorageError       = "storage_error"
+	codeOutcomeDispatchError      = "dispatch_error"
 )
 
 // SendCode 生成验证码、写入 Redis，并通过下发器（多服务商路由）发送。
 //
-// 流程：冷却限频 → 生成验证码 → 写 Redis → 经 codeSender 下发。
-// 下发失败时清除冷却键，允许用户立即重试。
-func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string) *errcode.Error {
+// 流程：目标/IP 日配额 → 冷却限频 → 生成验证码 → 写 Redis → 经 codeSender 下发。
+// 配额与冷却在同一个 Lua 脚本里原子判定；下发失败时清除冷却与验证码，允许用户立即重试
+// （配额已计入，避免用「失败重试」绕过上限）。
+func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, clientIP string) *errcode.Error {
+	codeType = strings.ToLower(strings.TrimSpace(codeType))
+	target = strings.TrimSpace(target)
+
 	if codeType == "" || target == "" {
+		s.observeCodeSend(codeType, codeOutcomeInvalidRequest)
 		return errcode.ErrBadRequest
 	}
+	if !s.codeChannelAllowed(codeType) {
+		s.observeCodeSend(codeType, codeOutcomeUnsupportedChannel)
+		return errcode.ErrBadRequest.WithMessage("err_code_channel_unavailable")
+	}
 
-	cooldownKey := s.codeCooldownKey(codeType, target)
-	ok, err := s.cache.SetNX(ctx, cooldownKey, "1", codeSendCooldown)
+	targetLimit := int64(s.codeDailyLimitPerTarget)
+	if targetLimit <= 0 {
+		targetLimit = -1 // 关闭该维度
+	}
+	ipLimit := int64(s.codeDailyLimitPerIP)
+	if ipLimit <= 0 || clientIP == "" {
+		ipLimit = -1
+	}
+
+	result, err := s.cache.Eval(ctx, sendCodeQuotaLua,
+		[]string{
+			s.codeQuotaKey(codeType, target),
+			s.codeIPQuotaKey(clientIP),
+			s.codeCooldownKey(codeType, target),
+		},
+		targetLimit, ipLimit,
+		int64(codeQuotaWindow/time.Millisecond),
+		int64(codeSendCooldown/time.Millisecond),
+	)
 	if err != nil {
-		s.LogInternal("SendCode set cooldown", err,
+		s.observeCodeSend(codeType, codeOutcomeStorageError)
+		s.LogInternal("SendCode quota check", err,
 			zap.String("code_type", codeType),
 			baseservice.TargetField(target),
 		)
 		return errcode.ErrInternal
 	}
-	if !ok {
+
+	switch result {
+	case int64(-1):
+		s.observeCodeSend(codeType, codeOutcomeTargetQuota)
+		return errcode.ErrTooManyRequests
+	case int64(-2):
+		s.observeCodeSend(codeType, codeOutcomeIPQuota)
+		return errcode.ErrTooManyRequests
+	case int64(-3):
+		s.observeCodeSend(codeType, codeOutcomeCooldown)
 		return errcode.ErrTooManyRequests
 	}
 
+	cooldownKey := s.codeCooldownKey(codeType, target)
 	code, codeErr := s.generateCode()
 	if codeErr != nil {
+		s.observeCodeSend(codeType, codeOutcomeStorageError)
 		_ = s.cache.Del(ctx, cooldownKey)
 		return codeErr
 	}
 
 	key := s.codeRedisKey(codeType, target)
 	if err := s.cache.Set(ctx, key, code, codeExpiry); err != nil {
+		s.observeCodeSend(codeType, codeOutcomeStorageError)
 		s.LogInternal("SendCode set code", err,
 			zap.String("code_type", codeType),
 			baseservice.TargetField(target),
@@ -76,6 +168,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 			Target:  target,
 			Code:    code,
 		}); err != nil {
+			s.observeCodeSend(codeType, codeOutcomeDispatchError)
 			s.LogInternal("SendCode dispatch", err,
 				zap.String("code_type", codeType),
 				baseservice.TargetField(target),
@@ -86,7 +179,34 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target string)
 		}
 	}
 
+	s.observeCodeSend(codeType, codeOutcomeSent)
 	return nil
+}
+
+func (s *AuthServiceImpl) observeCodeSend(channel, outcome string) {
+	if s.codeObserver != nil {
+		s.codeObserver.ObserveCodeSend(codeChannelLabel(channel), outcome)
+	}
+}
+
+// codeChannelLabel 把渠道标签收敛到有限集合。
+// codeType 来自请求体，在渠道校验之前就可能被记录（invalid_request / unsupported_channel），
+// 直接当标签会引入基数无上限的指标；与 HTTP method 归一化同理。
+func codeChannelLabel(channel string) string {
+	switch channel {
+	case string(sender.ChannelSMS), string(sender.ChannelEmail):
+		return channel
+	default:
+		return "unknown"
+	}
+}
+
+func (s *AuthServiceImpl) codeChannelAllowed(codeType string) bool {
+	if s.codeChannels == nil {
+		return true // 未注入白名单（测试/兼容），保持旧行为
+	}
+	_, ok := s.codeChannels[codeType]
+	return ok
 }
 
 // generateCode 生成验证码。
@@ -141,4 +261,14 @@ func (s *AuthServiceImpl) codeRedisKey(codeType, target string) string {
 
 func (s *AuthServiceImpl) codeCooldownKey(codeType, target string) string {
 	return fmt.Sprintf("%s:%s:cooldown:%s", s.codePrefix, codeType, target)
+}
+
+// codeQuotaKey 是「按目标」的 24 小时下发计数器。
+func (s *AuthServiceImpl) codeQuotaKey(codeType, target string) string {
+	return fmt.Sprintf("%s:%s:quota:%s", s.codePrefix, codeType, target)
+}
+
+// codeIPQuotaKey 是「按 IP」的 24 小时下发计数器，所有渠道共用（防止换渠道绕过）。
+func (s *AuthServiceImpl) codeIPQuotaKey(clientIP string) string {
+	return fmt.Sprintf("%s:code:quota:ip:%s", s.codePrefix, clientIP)
 }

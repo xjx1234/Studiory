@@ -204,7 +204,8 @@ func (h *AuthHandler) SendCode(c *gin.Context) {
 		return
 	}
 
-	e := h.deps.AuthService.SendCode(c.Request.Context(), req.Type, req.Target)
+	// c.ClientIP() 已按 trusted_proxies 还原，作为按 IP 日配额的维度。
+	e := h.deps.AuthService.SendCode(c.Request.Context(), req.Type, req.Target, c.ClientIP())
 	if e != nil {
 		resp.Fail(c, e)
 		return
