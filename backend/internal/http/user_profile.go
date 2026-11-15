@@ -91,7 +91,7 @@ func (h *UserProfileHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	e := h.deps.UserService.ChangePassword(c.Request.Context(), userID, &userservice.ChangePasswordInput{
+	revoked, e := h.deps.UserService.ChangePassword(c.Request.Context(), userID, &userservice.ChangePasswordInput{
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
 	})
@@ -100,5 +100,7 @@ func (h *UserProfileHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	resp.OK(c, nil)
+	// 密码已修改；sessions_revoked=false 表示旧会话/令牌的吊销未完成（Redis 异常），
+	// 前端应提示用户「其他设备可能仍在线」并建议稍后重试或联系运维。
+	resp.OK(c, gin.H{"sessions_revoked": revoked})
 }

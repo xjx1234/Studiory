@@ -42,7 +42,9 @@ type ChangePasswordInput struct {
 type Service interface {
 	GetProfile(ctx context.Context, userID string) (*ProfileResult, *errcode.Error)
 	UpdateProfile(ctx context.Context, userID string, in *UpdateProfileInput) (*ProfileResult, *errcode.Error)
-	ChangePassword(ctx context.Context, userID string, in *ChangePasswordInput) *errcode.Error
+	// ChangePassword 修改密码。返回的 bool 表示「旧会话与 access token 是否已成功吊销」：
+	// 密码本身已落库，因此 Redis 异常时仍返回成功，但调用方需要据此提示用户/运维。
+	ChangePassword(ctx context.Context, userID string, in *ChangePasswordInput) (bool, *errcode.Error)
 }
 
 type userServiceImpl struct {
@@ -144,64 +146,70 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 	return toProfileResult(updated), nil
 }
 
-func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in *ChangePasswordInput) *errcode.Error {
+func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in *ChangePasswordInput) (bool, *errcode.Error) {
 	if in == nil || in.OldPassword == "" || in.NewPassword == "" {
-		return errcode.ErrBadRequest
+		return false, errcode.ErrBadRequest
 	}
 
 	id, e := baseservice.ParseUUID(userID)
 	if e != nil {
-		return e
+		return false, e
 	}
 
 	user, err := s.users.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
-			return errcode.ErrNotFound
+			return false, errcode.ErrNotFound
 		}
 		s.LogInternal("ChangePassword lookup user", err, baseservice.UserIDField(userID))
-		return errcode.ErrInternal
+		return false, errcode.ErrInternal
 	}
 
 	if user.PasswordHash == nil || *user.PasswordHash == "" {
-		return errcode.ErrInvalidCredentials
+		return false, errcode.ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(in.OldPassword)); err != nil {
-		return errcode.ErrWrongPassword
+		return false, errcode.ErrWrongPassword
 	}
 
 	if in.NewPassword == in.OldPassword {
-		return errcode.ErrSamePassword
+		return false, errcode.ErrSamePassword
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		s.LogInternal("ChangePassword hash new password", err, baseservice.UserIDField(userID))
-		return errcode.ErrInternal
+		return false, errcode.ErrInternal
 	}
 
 	if _, err := s.users.UpdatePassword(ctx, id, string(hash)); err != nil {
 		s.LogInternal("ChangePassword update password", err, baseservice.UserIDField(userID))
-		return errcode.ErrInternal
+		return false, errcode.ErrInternal
 	}
 
 	// 改密后吊销该用户所有会话与旧 access token。
 	// 键名一律用 canonical UUID（id.String()）：userID 是 JWT claim 原样传进来的字符串，
 	// 管理员那边用的又是路径参数，两者形式不一致时写出的键没人读，旧 token 会继续存活。
+	//
+	// 吊销失败不回滚密码（已经落库），但必须把「未完成」告诉调用方：
+	// 否则用户以为所有设备都已踢下线，实际旧 token 还能用到自然过期。
 	revokedUserID := id.String()
+	revoked := true
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, revokedUserID); err != nil {
+			revoked = false
 			s.LogInternal("ChangePassword revoke all sessions", err, baseservice.UserIDField(revokedUserID))
 		}
 	}
 	if s.rdb != nil {
 		revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, revokedUserID)
 		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
+			revoked = false
 			s.LogInternal("ChangePassword revoke access tokens", err, baseservice.UserIDField(revokedUserID))
 		}
 	}
 
-	return nil
+	return revoked, nil
 }
 
 func toProfileResult(u *repo.User) *ProfileResult {

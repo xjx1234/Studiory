@@ -30,6 +30,9 @@ type UserItem struct {
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+	// SessionsRevoked 仅在「改角色 / 禁用」的响应中出现（omitempty）：
+	// true=旧会话与 access token 已吊销；false=更新已生效但吊销未完成（Redis 异常）。
+	SessionsRevoked *bool `json:"sessions_revoked,omitempty"`
 }
 
 // ListInput 用户列表查询入参。
@@ -168,9 +171,11 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 	// 角色变更后立即吊销该用户所有旧 access token，使旧角色即时失效。
 	// 与 SetStatus 禁用行为保持一致：权限变更必须立即生效，
 	// 否则被降权用户的旧 token 在剩余 TTL 内仍携带旧 role。
-	s.revokeAccessTokens(ctx, targetUserID)
+	// 吊销失败也要在响应里说明，避免调用方误以为权限已即时收回。
+	revoked := s.revokeAccessTokens(ctx, targetUserID)
 
 	item := toUserItem(updated)
+	item.SessionsRevoked = &revoked
 	return &item, nil
 }
 
@@ -201,32 +206,38 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 	}
 
 	// 禁用后立即吊销该用户所有旧 access token，使其当前会话即时失效。
-	if status == repo.StatusDisabled {
-		s.revokeAccessTokens(ctx, targetUserID)
-	}
-
 	item := toUserItem(updated)
+	if status == repo.StatusDisabled {
+		revoked := s.revokeAccessTokens(ctx, targetUserID)
+		item.SessionsRevoked = &revoked
+	}
 	return &item, nil
 }
 
-func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string) {
+// revokeAccessTokens 吊销指定用户的会话与 access token，返回是否全部成功。
+// 任一存储写失败都会把结果标记为 false，由调用方在响应中告知「吊销未完成」。
+func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string) bool {
 	// 吊销键必须和中间件读取的那把完全一致：路径参数允许大写/`{}`/`urn:uuid:` 形式，
 	// 而读取方用的是 JWT 里的 canonical uid。不归一化等于写了一把没人读的键——
 	// 接口返回 200，旧 token 却在剩余 TTL 内继续可用。
 	userID = baseservice.CanonicalUserID(userID)
+	ok := true
 
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
+			ok = false
 			s.LogInternal("revoke all sessions", err, baseservice.UserIDField(userID))
 		}
 	}
 	if s.rdb == nil {
-		return
+		return ok
 	}
 	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
 	if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
+		ok = false
 		s.LogInternal("revoke access tokens", err, baseservice.UserIDField(userID))
 	}
+	return ok
 }
 
 func isValidRole(role string) bool {

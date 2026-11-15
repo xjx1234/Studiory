@@ -210,12 +210,15 @@ func TestChangePassword_Success(t *testing.T) {
 	fakeRepo.Users[id] = &repo.User{ID: id, PasswordHash: &hash}
 	svc := New(fakeRepo)
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
+	revoked, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
 		OldPassword: "OldPass123",
 		NewPassword: "NewPass456",
 	})
 	if e != nil {
 		t.Fatalf("ChangePassword: %+v", e)
+	}
+	if !revoked {
+		t.Errorf("revoked = false, want true when no external store is configured")
 	}
 
 	updated := fakeRepo.Users[id]
@@ -235,7 +238,7 @@ func TestChangePassword_NilOrEmptyInput(t *testing.T) {
 		{NewPassword: "only-new"},
 	}
 	for _, in := range cases {
-		e := svc.ChangePassword(context.Background(), id.String(), in)
+		_, e := svc.ChangePassword(context.Background(), id.String(), in)
 		if e == nil || e.Code != errcode.ErrBadRequest.Code {
 			t.Errorf("input=%+v: expected ErrBadRequest, got %+v", in, e)
 		}
@@ -245,7 +248,7 @@ func TestChangePassword_NilOrEmptyInput(t *testing.T) {
 func TestChangePassword_InvalidUserID(t *testing.T) {
 	svc := New(testutil.NewFakeUserRepo())
 
-	e := svc.ChangePassword(context.Background(), "not-a-uuid", &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
+	_, e := svc.ChangePassword(context.Background(), "not-a-uuid", &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
 	if e == nil || e.Code != errcode.ErrBadRequest.Code {
 		t.Fatalf("expected ErrBadRequest, got %+v", e)
 	}
@@ -254,7 +257,7 @@ func TestChangePassword_InvalidUserID(t *testing.T) {
 func TestChangePassword_UserNotFound(t *testing.T) {
 	svc := New(testutil.NewFakeUserRepo())
 
-	e := svc.ChangePassword(context.Background(), uuid.New().String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
+	_, e := svc.ChangePassword(context.Background(), uuid.New().String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
 	if e == nil || e.Code != errcode.ErrNotFound.Code {
 		t.Fatalf("expected ErrNotFound, got %+v", e)
 	}
@@ -265,7 +268,7 @@ func TestChangePassword_LookupInternalError(t *testing.T) {
 	fakeRepo.GetByIDErr = errors.New("db down")
 	svc := New(fakeRepo)
 
-	e := svc.ChangePassword(context.Background(), uuid.New().String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
+	_, e := svc.ChangePassword(context.Background(), uuid.New().String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
 	if e == nil || e.Code != errcode.ErrInternal.Code {
 		t.Fatalf("expected ErrInternal, got %+v", e)
 	}
@@ -278,7 +281,7 @@ func TestChangePassword_NoPasswordHashSet(t *testing.T) {
 	fakeRepo.Users[id] = &repo.User{ID: id}
 	svc := New(fakeRepo)
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
+	_, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
 	if e == nil || e.Code != errcode.ErrInvalidCredentials.Code {
 		t.Fatalf("expected ErrInvalidCredentials, got %+v", e)
 	}
@@ -291,7 +294,7 @@ func TestChangePassword_EmptyPasswordHashSet(t *testing.T) {
 	fakeRepo.Users[id] = &repo.User{ID: id, PasswordHash: &empty}
 	svc := New(fakeRepo)
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
+	_, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{OldPassword: "a", NewPassword: "b"})
 	if e == nil || e.Code != errcode.ErrInvalidCredentials.Code {
 		t.Fatalf("expected ErrInvalidCredentials, got %+v", e)
 	}
@@ -304,7 +307,7 @@ func TestChangePassword_WrongOldPassword(t *testing.T) {
 	fakeRepo.Users[id] = &repo.User{ID: id, PasswordHash: &hash}
 	svc := New(fakeRepo)
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
+	_, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
 		OldPassword: "WrongOld1",
 		NewPassword: "NewPass456",
 	})
@@ -320,7 +323,7 @@ func TestChangePassword_SamePassword(t *testing.T) {
 	fakeRepo.Users[id] = &repo.User{ID: id, PasswordHash: &hash}
 	svc := New(fakeRepo)
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
+	_, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
 		OldPassword: "SamePass123",
 		NewPassword: "SamePass123",
 	})
@@ -337,7 +340,7 @@ func TestChangePassword_UpdateInternalError(t *testing.T) {
 	fakeRepo.UpdatePasswordErr = errors.New("db down")
 	svc := New(fakeRepo)
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
+	_, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
 		OldPassword: "OldPass123",
 		NewPassword: "NewPass456",
 	})
@@ -361,7 +364,7 @@ func TestChangePassword_RevokesSessionsAndAccessTokens(t *testing.T) {
 
 	svc := New(fakeRepo, WithSessionStore(sessions), WithRevokeSupport(rdb, "test", time.Hour))
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
+	_, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
 		OldPassword: "OldPass123",
 		NewPassword: "NewPass456",
 	})
@@ -406,7 +409,7 @@ func TestChangePassword_NormalizesUserIDForRevocation(t *testing.T) {
 
 		svc := New(fakeRepo, WithSessionStore(sessions), WithRevokeSupport(rdb, "test", time.Hour))
 
-		e := svc.ChangePassword(context.Background(), in, &ChangePasswordInput{
+		_, e := svc.ChangePassword(context.Background(), in, &ChangePasswordInput{
 			OldPassword: "OldPass123",
 			NewPassword: "NewPass456",
 		})
@@ -426,8 +429,9 @@ func TestChangePassword_NormalizesUserIDForRevocation(t *testing.T) {
 	}
 }
 
-func TestChangePassword_RevokeErrorsDoNotFailRequest(t *testing.T) {
-	// sessions/rdb 均已关闭连接：Revoke 操作会报错，但改密本身应当仍然成功（fail-open，只记日志）。
+func TestChangePassword_RevokeErrorsReportedButDoNotFailRequest(t *testing.T) {
+	// sessions/rdb 均已关闭连接：Revoke 操作会报错。改密本身已落库，因此仍然成功，
+	// 但 sessions_revoked 必须为 false，让调用方知道旧会话可能还在。
 	id := uuid.New()
 	hash := hashPassword(t, "OldPass123")
 	fakeRepo := testutil.NewFakeUserRepo()
@@ -440,11 +444,14 @@ func TestChangePassword_RevokeErrorsDoNotFailRequest(t *testing.T) {
 
 	svc := New(fakeRepo, WithSessionStore(sessions), WithRevokeSupport(rdb, "test", time.Hour))
 
-	e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
+	revoked, e := svc.ChangePassword(context.Background(), id.String(), &ChangePasswordInput{
 		OldPassword: "OldPass123",
 		NewPassword: "NewPass456",
 	})
 	if e != nil {
 		t.Fatalf("expected ChangePassword to succeed despite revoke errors, got %+v", e)
+	}
+	if revoked {
+		t.Error("revoked = true, want false when Redis is unavailable")
 	}
 }

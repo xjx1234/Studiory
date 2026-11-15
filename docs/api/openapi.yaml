@@ -114,6 +114,12 @@ components:
           type: string
         updated_at:
           type: string
+        sessions_revoked:
+          type: boolean
+          description: >-
+            仅「修改角色」与「禁用账号」的响应返回该字段（其它接口不返回）。
+            true=该用户的旧会话与 access token 已吊销；false=数据库已更新但吊销未完成
+            （Redis 异常），调用方应提示重试或联系运维。
 
     AdminUserListData:
       type: object
@@ -540,7 +546,9 @@ paths:
       summary: 修改密码
       description: |
         校验原密码后更新为新密码。新密码需满足强密码规则，且不能与原密码相同。
-        改密成功后会按 user_id 维度吊销此前签发的 access token。
+        改密成功后会按 user_id 维度吊销此前签发的 access token 与所有会话。
+        吊销可能因 Redis 异常而未完成：此时密码仍已修改，接口返回 200 且
+        data.sessions_revoked=false，调用方应提示用户「其他设备可能仍在线」。
       security:
         - bearerAuth: []
       requestBody:
@@ -551,11 +559,21 @@ paths:
               $ref: '#/components/schemas/ChangePasswordReq'
       responses:
         '200':
-          description: 修改成功（data 为 null）
+          description: 修改成功；sessions_revoked=false 表示旧会话/令牌吊销未完成（Redis 异常）
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UnifiedResponse'
+                allOf:
+                  - $ref: '#/components/schemas/UnifiedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [sessions_revoked]
+                        properties:
+                          sessions_revoked:
+                            type: boolean
+                            description: true=旧会话与 access token 已全部吊销；false=更新已生效但吊销未完成，建议提示用户稍后重试或联系运维
         '400':
           description: 参数错误，或新密码与原密码相同（code 10009 err_same_password）
           content:

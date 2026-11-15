@@ -337,14 +337,38 @@ func TestChangePassword_WeakNewPassword(t *testing.T) {
 
 func TestChangePassword_WrongOldPassword(t *testing.T) {
 	r, ts := newTestServer(t)
-	ts.user.changePasswordFn = func(context.Context, string, *userservice.ChangePasswordInput) *errcode.Error {
-		return errcode.ErrWrongPassword
+	ts.user.changePasswordFn = func(context.Context, string, *userservice.ChangePasswordInput) (bool, *errcode.Error) {
+		return false, errcode.ErrWrongPassword
 	}
 	w, body := doJSON(t, r, http.MethodPatch, "/api/v1/user/password", gin.H{
 		"old_password": "wrong",
 		"new_password": "Str0ng!Pass",
 	}, authHeaders(repo.RoleUser)...)
 	assertStatusCode(t, w, body, http.StatusUnauthorized, errcode.ErrWrongPassword.Code)
+}
+
+func TestChangePassword_ReportsSessionRevocation(t *testing.T) {
+	for _, revoked := range []bool{true, false} {
+		r, ts := newTestServer(t)
+		ts.user.changePasswordFn = func(context.Context, string, *userservice.ChangePasswordInput) (bool, *errcode.Error) {
+			return revoked, nil
+		}
+		w, body := doJSON(t, r, http.MethodPatch, "/api/v1/user/password", gin.H{
+			"old_password": "OldPass123",
+			"new_password": "NewPass456",
+		}, authHeaders(repo.RoleUser)...)
+		assertStatusCode(t, w, body, http.StatusOK, 0)
+
+		var data struct {
+			SessionsRevoked *bool `json:"sessions_revoked"`
+		}
+		if err := json.Unmarshal(body.Data, &data); err != nil {
+			t.Fatalf("unmarshal data: %v", err)
+		}
+		if data.SessionsRevoked == nil || *data.SessionsRevoked != revoked {
+			t.Fatalf("sessions_revoked = %v, want %v", data.SessionsRevoked, revoked)
+		}
+	}
 }
 
 // ── Todo（受保护）─────────────────────────────────────────────────────────────

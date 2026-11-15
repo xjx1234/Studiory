@@ -74,7 +74,7 @@ func (f *fakeAuthService) Logout(ctx context.Context, refreshToken string) *errc
 type fakeUserService struct {
 	getProfileFn     func(ctx context.Context, userID string) (*userservice.ProfileResult, *errcode.Error)
 	updateProfileFn  func(ctx context.Context, userID string, in *userservice.UpdateProfileInput) (*userservice.ProfileResult, *errcode.Error)
-	changePasswordFn func(ctx context.Context, userID string, in *userservice.ChangePasswordInput) *errcode.Error
+	changePasswordFn func(ctx context.Context, userID string, in *userservice.ChangePasswordInput) (bool, *errcode.Error)
 }
 
 var _ userservice.Service = (*fakeUserService)(nil)
@@ -104,11 +104,11 @@ func (f *fakeUserService) UpdateProfile(ctx context.Context, userID string, in *
 	return p, nil
 }
 
-func (f *fakeUserService) ChangePassword(ctx context.Context, userID string, in *userservice.ChangePasswordInput) *errcode.Error {
+func (f *fakeUserService) ChangePassword(ctx context.Context, userID string, in *userservice.ChangePasswordInput) (bool, *errcode.Error) {
 	if f.changePasswordFn != nil {
 		return f.changePasswordFn(ctx, userID, in)
 	}
-	return nil
+	return true, nil
 }
 
 // ── fakeAdminService ──────────────────────────────────────────────────────────

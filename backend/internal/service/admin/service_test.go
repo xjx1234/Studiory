@@ -112,6 +112,9 @@ func TestUpdateRole_Success(t *testing.T) {
 	if item.Role != repo.RoleAdmin {
 		t.Fatalf("role = %s, want admin", item.Role)
 	}
+	if item.SessionsRevoked == nil || !*item.SessionsRevoked {
+		t.Fatalf("role change should report sessions_revoked=true, got %v", item.SessionsRevoked)
+	}
 }
 
 func TestUpdateRole_InvalidRole(t *testing.T) {
@@ -151,6 +154,31 @@ func TestSetStatus_DisableRevokesTokens(t *testing.T) {
 	revokeKey := "test:revoke:uid:" + target.ID.String()
 	if !mr.Exists(revokeKey) {
 		t.Fatalf("expected revoke key %s to be set after disabling", revokeKey)
+	}
+	if item.SessionsRevoked == nil || !*item.SessionsRevoked {
+		t.Fatalf("disable should report sessions_revoked=true, got %v", item.SessionsRevoked)
+	}
+}
+
+// TestSetStatus_ReportsRevocationFailure 吊销写失败时数据库更新已生效，接口仍返回成功，
+// 但必须把 sessions_revoked=false 告诉调用方，避免误以为旧 token 已即时失效。
+func TestSetStatus_ReportsRevocationFailure(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	target := seedUser(r, repo.RoleUser, repo.StatusActive, "13800000001", time.Now())
+
+	mr, rdb := newRDB(t)
+	mr.Close() // 让后续 Redis 写入失败
+	svc := New(r, WithRevokeSupport(rdb, "test", time.Hour))
+
+	item, e := svc.SetStatus(context.Background(), uuid.New().String(), target.ID.String(), repo.StatusDisabled)
+	if e != nil {
+		t.Fatalf("disable should succeed even when revocation fails: %+v", e)
+	}
+	if item.Status != repo.StatusDisabled {
+		t.Fatalf("status = %s, want disabled", item.Status)
+	}
+	if item.SessionsRevoked == nil || *item.SessionsRevoked {
+		t.Fatalf("expected sessions_revoked=false, got %v", item.SessionsRevoked)
 	}
 }
 
