@@ -200,6 +200,34 @@ func TestUserRepo_DuplicatePhone_AlreadyExists(t *testing.T) {
 	}
 }
 
+// TestUserRepo_EmailIsCaseInsensitiveUnique 验证 000005 的 lower(email) 表达式唯一索引。
+//
+// 服务层已把邮箱归一化，但直连 SQL、seed 脚本与历史数据都能旁路它；只要数据库仍区分大小写，
+// 同一个人就能占下两个账号，而 MySQL（utf8mb4_unicode_ci）从来不允许——同一份代码换驱动即换语义。
+func TestUserRepo_EmailIsCaseInsensitiveUnique(t *testing.T) {
+	ctx := context.Background()
+	users := testStore.Users()
+
+	email := uuid.NewString() + "@example.com"
+	if _, err := users.Create(ctx, &repo.CreateUserParams{
+		Phone: strPtr(uniquePhone()), Email: strPtr(email), Nickname: "first", Role: repo.RoleUser,
+	}); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	if _, err := users.Create(ctx, &repo.CreateUserParams{
+		Phone: strPtr(uniquePhone()), Email: strPtr(strings.ToUpper(email)), Nickname: "second", Role: repo.RoleUser,
+	}); !errors.Is(err, repo.ErrAlreadyExists) {
+		t.Errorf("case-variant email error = %v, want ErrAlreadyExists", err)
+	}
+
+	// 等值查询仍走原始形式：归一化后的输入必须命中那行已有数据。
+	got, err := users.GetByEmail(ctx, email)
+	if err != nil || got.Nickname != "first" {
+		t.Fatalf("GetByEmail(%q) = %+v, err = %v", email, got, err)
+	}
+}
+
 func TestUserRepo_GetByID_NotFound(t *testing.T) {
 	ctx := context.Background()
 	users := testStore.Users()

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"backend/pkg/strutil"
+
 	"go.uber.org/zap"
 )
 
@@ -91,14 +93,17 @@ func (s *AuthServiceImpl) clearLoginFail(ctx context.Context, account string) {
 }
 
 // loginAccountID 从登录请求字段中提取用于防暴力破解计数的账号标识符。
+//
+// 归一化形式必须与验证码键、用户查找完全一致，否则同一账号的失败计数会被拆进
+// 多个桶，锁定阈值永远达不到（换一种大小写写法就能继续爆破）。
 func loginAccountID(phone, email, account string) string {
 	switch {
-	case phone != "":
-		return strings.ToLower(strings.TrimSpace(phone))
-	case email != "":
-		return strings.ToLower(strings.TrimSpace(email))
+	case strings.TrimSpace(phone) != "":
+		return strutil.NormalizePhone(phone)
+	case strings.TrimSpace(email) != "":
+		return strutil.NormalizeEmail(email)
 	default:
-		return strings.ToLower(strings.TrimSpace(account))
+		return strutil.NormalizeAccount(account)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"backend/internal/sender"
 	baseservice "backend/internal/service"
 	"backend/pkg/errcode"
+	"backend/pkg/strutil"
 
 	"go.uber.org/zap"
 )
@@ -92,7 +93,8 @@ const (
 // （配额已计入，避免用「失败重试」绕过上限）。
 func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, clientIP string) *errcode.Error {
 	codeType = strings.ToLower(strings.TrimSpace(codeType))
-	target = strings.TrimSpace(target)
+	// 先归一化再判空与配额：键、下发、计数必须共用同一个标识形式。
+	target = canonicalTarget(codeType, target)
 
 	if codeType == "" || target == "" {
 		s.observeCodeSend(codeType, codeOutcomeInvalidRequest)
@@ -256,19 +258,33 @@ func (s *AuthServiceImpl) verifyCode(ctx context.Context, codeType, target, code
 }
 
 func (s *AuthServiceImpl) codeRedisKey(codeType, target string) string {
-	return fmt.Sprintf("%s:%s:%s", s.codePrefix, codeType, target)
+	return fmt.Sprintf("%s:%s:%s", s.codePrefix, codeType, canonicalTarget(codeType, target))
 }
 
 func (s *AuthServiceImpl) codeCooldownKey(codeType, target string) string {
-	return fmt.Sprintf("%s:%s:cooldown:%s", s.codePrefix, codeType, target)
+	return fmt.Sprintf("%s:%s:cooldown:%s", s.codePrefix, codeType, canonicalTarget(codeType, target))
 }
 
 // codeQuotaKey 是「按目标」的 24 小时下发计数器。
 func (s *AuthServiceImpl) codeQuotaKey(codeType, target string) string {
-	return fmt.Sprintf("%s:%s:quota:%s", s.codePrefix, codeType, target)
+	return fmt.Sprintf("%s:%s:quota:%s", s.codePrefix, codeType, canonicalTarget(codeType, target))
 }
 
 // codeIPQuotaKey 是「按 IP」的 24 小时下发计数器，所有渠道共用（防止换渠道绕过）。
 func (s *AuthServiceImpl) codeIPQuotaKey(clientIP string) string {
 	return fmt.Sprintf("%s:code:quota:ip:%s", s.codePrefix, clientIP)
+}
+
+// canonicalTarget 把手机号/邮箱收敛成唯一标识形式，是所有验证码键与账号查找的必经之路。
+//
+// 不归一化时 "Alice@x.com" 与 "alice@x.com"、"13800138000" 与 "8613800138000" 会落到
+// 不同的冷却/配额桶：同一部手机能被连发几十条短信而每桶都「没超上限」，
+// 同一个邮箱还能注册出两个账号（PG 的 UNIQUE 区分大小写，MySQL 的 unicode_ci 却不区分）。
+// 键构造点自身做归一化，新增调用方就无法绕过这条规则。
+func canonicalTarget(codeType, target string) string {
+	target = strings.TrimSpace(target)
+	if codeType == string(sender.ChannelEmail) {
+		return strutil.NormalizeEmail(target)
+	}
+	return strutil.NormalizePhone(target)
 }

@@ -18,6 +18,7 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -174,6 +175,29 @@ func TestCheckConstraints(t *testing.T) {
 	}
 	if _, err := testStorage.Users().UpdateRole(ctx, u.ID, "admin"); err != nil {
 		t.Errorf("UpdateRole(admin): %v", err)
+	}
+}
+
+// TestEmailUniqueIsCaseInsensitive 锁定 MySQL 侧的既有语义：000001 的表级
+// utf8mb4_unicode_ci 让 email 的 UNIQUE 天然不区分大小写。PG 侧靠 000005 的
+// lower(email) 表达式唯一索引对齐——两个驱动必须给同一个答案，否则换一次驱动
+// 就变成「同一个邮箱能注册出两个账号」。
+func TestEmailUniqueIsCaseInsensitive(t *testing.T) {
+	ctx := context.Background()
+
+	phoneA, phoneB := "13800000091", "13800000092"
+	emailUpper, emailLower := "IT-CaseRound@example.com", "it-caseround@example.com"
+
+	if _, err := testStorage.Users().Create(ctx, &repo.CreateUserParams{
+		Phone: &phoneA, Email: &emailUpper, Nickname: "first", Role: "user",
+	}); err != nil {
+		t.Fatalf("create first user: %v", err)
+	}
+
+	if _, err := testStorage.Users().Create(ctx, &repo.CreateUserParams{
+		Phone: &phoneB, Email: &emailLower, Nickname: "second", Role: "user",
+	}); !errors.Is(err, repo.ErrAlreadyExists) {
+		t.Errorf("case-variant email Create error = %v, want ErrAlreadyExists", err)
 	}
 }
 

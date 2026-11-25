@@ -17,6 +17,10 @@ import (
 const bcryptCost = bcrypt.DefaultCost
 
 func (s *AuthServiceImpl) Register(ctx context.Context, input *RegisterInput) (*auth.LoginResult, *errcode.Error) {
+	// 就地归一化标识：后续 registrationTarget/verifyCode/checkAccountExists 与写库
+	// 用的必须是同一个形式，input 由 handler 每请求新建，不会跨请求复用。
+	input.Canonicalize()
+
 	switch input.GrantType {
 	case "password":
 		return s.registerWithPassword(ctx, input)
@@ -191,7 +195,13 @@ func registrationTarget(input *RegisterInput) (codeType, target string, e *errco
 }
 
 // checkAccountExists 检查手机号/邮箱是否已注册，已注册返回错误。
+//
+// 这里再归一化一次，而不是依赖调用方先做过：查重与写库必须是同一个标识形式，
+// 否则「大小写不同的两次注册」会同时通过查重、再被数据库唯一索引打回 500。
 func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email string) *errcode.Error {
+	phone = strutil.NormalizePhone(phone)
+	email = strutil.NormalizeEmail(email)
+
 	if phone != "" {
 		_, err := s.users.GetByPhone(ctx, phone)
 		if err == nil {

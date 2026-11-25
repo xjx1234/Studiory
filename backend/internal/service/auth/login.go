@@ -65,6 +65,8 @@ func (s *AuthServiceImpl) loginWithPassword(ctx context.Context, req *auth.Login
 }
 
 func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, code string) (*auth.LoginResult, *errcode.Error) {
+	// 归一化后才是「同一个账号」：验证码键、防暴力锁定键与用户查找共用这一个形式。
+	target = canonicalTarget(codeType, target)
 	if target == "" || code == "" {
 		return nil, errcode.ErrBadRequest
 	}
@@ -265,6 +267,12 @@ func (s *AuthServiceImpl) findUserByAccount(ctx context.Context, phone, email, a
 		user *repo.User
 		err  error
 	)
+
+	// 与注册写入、验证码键、锁定键用同一套归一化形式，否则同一个账号在这三条链路里
+	// 有三种表示：注册存 "Alice@x.com"、登录查 "alice@x.com" 就查不到人了。
+	phone = strutil.NormalizePhone(phone)
+	email = strutil.NormalizeEmail(email)
+	account = strutil.NormalizeAccount(account)
 
 	switch {
 	case phone != "":

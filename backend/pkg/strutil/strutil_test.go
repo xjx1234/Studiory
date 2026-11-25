@@ -100,3 +100,80 @@ func TestMaskPII(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeEmail(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"already lower", "alice@example.com", "alice@example.com"},
+		{"upper domain", "Alice@EXAMPLE.com", "alice@example.com"},
+		{"surrounding space", "  alice@example.com  ", "alice@example.com"},
+		{"plus tag kept", "alice+news@example.com", "alice+news@example.com"},
+		{"empty", "", ""},
+		{"only space", "   ", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizeEmail(tc.in)
+			if got != tc.want {
+				t.Fatalf("NormalizeEmail(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if again := NormalizeEmail(got); again != got {
+				t.Errorf("not idempotent: %q -> %q", got, again)
+			}
+		})
+	}
+}
+
+func TestNormalizePhone(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"bare", "13800138000", "13800138000"},
+		{"dashes", "138-0013-8000", "13800138000"},
+		{"spaces", "138 0013 8000", "13800138000"},
+		// 三种中国前缀写法必须与裸号落到同一个标识，否则冷却/配额能被换写法绕过。
+		{"plus 86", "+8613800138000", "13800138000"},
+		{"plus 86 spaced", "+86 138-0013-8000", "13800138000"},
+		{"0086", "008613800138000", "13800138000"},
+		{"bare 86", "8613800138000", "13800138000"},
+		// 前缀后不是合法大陆号段：不动数字，避免误伤以 86 开头的他国/短号码。
+		{"86 not china", "8612345", "8612345"},
+		{"us number", "+1 415 555 0132", "14155550132"},
+		{"parens", "(010) 8567 1234", "01085671234"},
+		{"empty", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizePhone(tc.in)
+			if got != tc.want {
+				t.Fatalf("NormalizePhone(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if again := NormalizePhone(got); again != got {
+				t.Errorf("not idempotent: %q -> %q", got, again)
+			}
+		})
+	}
+}
+
+func TestNormalizeAccount(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"email", "Alice@Example.COM", "alice@example.com"},
+		// 带分隔符的手机号含 '+'，用 LooksLikePhone 判形态会被误判成邮箱。
+		{"phone with separators", " +86 138-0013-8000 ", "13800138000"},
+		{"bare phone", "13800138000", "13800138000"},
+		// 既不是邮箱也不是号码：只做去空白，不 lowercase——用户名大小写可能本就是身份的一部分。
+		{"opaque username", "  Admin  ", "Admin"},
+		{"empty", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizeAccount(tc.in)
+			if got != tc.want {
+				t.Fatalf("NormalizeAccount(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if again := NormalizeAccount(got); again != got {
+				t.Errorf("not idempotent: %q -> %q", got, again)
+			}
+		})
+	}
+}

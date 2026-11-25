@@ -1,6 +1,13 @@
 package strutil
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+// reChinaMobile 与 pkg/validator 的 phone_cn 保持一致（裸 11 位中国大陆手机号）。
+// 这里单独声明而不是复用校验器，是为了让「归一化」不依赖 validator 包。
+var reChinaMobile = regexp.MustCompile(`^1[3-9]\d{9}$`)
 
 // NullableStr 将非空（trim 后）字符串转为指针，空字符串返回 nil。
 func NullableStr(s string) *string {
@@ -57,6 +64,57 @@ func LooksLikeEmail(s string) bool {
 	}
 	domain := s[at+1:]
 	return strings.IndexByte(domain, '.') > 0
+}
+
+// NormalizeEmail 归一化邮箱标识：去首尾空白并转小写。
+//
+// 域名大小写不敏感，local part 理论上可区分大小写，但主流服务商（Gmail/Outlook/qq 等）
+// 一律按大小写不敏感投递，因此取小写作为项目内唯一标识。
+// 不剥离 `+tag`：那是子地址策略，剥离会把两个真实不同的邮箱并成一个。
+//
+// 归一化是幂等的：NormalizeEmail(NormalizeEmail(x)) == NormalizeEmail(x)。
+func NormalizeEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// NormalizePhone 归一化手机号，使同一个号码的不同书写形式落到同一个标识：
+//  1. 去掉首尾空白；
+//  2. 去掉书写分隔符（空格、-、.、/、括号）与国际前缀符 +；
+//  3. 中国大陆号码再去掉 0086 / +86 / 86 国家码前缀，得到与 phone_cn 校验一致的裸 11 位号码。
+//
+// 只对能明确判定为中国大陆手机号（去前缀后仍匹配 1[3-9]\d{9}）的号码剥国家码，
+// 其他国家号码无法可靠推断国家码，只做第 1、2 步。
+//
+// 幂等：归一化结果不含分隔符与国家码前缀，再次归一化不变。
+func NormalizePhone(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '-', '.', '/', '(', ')', '+':
+			return -1
+		}
+		return r
+	}, s)
+
+	for _, prefix := range []string{"0086", "86"} {
+		if strings.HasPrefix(s, prefix) {
+			if rest := strings.TrimPrefix(s, prefix); reChinaMobile.MatchString(rest) {
+				return rest
+			}
+		}
+	}
+	return s
+}
+
+// NormalizeAccount 归一化「账号」这种同时允许手机号与邮箱的字段。
+//
+// 以 @ 判定形态：邮箱必须含 @，手机号永远不含，因此不会误判。
+// 不用 LooksLikePhone 判别——"+86 138-0013-8000" 含分隔符，恰好会被它判成非手机号。
+func NormalizeAccount(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.ContainsRune(s, '@') {
+		return NormalizeEmail(s)
+	}
+	return NormalizePhone(s)
 }
 
 // MaskPII 对手机号/邮箱等 PII 进行脱敏，用于日志输出。

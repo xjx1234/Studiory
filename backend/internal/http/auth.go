@@ -74,14 +74,18 @@ type SendCodeReq struct {
 }
 
 // Validate 按 type 校验 target 格式，防止 SMTP 头注入。
+//
+// 允许 "+86 138-0013-8000" 这类带分隔符的写法：判定用的是归一化后的形式，
+// 与 service 层写验证码键/查用户的形式一致。若不先归一化，同一个号码会
+// 在这里被拒、在那里被接受，边界与内部对「同一个账号」的理解就会分叉。
 func (r *SendCodeReq) Validate() error {
 	switch r.Type {
 	case "sms":
-		if !strutil.LooksLikePhone(r.Target) {
+		if !strutil.LooksLikePhone(strutil.NormalizePhone(r.Target)) {
 			return errInvalidPhoneTarget
 		}
 	case "email":
-		if !strutil.LooksLikeEmail(r.Target) {
+		if !strutil.LooksLikeEmail(strutil.NormalizeEmail(r.Target)) {
 			return errInvalidEmailTarget
 		}
 	}

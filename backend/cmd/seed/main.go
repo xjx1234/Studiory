@@ -35,6 +35,11 @@ func main() {
 	nickname := flag.String("nickname", envOr("SEED_ADMIN_NICKNAME", "管理员"), "admin 昵称")
 	flag.Parse()
 
+	// 与 service 层用同一套归一化：seed 直接写库，若不归一化就会存下
+	// "Admin@X.com" 这类形式，之后登录/验证码查 "admin@x.com" 查不到人。
+	*phone = strutil.NormalizePhone(*phone)
+	*email = strutil.NormalizeEmail(*email)
+
 	if *password == "" {
 		fmt.Fprintln(os.Stderr, "错误：必须提供 --password 或环境变量 SEED_ADMIN_PASSWORD")
 		os.Exit(1)
