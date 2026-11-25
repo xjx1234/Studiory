@@ -30,6 +30,8 @@ type Metrics struct {
 	inFlight    prometheus.Gauge
 
 	codeSendTotal *prometheus.CounterVec
+
+	rateLimitFallbackTotal *prometheus.CounterVec
 }
 
 // New 创建 Metrics，注册 Go runtime / process 默认采集器与 HTTP 指标。
@@ -59,9 +61,19 @@ func New() *Metrics {
 			Name: "auth_code_send_total",
 			Help: "验证码下发次数（按渠道与结果）。channel 取值：sms/email/unknown（请求体里的其它值统一归为 unknown）；outcome 取值：sent/cooldown/target_quota/ip_quota/unsupported_channel/invalid_request/storage_error/dispatch_error。",
 		}, []string{"channel", "outcome"}),
+
+		rateLimitFallbackTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "rate_limit_store_fallback_total",
+			Help: "限流存储从 Redis 降级为进程内内存的次数（按限流域）。非 0 表示多副本部署下限流阈值会按副本数放大。",
+		}, []string{"scope"}),
 	}
-	reg.MustRegister(m.reqTotal, m.reqDuration, m.inFlight, m.codeSendTotal)
+	reg.MustRegister(m.reqTotal, m.reqDuration, m.inFlight, m.codeSendTotal, m.rateLimitFallbackTotal)
 	return m
+}
+
+// ObserveRateLimitFallback 记录一次限流存储降级（实现 middleware.RateLimitFallbackObserver）。
+func (m *Metrics) ObserveRateLimitFallback(scope string) {
+	m.rateLimitFallbackTotal.WithLabelValues(scope).Inc()
 }
 
 // ObserveCodeSend 记录一次验证码下发结果（实现 authservice.CodeSendObserver）。

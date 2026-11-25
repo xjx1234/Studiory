@@ -2,6 +2,68 @@
 
 > 评审时间：2026-11-25　范围：`backend/`、`docs/`、`deploy/k8s/`、`docker-compose.yml`、`Makefile`、`.github/workflows/`
 > 方法：通读全部手写代码（排除 `sqlc/gen`）与文档、CI、部署清单；**本机未安装 Go，未执行 `go build` / `go test` / `make lint`**，以下结论均来自静态阅读，涉及行为的部分已标注依据。
+> 复核（2026-11-25，第二批改动后）：见下方「零、复核结果」。结论先行——**19 条中仅 P1-2 已修复，P1-1/P1-3~P1-6 与 P2-1~P2-13 全部未动**；本批改动质量高，但引入了 1 处约定违反与 2 处低危口径偏差。
+
+---
+
+## 零、复核结果（第二批改动后）
+
+### 0.1 复核范围与方法
+
+- 复核基线为当前 HEAD `39523b7`；`git status` 干净，**无未提交改动**，评审后只有 `39523b7 fix(auth): 手机/邮箱标识统一归一化…` 一个提交改动代码（`git log` 可证）。
+- 本机仍无 `go` / `sqlc` / `docker`（已确认），因此本批复核同样是静态阅读，未编译、未跑测试；新增测试的断言逻辑已逐段阅读。
+- 判定口径：**已修复** = 问题描述的危害在所有写入/读取路径上消失且有测试兜底；**部分修复** = 主路径改好但仍有旁路或口径分裂；**未动** = 现状与首轮描述一致。
+
+### 0.2 逐条判定
+
+| 编号 | 结论 | 依据（当前代码现状） |
+|------|------|----------------------|
+| P1-1 | **未动** | `repo/mysql`、`migrations/mysql/000001`、compose `mysql`/`api-mysql` profile、Makefile `DB_DRIVER` 分支、CI MySQL job 全部存在；[README.md](file:///Users/pxiong/Code/personal/Studiory/README.md#L11) 仍只写“PostgreSQL 迁移”，`docs/*.md` 全文 0 处 `mysql`，[env-vars.md](file:///Users/pxiong/Code/personal/Studiory/docs/env-vars.md#L33) 仍无 `DB_DRIVER`；[sqlc.yaml](file:///Users/pxiong/Code/personal/Studiory/backend/sqlc.yaml#L1-L10) 仍只有 postgresql 一组 |
+| P1-2 | **已修复** | 归一化落在 [strutil.go](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/strutil/strutil.go#L69-L118)，覆盖 `SendCode`/三个验证码键/`loginWithCode`/`findUserByAccount`/`loginAccountID`/`RegisterInput.Canonicalize`/`checkAccountExists`/`cmd/seed`/`SendCodeReq.Validate`；[000005](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000005_identity_canonical.up.sql) 清洗历史邮箱并建 `lower(email)` 部分唯一索引；三张单测表 + `canonical_test.go` + PG/MySQL 集成断言齐备。另确认 `UpdateProfile` 只改昵称/头像（[user/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/user/service.go#L28-L33)），不存在绕过归一化改邮箱/手机号的旁路，覆盖面完整 |
+| P1-3 | **未动** | [token.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/token.go#L57-L104) 的 `Refresh` 仍只校验+签发，无 `Expire` 续期；[session.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/session/session.go#L114-L140) 的“session 键兜底”分支仍在，集合续期副作用依旧隐式 |
+| P1-4 | **未动** | [base.yaml](file:///Users/pxiong/Code/personal/Studiory/backend/config/base.yaml#L45) 仍 `access_ttl: 2h`；[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L220-L328) 的 `Validate` 仍无 access/refresh TTL 关系校验 |
+| P1-5 | **未动** | [router.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/router.go#L32-L64) 中间件链无 `Timeout`；[postgres.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/store/postgres.go#L16-L51) 未设 `statement_timeout`/`query_timeout`；[redis.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/store/redis.go#L13-L33) 未显式设读写超时（修正一处：go-redis 默认 3s 读写、5s dial，Redis 侧实际有兜底，**PG 语句超时才是真缺口**） |
+| P1-6 | **未动** | [rate_limit.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/rate_limit.go#L96-L112) 仍是 `NewStoreWithOptions` 失败即 `memory.NewStore()`，无日志、无指标 |
+| P2-1 | **未动** | [auth/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/service.go#L26-L34) 等接口仍返回 `*errcode.Error` |
+| P2-2 | **未动** | [logging.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/logging.go#L17-L23) 的 `LogInternal` 无 `ctx` 参数，日志无 `request_id` |
+| P2-3 | **未动** | 仅有 `go.mod` 里 otel 的 **indirect** 依赖（[go.mod](file:///Users/pxiong/Code/personal/Studiory/backend/go.mod#L116-L120)），无 `TracerProvider`/gin 中间件/pgx tracer 初始化代码 |
+| P2-4 | **未动** | [admin/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L145-L217) 仍只有“不能改/禁自己”，无“最后一个 admin”统计；`migrations/` 与 `internal/` 全文无 `audit` |
+| P2-5 | **未动** | [cors.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/cors.go#L16-L34) `ExposeHeaders` 仍只有 `Content-Length`（`X-Request-Id` 已由 requestid 写入响应头，但浏览器读不到，排障体验未改善）；`Validate` 仍不拒绝 `allow_origins: ["*"]` + `allow_credentials: true`；L18-L20 的 localhost 兜底仍是死代码（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L324-L326) 已禁止空 origins） |
+| P2-6 | **未动** | `Validate` 仍只校验 server/限流/origins 非空与生产项，未加 `access_ttl < refresh_ttl`、`key_prefix` 非空、CORS 组合校验 |
+| P2-7 | **未动** | [app.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/app/app.go#L218-L225) 的 `postgresReadyCheck` 仍无生产调用（L173-L176 用的是 `databaseReadyCheck`），仅被 `app_test.go:22` 引用 |
+| P2-8 | **未动** | [health.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/health.go#L26-L40) 仍串行 `for` + 共享一个 2s ctx，一个慢探针会拖垮全部 |
+| P2-9 | **未动** | [architecture.md](file:///Users/pxiong/Code/personal/Studiory/docs/architecture.md#L220-L222) 仍列 `frontend/`、`apps/node/`、`apps/python/`；L66-L67 示例仍用 `000002_orders`，与实际的 `000002_example_todos` 冲突 |
+| P2-10 | **未动** | [deps.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/deps.go#L26-L52) `Deps` 字段未变 |
+| P2-11 | **未动** | [middleware/auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/auth.go#L54-L92) 仍是 `GET revoke` + `session.Validate`（`SIsMember` + 兜底 `GET`），最坏 3 次往返 |
+| P2-12 | **未动** | PG [users.sql](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/sqlc/query/users.sql#L57-L70) 仍 `ILIKE '%kw%'`，MySQL [store.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go#L114-L131) 仍 `LIKE '%kw%'`；两边都是 `LIMIT/OFFSET` 深翻页 |
+| P2-13 | **未动** | `oauth.wechat.app_secret` 仍只被读取映射（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L180)），[env-vars.md](file:///Users/pxiong/Code/personal/Studiory/docs/env-vars.md#L116) 标注“预留”，无代码消费 |
+
+**汇总**：已修复 1 / 部分修复 0 / 未动 18。第二批改动实际只覆盖了 P1-2。
+
+### 0.3 这批改动是否引入新问题 / 破坏原有约定
+
+| # | 判定 | 说明 |
+|---|------|------|
+| N-1 | **违反既有约定（应修）** | [architecture.md](file:///Users/pxiong/Code/personal/Studiory/docs/architecture.md#L70) 明确要求“执行 `migrate up` 后，把新文件加入 `backend/sqlc.yaml` 的 schema 列表”，但 `000005` **没有登记**。当前无功能影响（只含数据清洗+表达式索引，不改表结构，`sqlc generate` 不会产出 diff），但同一次提交就漏掉了这条规则，说明该约定目前只靠人记；下次迁移若含列变更会被静默漏检。修复成本 1 行 |
+| N-2 | 新引入的口径不一致（低） | `SendCode` 现在接受 `+86 138-0013-8000`（[auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/auth.go#L76-L93)），但 `RegisterReq.Phone` / `LoginReq.Phone` 仍绑 `phone_cn`（[auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/auth.go#L40-L45)、[rules.go](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/validator/rules.go#L11)）只接受裸 11 位 → 同一个号码“能收码、不能注册/登录”。建议二者取齐：要么绑定前先归一化，要么 send-code 也只收裸号 |
+| N-3 | 迁移覆盖不全（低-中） | `000005` 只清洗 PG 的 `email`，不清洗 `phone`。当前注册/登录 binding 一直是 `phone_cn`，线上应无脏号；风险在历史 `cmd/seed`（本批才加归一化，此前 `-phone` 原样入库）或直连 SQL 写入的 `+86…`/`86138…` 行——这些行会“查不到、还能再注册一个”。建议上线前跑一次 `SELECT count(*) FROM users WHERE phone !~ '^1[3-9][0-9]{9}$'` 核对 |
+| N-4 | 部署说明缺失（低） | `000005` 的 `UPDATE users SET email = lower(btrim(email))` 在历史重复邮箱上会因 `users_email_key` 冲突**刻意中止迁移**（SQL 注释已说明），但 `docs/deploy.md` 没有对应处置说明，滚动发布会表现为“新 Pod 起不来”。建议补一句：先查重、人工合并、再发布 |
+| N-5 | 理论边界（可忽略） | `lower(email)` 在 PG 由数据库 locale 决定，Go 的 `strings.ToLower` 走 Unicode 规则；极端非 ASCII（如土耳其语 `İ`）在特定 `lc_ctype` 下清洗结果可能与写入形式不一致。实际邮箱基本都是 ASCII，建议在迁移注释里限定 ASCII 即可 |
+| N-6 | 未破坏分层/契约 | 归一化放在 `pkg/strutil` + service 入口，repo/sqlc 查询未改、handler 未写 SQL；OpenAPI 未新增必填或格式约束，契约测试不受影响；migration 编号 `000005` 单调，未与既有文件冲突 |
+
+### 0.4 复核后的下一步（只列差异）
+
+1. 补 `000005` 到 `sqlc.yaml`；顺手统一 `send-code` 与 `register/login` 的手机号入参口径（N-1、N-2）。
+2. 阶段 0 剩余项：`/ready` 并发化与死代码清理（P2-7、P2-8）、CORS 收口（P2-5）；TTL 校验（P1-4）、请求/语句超时（P1-5）、限流回退日志（P1-6）已在第三批完成（见 0.5，MySQL 语句超时除外）。
+3. P1-1 的“留或删 MySQL”仍需拍板——本批又给 MySQL 增加了一条集成测试（值得肯定），但双栈治理债因此更实，建议尽快定调。
+
+### 0.5 第三批改动（P1-3 ~ P1-6）
+
+- **P1-3 已修复**：明确采用**绝对过期**（[session.md](file:///Users/pxiong/Code/personal/Studiory/docs/session.md) 新增“有效期语义”）；`Refresh` 刻意不续期；`Validate` 只认 `session:{sid}` 键（存在且 userID 匹配），`sessions:uid` 退化为 `RevokeAll` 的枚举索引——集合续期不再复活过期 sid。新增 `TestStore_SessionExpiresAbsolutely`。
+- **P1-4 已修复**：`jwt.access_ttl` 默认 `2h → 30m`；`Config.Validate` 增加 `access_ttl > 0`、`refresh_ttl > 0`、`access_ttl < refresh_ttl`，并补齐成功/失败用例。
+- **P1-5 部分修复**：新增 `middleware.Timeout`（`app.request_timeout`，ctx 透传 DB/Redis，超时统一 503）；PG 连接下发 `statement_timeout`；Redis 显式读写超时。**MySQL 侧语句超时未实现，随 P1-1 双栈治理一并处理**。
+- **P1-6 已修复**：限流 store 降级改为 `logger.Error` + `rate_limit_store_fallback_total{scope}`（metrics 关闭时仍记日志），并提供 `TestRateLimit_RedisUnavailableFallsBackWithObservation`。
+- 本批同样**未编译、未跑测试**（本机无 Go）。上方 0.2 表格是第二批的时点快照，其中 P1-3~P1-6 的“未动”结论已被本节取代。
 
 ---
 
@@ -81,6 +143,8 @@
 **修复**：在 HTTP/service 边界统一 canonical 化（email → `strings.ToLower(strings.TrimSpace())`；手机号 → E.164 或纯 11 位），并在 PG 加 `CREATE UNIQUE INDEX ... ON users (lower(email)) WHERE email IS NOT NULL`；`strutil` 里加 `NormalizeEmail` / `NormalizePhone` 单测。当前 `loginAccountID` 已经 lower 了账号用于防爆破计数（[brute_force.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/brute_force.go#L93-L103)），说明"应该统一"这件事已被认可，只是没落到存储层。
 
 **状态**：已修复。归一化原语落在 [strutil.go](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/strutil/strutil.go)（`NormalizeEmail` / `NormalizePhone` / `NormalizeAccount`，均幂等，邮箱不剥 `+tag`、手机号仅在剩余部分匹配 `1[3-9]\d{9}` 时才剥 `0086`/`86`）；`internal/service/auth` 的五个入口统一过它——`SendCode` 与三个验证码键构造函数（[sendcode.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L258-L290)）、`loginWithCode` + `findUserByAccount`（[login.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/login.go#L67-L69)）、`loginAccountID`（[brute_force.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/brute_force.go#L95-L108)）、`RegisterInput.Canonicalize` + `checkAccountExists`（[register.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/register.go#L19-L23)）；`cmd/seed` 与 `SendCodeReq.Validate` 同口径。存储层由 [000005_identity_canonical](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000005_identity_canonical.up.sql) 清洗历史行 + `lower(email)` 表达式唯一索引兜底（不引入 `citext`，托管 PG 常拿不到 `CREATE EXTENSION` 权限），MySQL 侧 `utf8mb4_unicode_ci` 本就等价、无需迁移。测试：`strutil_test.go` 三张用例表、`canonical_test.go`（变体共用冷却/配额、大小写不产生重复账号、失败计数同桶触发锁定）、PG/MySQL 集成测试各一条驱动语义对齐断言。
+
+**复核（2026-11-25）**：判定维持“已修复”，且 `UpdateProfile` 不含邮箱/手机号字段，确认无旁路。本批残留的口径问题（send-code 与 register/login 入参宽严不一、phone 历史数据未清洗）见 0.3 的 N-2、N-3。
 
 ---
 

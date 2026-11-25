@@ -10,6 +10,9 @@ app:
   read_timeout: 15s          # 读取完整请求（含 body）
   write_timeout: 30s         # 写入响应超时
   idle_timeout: 120s         # keep-alive 空闲连接超时
+  # 单个请求的 context 超时：DB/Redis 调用共享该 ctx，超时后连接及时归还连接池。
+  # 必须小于 write_timeout，否则 503 信封没有时间写回客户端。
+  request_timeout: 5s
   # 可信反向代理/LB 的来源 IP 或 CIDR，逗号分隔（如 "10.0.0.0/8, 192.168.1.1"）。
   # 留空 = 不信任任何代理：X-Forwarded-For 一律忽略，IP 限流与日志只认 TCP 对端地址，
   # 客户端无法靠伪造请求头绕过限流。部署在 nginx/SLB/Ingress 之后必须填入代理网段，
@@ -25,6 +28,9 @@ database:
   password: ""
   name: app
   ssl_mode: disable          # disable | require | verify-full
+  # PostgreSQL statement_timeout（每个连接建立时下发），防止慢查询长期占用连接池。
+  # 0 = 不设置；MySQL 驱动下当前不生效（见 CODE_REVIEW P1-1 的双栈治理）。
+  statement_timeout: 3s
   pool:
     max_conns: 20
     min_conns: 2
@@ -38,12 +44,14 @@ redis:
   password: ""
   db: 0
   pool_size: 10
+  read_timeout: 3s           # 单次 Redis 读超时（0 = go-redis 默认 3s）
+  write_timeout: 3s          # 单次 Redis 写超时（0 = go-redis 默认 3s）
   key_prefix: app
 
 jwt:
   secret: "dev-secret-change-in-production"
-  access_ttl: 2h
-  refresh_ttl: 168h          # 7天
+  access_ttl: 30m            # 短生命周期：改密/降权后最长 30 分钟自然失效（权限回收兜底）
+  refresh_ttl: 168h          # 7天；session 绝对寿命与之对齐
 
 auth:
   mock_code_enabled: true     # 仅开发环境使用固定验证码 123456

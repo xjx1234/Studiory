@@ -2,6 +2,11 @@
 //
 // 多设备模式（multiDevice=true）：每次登录创建独立 session，互不影响；登出仅吊销当前 session。
 // 单设备模式（multiDevice=false）：新登录覆盖旧 session，旧设备 token 立即失效。
+//
+// 有效期语义为「绝对过期」：session 在登录时写入 TTL，之后无论刷新多少次 token 都不再延长。
+// 因此用户最长在线时间等于 sessionTTL（默认与 refresh token 一致，7 天），到期必须重新登录。
+// 绝对过期避免「refresh token 每次续 7 天、session 却被悄悄拉长」导致会话无限续命；
+// 若需要滑动过期，应在 Refresh 路径显式续期并同步更新本文件的键 TTL 与文档。
 package session
 
 import (
@@ -25,7 +30,8 @@ type Store struct {
 	failOpen    bool // Redis故障时：true=放行（可用性优先）；false=拒绝（安全性优先）
 }
 
-// NewStore 创建会话存储。sessionTTL 建议与 refresh token 有效期一致。
+// NewStore 创建会话存储。sessionTTL 是会话的绝对寿命（登录时写入，刷新不续期），
+// 建议与 refresh token 有效期一致。
 // failOpen 控制 Redis 故障时的降级策略：true=放行所有 session（可用性优先）；
 // false=拒绝所有 session（安全性优先）。
 func NewStore(rdb redis.UniversalClient, prefix string, multiDevice bool, sessionTTL time.Duration, failOpen bool) *Store {
@@ -61,7 +67,7 @@ func (s *Store) Register(ctx context.Context, userID, sessionID string) error {
 	}
 
 	sessionKey := s.sessionKey(sessionID)
-	// 值同样存归一化后的 ID：Validate 的兜底分支要拿它做字符串比较。
+	// 值存归一化后的 ID：Validate 拿它和当前请求的 userID 做字符串比较。
 	if err := s.rdb.Set(ctx, sessionKey, baseservice.CanonicalUserID(userID), s.sessionTTL).Err(); err != nil {
 		return err
 	}
@@ -71,6 +77,9 @@ func (s *Store) Register(ctx context.Context, userID, sessionID string) error {
 		if err := s.rdb.SAdd(ctx, setKey, sessionID).Err(); err != nil {
 			return err
 		}
+		// 集合只是 RevokeAll 的枚举索引，TTL 取「覆盖最新一次登录」即可。
+		// 延长集合不会延长任何旧 session：Validate 只认 session:{sid} 自身的 TTL，
+		// 旧 sid 的 session 键到期后即使仍在集合里也会被拒绝。
 		if err := s.rdb.Expire(ctx, setKey, s.sessionTTL).Err(); err != nil {
 			return fmt.Errorf("expire user sessions set: %w", err)
 		}
@@ -84,6 +93,13 @@ func (s *Store) Register(ctx context.Context, userID, sessionID string) error {
 }
 
 // Validate 校验会话是否仍有效。
+//
+// 判断依据只有一条：session:{sid} 键存在，且 value 与当前 userID 一致。
+//   - 绝对过期：键在登录时写入 TTL，刷新不会续期，过期后必然查不到；
+//   - 吊销：Revoke/RevokeAll 删除 session 键；单设备模式新登录也会先 RevokeAll；
+//   - sessions:uid 集合只用于 RevokeAll 枚举，不参与有效性判断，
+//     避免「集合被续期 → 过期旧 sid 复活」这类隐式副作用。
+//
 // Redis 故障时按 failOpen 策略降级：
 //   - failOpen=true：放行（可用性优先，session 校验暂时跳过）
 //   - failOpen=false：拒绝（安全性优先，所有请求被视为未认证）
@@ -92,42 +108,15 @@ func (s *Store) Validate(ctx context.Context, userID, sessionID string) bool {
 		return true
 	}
 
-	var redisError bool
-
-	if s.multiDevice {
-		setKey := s.userSessionsKey(userID)
-		ok, err := s.rdb.SIsMember(ctx, setKey, sessionID).Result()
-		if err == nil && ok {
-			return true
-		}
-		if err != nil {
-			redisError = true
-		}
-	} else {
-		activeKey := s.activeSessionKey(userID)
-		active, err := s.rdb.Get(ctx, activeKey).Result()
-		if err == nil && active == sessionID {
-			return true
-		}
-		if err != nil && !errors.Is(err, redis.Nil) {
-			redisError = true
-		}
-	}
-
-	// 兜底：session 键仍存在也视为有效（应对 set/active 过期但 session 键尚在的边界）
 	uid, err := s.rdb.Get(ctx, s.sessionKey(sessionID)).Result()
-	if err == nil && uid == baseservice.CanonicalUserID(userID) {
-		return true
+	if err == nil {
+		return uid == baseservice.CanonicalUserID(userID)
 	}
-	if err != nil && !errors.Is(err, redis.Nil) {
-		redisError = true
+	if errors.Is(err, redis.Nil) {
+		return false
 	}
-
-	// Redis 连接故障时按策略降级
-	if redisError && s.failOpen {
-		return true
-	}
-	return false
+	// Redis 连接故障：按配置策略降级
+	return s.failOpen
 }
 
 // Revoke 吊销单个会话（登出当前设备）。

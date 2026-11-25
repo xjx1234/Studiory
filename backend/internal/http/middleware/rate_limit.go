@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -14,7 +15,39 @@ import (
 	limiteredis "github.com/ulule/limiter/v3/drivers/store/redis"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
+
+// RateLimitFallbackObserver 接收限流存储降级事件（由 metrics 实现，可为 nil）。
+type RateLimitFallbackObserver interface {
+	ObserveRateLimitFallback(scope string)
+}
+
+type rateLimitOptions struct {
+	logger   *zap.Logger
+	observer RateLimitFallbackObserver
+}
+
+// RateLimitOption 配置限流中间件的可观测行为。
+type RateLimitOption func(*rateLimitOptions)
+
+// WithRateLimitLogger 注入日志器：Redis 存储不可用时用它记录 Error。
+func WithRateLimitLogger(l *zap.Logger) RateLimitOption {
+	return func(o *rateLimitOptions) {
+		if l != nil {
+			o.logger = l
+		}
+	}
+}
+
+// WithRateLimitFallbackObserver 注入降级指标观察者。
+func WithRateLimitFallbackObserver(observer RateLimitFallbackObserver) RateLimitOption {
+	return func(o *rateLimitOptions) {
+		if observer != nil {
+			o.observer = observer
+		}
+	}
+}
 
 // RateLimit 对未登录/公开路由按客户端 IP 限流。
 //
@@ -22,13 +55,13 @@ import (
 // /health、/ready、/metrics 是探针与监控端点，同样跳过：LB 高频探活不该被 429 干扰，
 // 更重要的是 /ready 必须真实反映依赖状态，不能被限流层（也依赖 Redis）短路掉。
 // rdb 非空时使用 Redis 分布式 store，否则回退进程内 memory store。
-func RateLimit(perMinute int, rdb redis.UniversalClient, redisKeyPrefix string) gin.HandlerFunc {
+func RateLimit(perMinute int, rdb redis.UniversalClient, redisKeyPrefix string, opts ...RateLimitOption) gin.HandlerFunc {
 	return newRateLimiter(perMinute, rdb, redisKeyPrefix, "ip", func(c *gin.Context) string {
 		if isInfraPath(c.Request.URL.Path) || isUserScopedAPIPath(c.Request.URL.Path) {
 			return ""
 		}
 		return c.ClientIP()
-	})
+	}, opts...)
 }
 
 // isInfraPath 判断是否为不参与限流的基础设施端点。
@@ -42,7 +75,7 @@ func isInfraPath(path string) bool {
 }
 
 // RateLimitByUser 对已鉴权路由按 user_id 限流，应挂在 Auth 中间件之后。
-func RateLimitByUser(perMinute int, rdb redis.UniversalClient, redisKeyPrefix string) gin.HandlerFunc {
+func RateLimitByUser(perMinute int, rdb redis.UniversalClient, redisKeyPrefix string, opts ...RateLimitOption) gin.HandlerFunc {
 	return newRateLimiter(perMinute, rdb, redisKeyPrefix, "uid", func(c *gin.Context) string {
 		raw, exists := c.Get(ContextKeyUserID)
 		if !exists {
@@ -53,7 +86,7 @@ func RateLimitByUser(perMinute int, rdb redis.UniversalClient, redisKeyPrefix st
 			return ""
 		}
 		return id
-	})
+	}, opts...)
 }
 
 func isUserScopedAPIPath(path string) bool {
@@ -65,6 +98,7 @@ func newRateLimiter(
 	rdb redis.UniversalClient,
 	redisKeyPrefix, scope string,
 	keyGetter ginmiddleware.KeyGetter,
+	opts ...RateLimitOption,
 ) gin.HandlerFunc {
 	if perMinute <= 0 {
 		perMinute = 120
@@ -74,7 +108,12 @@ func newRateLimiter(
 		Limit:  int64(perMinute),
 	}
 
-	store := newLimiterStore(rdb, redisKeyPrefix, scope)
+	var cfg rateLimitOptions
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	store := newLimiterStore(rdb, redisKeyPrefix, scope, cfg)
 	instance := limiter.New(store, rate)
 
 	return ginmiddleware.NewMiddleware(instance,
@@ -93,7 +132,12 @@ func newRateLimiter(
 	)
 }
 
-func newLimiterStore(rdb redis.UniversalClient, redisKeyPrefix, scope string) limiter.Store {
+// newLimiterStore 创建限流存储。
+//
+// Redis 不可用时退回进程内 memory store 以保可用性，但必须留下可观测信号：
+// 多副本部署下每个 Pod 各算一份配额，实际阈值会变成 per_minute × 副本数。
+// 修复前这里是完全静默的，线上无从发现。
+func newLimiterStore(rdb redis.UniversalClient, redisKeyPrefix, scope string, opts rateLimitOptions) limiter.Store {
 	prefix := redisKeyPrefix
 	if prefix == "" {
 		prefix = "app"
@@ -106,6 +150,21 @@ func newLimiterStore(rdb redis.UniversalClient, redisKeyPrefix, scope string) li
 		})
 		if err == nil && s != nil {
 			return s
+		}
+		if err == nil {
+			err = errors.New("limiter redis store returned nil")
+		}
+
+		logger := opts.logger
+		if logger == nil {
+			logger = zap.L()
+		}
+		logger.Error("限流存储初始化失败，降级为进程内内存限流；多副本部署下实际阈值会放大为 per_minute × 副本数",
+			zap.String("scope", scope),
+			zap.Error(err),
+		)
+		if opts.observer != nil {
+			opts.observer.ObserveRateLimitFallback(scope)
 		}
 	}
 	return memory.NewStore()

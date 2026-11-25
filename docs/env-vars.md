@@ -20,6 +20,7 @@
 | `SERVER_READ_TIMEOUT` | `15s` | 否 | 读取完整请求（含 body） |
 | `SERVER_WRITE_TIMEOUT` | `30s` | 否 | 写入响应超时 |
 | `SERVER_IDLE_TIMEOUT` | `120s` | 否 | keep-alive 空闲连接超时 |
+| `SERVER_REQUEST_TIMEOUT` | `5s` | 否 | 单请求 context 超时（DB/Redis 调用共享该 ctx）。必须小于 `SERVER_WRITE_TIMEOUT`，超时后统一返回 503 |
 | `SERVER_TRUSTED_PROXIES` | 空 | **反代部署必填** | 可信反向代理/LB 的来源 IP 或 CIDR，逗号分隔（如 `10.0.0.0/8,192.168.1.10`）。为空时不信任任何代理：`X-Forwarded-For` 一律忽略，IP 限流与访问日志只认 TCP 对端地址。Gin 出厂默认信任所有代理，客户端因此可伪造 XFF 随意换限流桶，本项目启动时按本配置收紧 |
 
 ---
@@ -46,6 +47,7 @@
 | `DB_MIN_CONNS` | `2` | 否 | 最小空闲连接数 |
 | `DB_MAX_CONN_IDLE` | `10m` | 否 | 空闲连接最大存活时间 |
 | `DB_MAX_CONN_LIFE` | `1h` | 否 | 连接最大存活时间 |
+| `DB_STATEMENT_TIMEOUT` | `3s` | 否 | PostgreSQL `statement_timeout`（连接建立时下发），防止慢查询长期占用连接池；`0` 表示不设置。MySQL 驱动下当前不生效 |
 
 ---
 
@@ -66,6 +68,8 @@
 | `REDIS_PASSWORD` | — | 否 | 密码 |
 | `REDIS_DB` | `0` | 否 | 数据库编号 |
 | `REDIS_POOL_SIZE` | `10` | 否 | 连接池大小 |
+| `REDIS_READ_TIMEOUT` | `3s` | 否 | 单次 Redis 读超时（`0` 沿用 go-redis 默认 3s） |
+| `REDIS_WRITE_TIMEOUT` | `3s` | 否 | 单次 Redis 写超时（`0` 沿用 go-redis 默认 3s） |
 | `REDIS_KEY_PREFIX` | `app` | 否 | 业务键前缀，多项目共用 Redis 时避免冲突 |
 
 ---
@@ -75,8 +79,8 @@
 | 变量 | 默认值 | 必填 | 说明 |
 |------|--------|------|------|
 | `JWT_SECRET` | `dev-secret-change-in-production` | **生产必填** | 签名密钥，生产环境务必使用强随机字符串 |
-| `JWT_ACCESS_TTL` | `2h` | 否 | Access Token 有效期 |
-| `JWT_REFRESH_TTL` | `168h` | 否 | Refresh Token 有效期（7 天） |
+| `JWT_ACCESS_TTL` | `30m` | 否 | Access Token 有效期。必须小于 `JWT_REFRESH_TTL`；改密/降权后的权限回收最坏多等这么久 |
+| `JWT_REFRESH_TTL` | `168h` | 否 | Refresh Token 有效期（7 天），同时也是 session 的**绝对**寿命（刷新不续期，见 session.md） |
 
 ---
 

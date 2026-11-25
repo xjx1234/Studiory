@@ -138,6 +138,40 @@ func TestStore_UserIDFormsShareOneKeySpace(t *testing.T) {
 	}
 }
 
+// TestStore_SessionExpiresAbsolutely 固定「绝对过期」语义：
+// 同一用户后续登录会顺带续期 sessions:uid 集合，但绝不能复活已到期的旧 sid。
+// 修复前 Validate 先看集合成员，集合被续期后旧 sid 会被误判为有效。
+func TestStore_SessionExpiresAbsolutely(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store := NewStore(rdb, "test", true, time.Hour, false)
+	ctx := context.Background()
+	uid := "user-1"
+	sid1, sid2 := NewSessionID(), NewSessionID()
+
+	if err := store.Register(ctx, uid, sid1); err != nil {
+		t.Fatal(err)
+	}
+
+	mr.FastForward(40 * time.Minute)
+	// 第二次登录会把 sessions:uid 集合的 TTL 续到「此刻 + 1h」。
+	if err := store.Register(ctx, uid, sid2); err != nil {
+		t.Fatal(err)
+	}
+
+	mr.FastForward(30 * time.Minute) // sid1 已存续 70 分钟，sid2 仅 30 分钟
+
+	if store.Validate(ctx, uid, sid1) {
+		t.Error("sid1 已超过绝对 TTL，集合续期不得让它复活")
+	}
+	if !store.Validate(ctx, uid, sid2) {
+		t.Error("sid2 仍在 TTL 内，应判定有效")
+	}
+	if store.Validate(ctx, "user-2", sid2) {
+		t.Error("session 键的 userID 不匹配时必须拒绝")
+	}
+}
+
 func TestValidate_FailOpenOnRedisError(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

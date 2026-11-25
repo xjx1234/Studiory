@@ -75,10 +75,11 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		}
 	} else {
 		pool, err = store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{
-			MaxConns:    cfg.DBMaxConns,
-			MinConns:    cfg.DBMinConns,
-			MaxConnIdle: cfg.DBMaxConnIdle,
-			MaxConnLife: cfg.DBMaxConnLife,
+			MaxConns:         cfg.DBMaxConns,
+			MinConns:         cfg.DBMinConns,
+			MaxConnIdle:      cfg.DBMaxConnIdle,
+			MaxConnLife:      cfg.DBMaxConnLife,
+			StatementTimeout: cfg.DBStatementTimeout,
 		}, logger)
 		if err == nil {
 			storage = pg.NewStore(pool)
@@ -89,7 +90,9 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 	}
 
 	rdb, err := store.NewRedis(ctx, cfg.RedisURL, store.RedisOptions{
-		PoolSize: cfg.RedisPoolSize,
+		PoolSize:     cfg.RedisPoolSize,
+		ReadTimeout:  cfg.RedisReadTimeout,
+		WriteTimeout: cfg.RedisWriteTimeout,
 	}, logger)
 	if err != nil {
 		storage.Close()
@@ -104,6 +107,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		metricsHandler    http.Handler
 		codeObserver      authservice.CodeSendObserver
 	)
+	var rateLimitObserver middleware.RateLimitFallbackObserver
 	if cfg.MetricsEnabled {
 		m := metrics.New()
 		if pool != nil {
@@ -116,6 +120,13 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		metricsMiddleware = m.Middleware()
 		metricsHandler = m.Handler()
 		codeObserver = m
+		rateLimitObserver = m
+	}
+
+	// 限流存储降级必须可观测：日志用于即时排障，指标用于告警（多副本下阈值会被放大）。
+	rateLimitOpts := []middleware.RateLimitOption{middleware.WithRateLimitLogger(logger)}
+	if rateLimitObserver != nil {
+		rateLimitOpts = append(rateLimitOpts, middleware.WithRateLimitFallbackObserver(rateLimitObserver))
 	}
 
 	codeSender, err := buildCodeSender(cfg, logger)
@@ -166,8 +177,8 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		TodoService: todoservice.New(storage.Todos(), todoservice.WithLogger(logger)),
 
 		AuthMiddleware:          middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, cfg.AuthRedisFailOpen, logger),
-		RateLimitMiddleware:     middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix),
-		UserRateLimitMiddleware: middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix),
+		RateLimitMiddleware:     middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix, rateLimitOpts...),
+		UserRateLimitMiddleware: middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix, rateLimitOpts...),
 		MetricsMiddleware:       metricsMiddleware,
 		MetricsHandler:          metricsHandler,
 		ReadyChecks: []internalhttp.ReadyCheck{

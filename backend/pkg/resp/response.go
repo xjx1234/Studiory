@@ -11,6 +11,8 @@
 package resp
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"backend/pkg/errcode"
@@ -40,7 +42,14 @@ func OK(c *gin.Context, data interface{}) {
 
 // Fail 返回业务错误响应，HTTP 状态码由 errcode.Error.HTTPStatus 决定，
 // 并终止后续 Handler（AbortWithStatusJSON）。
+//
+// 若请求 context 已超时，则统一改写为 503：此时底层错误（DB/Redis）只是超时的
+// 表现形式，按 500 返回会误导客户端与告警。
 func Fail(c *gin.Context, err *errcode.Error) {
+	if c.Request != nil && errors.Is(c.Request.Context().Err(), context.DeadlineExceeded) {
+		err = errcode.ErrServiceUnavailable
+	}
+
 	status := err.HTTPStatus
 	if status == 0 {
 		status = http.StatusBadRequest

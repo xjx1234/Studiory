@@ -106,8 +106,17 @@ make run
 | `app.read_timeout` | `SERVER_READ_TIMEOUT` | `15s` | 限制读取完整请求（含 body） |
 | `app.write_timeout` | `SERVER_WRITE_TIMEOUT` | `30s` | 限制写入响应 |
 | `app.idle_timeout` | `SERVER_IDLE_TIMEOUT` | `120s` | keep-alive 空闲连接存活时间 |
+| `app.request_timeout` | `SERVER_REQUEST_TIMEOUT` | `5s` | 单请求 context 超时（DB/Redis 共享），须小于 `write_timeout`；超时统一 503 |
 
 生产环境一般保持默认即可；若后续接入大文件上传，可适当调大 `read_timeout` / `write_timeout`。
+
+连接池与依赖超时：
+
+| 配置项 | 环境变量 | 默认 | 作用 |
+|--------|----------|------|------|
+| `database.statement_timeout` | `DB_STATEMENT_TIMEOUT` | `3s` | PostgreSQL 语句超时，防慢查询占满连接池（MySQL 驱动下暂不生效） |
+| `redis.read_timeout` | `REDIS_READ_TIMEOUT` | `3s` | 单次 Redis 读超时 |
+| `redis.write_timeout` | `REDIS_WRITE_TIMEOUT` | `3s` | 单次 Redis 写超时 |
 
 ### 多/单设备 Session
 

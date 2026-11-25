@@ -94,6 +94,9 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 		return nil, errcode.ErrInvalidToken
 	}
 
+	// 注意：这里刻意不续期 session（不调用 sessions.Expire/Register）。
+	// 会话采用绝对过期语义，寿命在登录时确定；若在此滑动续期，
+	// refresh token 会变成「可无限续命的永久凭证」，与 docs/session.md 的承诺不符。
 	pair, issueErr := s.tokens.IssueTokenPair(claims.UserID, claims.Role, sessionID)
 	if issueErr != nil {
 		s.LogInternal("Refresh issue token pair", issueErr, baseservice.UserIDField(claims.UserID))

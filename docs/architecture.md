@@ -191,7 +191,11 @@ Redis 键说明见 [redis-keys.md](redis-keys.md) 第 2、7 节。
 
 ## 中间件顺序
 
-`RequestID` → `Metrics` → `SecurityHeaders` → `I18n` → `Zap` → `Recovery` → `Safe` → `CORS` → `RateLimit(IP)` → 路由级 `Auth` → `RateLimit(user_id)` → `RequireRole`。
+`RequestID` → `Metrics` → `SecurityHeaders` → `I18n` → `Zap` → `Recovery` → `Safe` → `Timeout` → `CORS` → `RateLimit(IP)` → 路由级 `Auth` → `RateLimit(user_id)` → `RequireRole`。
+
+`Timeout`（`app.request_timeout`，默认 5s）为每个请求挂上 ctx 超时：ctx 透传到 pgx / go-redis，阻塞查询会随超时退出；
+`resp.Fail` 在 ctx 已超时时统一改写为 503，避免把“依赖超时”误报成 500。它位于访问日志之内、业务中间件之外，
+保证 503 被访问日志记录且带上 CORS 头。
 
 `CORS` 必须在 `RateLimit` 之前：429/503 也是浏览器要读取的响应，缺少 `Access-Control-Allow-Origin` 时前端只能看到 CORS 报错；预检 `OPTIONS` 由 CORS 直接 204 结束，不占用 IP 限流配额。
 

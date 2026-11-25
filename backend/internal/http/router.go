@@ -54,6 +54,10 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	}))
 	r.Use(ginzap.RecoveryWithZap(zap.L(), true))
 	r.Use(middleware.Safe())
+	// 请求级超时：ctx 透传给 CORS/限流/Auth 以及 handler 内的 DB/Redis 调用。
+	// 放在访问日志与 Recovery 之内、业务中间件之外——这样 503 仍会被 ginzap 记录为最终状态码，
+	// 同时 CORS 头也能加到超时响应上。
+	r.Use(middleware.Timeout(deps.Cfg.ServerRequestTimeout))
 	// CORS 先于限流：让 429/503 也带上跨域头；预检在这里直接结束，不占用限流配额。
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowOrigins:     deps.Cfg.CORSAllowOrigins,

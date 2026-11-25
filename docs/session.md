@@ -21,13 +21,27 @@ auth:
 | 手机登出 | 仅吊销 session-1 | 吊销 session-1 |
 | 改密 / 被禁用 | 吊销**全部** session + 用户级 access revoke | 同左 |
 
+## 有效期语义（绝对过期）
+
+Session 采用**绝对过期**，不是滑动过期：
+
+- session 的 TTL 在登录时写入（`{prefix}:session:{sid}`），时长等于 `jwt.refresh_ttl`（默认 168h）；
+- `Refresh` 只轮换 token，**不延长** session 的 TTL，也不重建 session；
+- 因此用户最长在线时间 = 登录时刻 + `refresh_ttl`，到期后必须重新登录，即使手里还有一个“看起来很新”的 refresh token。
+
+这样设计是为了避免 refresh token 变成“可无限续命的永久凭证”。如果将来需要滑动过期，必须同时续期
+`session:{sid}` 与 `sessions:uid:{user_id}`，并更新本节与 [redis-keys.md](redis-keys.md) 第 7 节，不能只改一处。
+
+`Auth` 中间件判断会话是否有效时**只看 `session:{sid}` 键**：键存在且 value 与当前 userID 一致即通过。
+`sessions:uid` 集合只是 `RevokeAll` 的枚举索引，后续登录会顺带续期集合，但集合续期不会让已过期的旧 sid 复活。
+
 ## 技术实现
 
 1. 每次登录生成 `session_id`（UUID），写入 JWT 的 `sid` 声明（access + refresh 均携带）。
 2. Redis 记录会话状态，详见 [redis-keys.md](redis-keys.md) 第 7 节。
 3. `Auth` 中间件校验：`sid` 在 Redis 中仍有效 **且** 未命中用户级 `revoke:uid`。
 4. Redis 故障时按 `auth.redis_fail_open` 策略降级（默认开发 `true`=放行，生产 `false`=拒绝）。
-5. `Refresh` 保持同一 `sid` 轮换 token，不新建 session。
+5. `Refresh` 保持同一 `sid` 轮换 token，不新建 session，也不续期 session（绝对过期，见上节）。
 6. `Logout` 仅吊销当前 `sid` 对应 session（多设备下不影响其他设备）。
 
 ## 涉及文件

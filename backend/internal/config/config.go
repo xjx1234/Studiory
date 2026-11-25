@@ -33,6 +33,10 @@ type Config struct {
 	ServerReadTimeout       time.Duration
 	ServerWriteTimeout      time.Duration
 	ServerIdleTimeout       time.Duration
+
+	// ServerRequestTimeout 是单个请求的 context 超时（DB/Redis 调用共享该 ctx）。
+	// 必须小于 write_timeout：否则超时后已经没有时间把 503 信封写回客户端。
+	ServerRequestTimeout time.Duration
 	// ServerTrustedProxies 反向代理/LB 的来源 IP 或 CIDR 列表（如 "10.0.0.0/8"）。
 	// Gin 默认信任所有代理，这会让客户端能自行伪造 X-Forwarded-For；这里显式收紧：
 	// 列表为空（默认值）时不信任任何代理，XFF 一律忽略，限流与访问日志只认 TCP 对端地址。
@@ -53,6 +57,10 @@ type Config struct {
 	DBMaxConnIdle time.Duration
 	DBMaxConnLife time.Duration
 
+	// DBStatementTimeout PostgreSQL statement_timeout（每个连接建立时下发）。
+	// 防止慢查询长期占用连接池；0 表示不设置（PostgreSQL 默认无限制）。
+	DBStatementTimeout time.Duration
+
 	// ── Redis ─────────────────────────────────────────────────────────────
 	RedisURL       string
 	RedisHost      string
@@ -61,6 +69,10 @@ type Config struct {
 	RedisDB        int
 	RedisPoolSize  int
 	RedisKeyPrefix string
+
+	// RedisReadTimeout / RedisWriteTimeout 显式限制单次 Redis 往返；0 沿用 go-redis 默认（3s）。
+	RedisReadTimeout  time.Duration
+	RedisWriteTimeout time.Duration
 
 	// ── JWT ───────────────────────────────────────────────────────────────
 	JWTSecret          string
@@ -134,6 +146,7 @@ func Load() (*Config, error) {
 		ServerReadTimeout:       v.GetDuration("app.read_timeout"),
 		ServerWriteTimeout:      v.GetDuration("app.write_timeout"),
 		ServerIdleTimeout:       v.GetDuration("app.idle_timeout"),
+		ServerRequestTimeout:    v.GetDuration("app.request_timeout"),
 		ServerTrustedProxies:    getStringSlice(v, "app.trusted_proxies"),
 
 		DBDriver:      strings.ToLower(v.GetString("database.driver")),
@@ -148,12 +161,17 @@ func Load() (*Config, error) {
 		DBMaxConnIdle: v.GetDuration("database.pool.max_conn_idle"),
 		DBMaxConnLife: v.GetDuration("database.pool.max_conn_life"),
 
+		DBStatementTimeout: v.GetDuration("database.statement_timeout"),
+
 		RedisHost:      v.GetString("redis.host"),
 		RedisPort:      v.GetString("redis.port"),
 		RedisPassword:  v.GetString("redis.password"),
 		RedisDB:        v.GetInt("redis.db"),
 		RedisPoolSize:  v.GetInt("redis.pool_size"),
 		RedisKeyPrefix: v.GetString("redis.key_prefix"),
+
+		RedisReadTimeout:  v.GetDuration("redis.read_timeout"),
+		RedisWriteTimeout: v.GetDuration("redis.write_timeout"),
 
 		JWTSecret:          v.GetString("jwt.secret"),
 		JWTAccessTokenTTL:  v.GetDuration("jwt.access_ttl"),
@@ -240,6 +258,12 @@ func (c *Config) Validate() error {
 	if c.ServerIdleTimeout <= 0 {
 		return errors.New("app.idle_timeout 必须大于 0")
 	}
+	if c.ServerRequestTimeout <= 0 {
+		return errors.New("app.request_timeout 必须大于 0")
+	}
+	if c.ServerRequestTimeout > c.ServerWriteTimeout {
+		return errors.New("app.request_timeout 不能大于 app.write_timeout（超时后需要留出写回 503 的时间）")
+	}
 	if c.ServerReadTimeout < c.ServerReadHeaderTimeout {
 		return errors.New("app.read_timeout 不能小于 app.read_header_timeout")
 	}
@@ -261,6 +285,17 @@ func (c *Config) Validate() error {
 	}
 	if c.JWTSecret == "" {
 		return errors.New("jwt.secret 不能为空")
+	}
+	// Access Token 必须明显短于 Refresh Token：权限回收（改密/降权/禁用）依赖 access 自然过期兜底，
+	// 两者的有效期若倒挂或相等，refresh 轮换就失去意义。
+	if c.JWTAccessTokenTTL <= 0 {
+		return errors.New("jwt.access_ttl 必须大于 0")
+	}
+	if c.JWTRefreshTokenTTL <= 0 {
+		return errors.New("jwt.refresh_ttl 必须大于 0")
+	}
+	if c.JWTAccessTokenTTL >= c.JWTRefreshTokenTTL {
+		return errors.New("jwt.access_ttl 必须小于 jwt.refresh_ttl")
 	}
 	if c.IsProd() {
 		if c.JWTSecret == "dev-secret-change-in-production" {
@@ -474,6 +509,7 @@ func bindEnvs(v *viper.Viper) {
 		"app.read_timeout":                        "SERVER_READ_TIMEOUT",
 		"app.write_timeout":                       "SERVER_WRITE_TIMEOUT",
 		"app.idle_timeout":                        "SERVER_IDLE_TIMEOUT",
+		"app.request_timeout":                     "SERVER_REQUEST_TIMEOUT",
 		"app.trusted_proxies":                     "SERVER_TRUSTED_PROXIES",
 		"database.url":                            "DATABASE_URL",
 		"database.host":                           "DB_HOST",
@@ -486,12 +522,15 @@ func bindEnvs(v *viper.Viper) {
 		"database.pool.min_conns":                 "DB_MIN_CONNS",
 		"database.pool.max_conn_idle":             "DB_MAX_CONN_IDLE",
 		"database.pool.max_conn_life":             "DB_MAX_CONN_LIFE",
+		"database.statement_timeout":              "DB_STATEMENT_TIMEOUT",
 		"redis.url":                               "REDIS_URL",
 		"redis.host":                              "REDIS_HOST",
 		"redis.port":                              "REDIS_PORT",
 		"redis.password":                          "REDIS_PASSWORD",
 		"redis.db":                                "REDIS_DB",
 		"redis.pool_size":                         "REDIS_POOL_SIZE",
+		"redis.read_timeout":                      "REDIS_READ_TIMEOUT",
+		"redis.write_timeout":                     "REDIS_WRITE_TIMEOUT",
 		"redis.key_prefix":                        "REDIS_KEY_PREFIX",
 		"jwt.secret":                              "JWT_SECRET",
 		"jwt.access_ttl":                          "JWT_ACCESS_TTL",

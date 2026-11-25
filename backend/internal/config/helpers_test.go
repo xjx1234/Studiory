@@ -3,6 +3,7 @@ package config
 import (
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -131,9 +132,12 @@ func TestValidate_RequiredFieldsIndividually(t *testing.T) {
 			ServerReadTimeout:       15,
 			ServerWriteTimeout:      30,
 			ServerIdleTimeout:       120,
+			ServerRequestTimeout:    5,
 			DatabaseURL:             "postgres://u:p@localhost:5432/app?sslmode=disable",
 			RedisURL:                "redis://localhost:6379/0",
 			JWTSecret:               "some-secret",
+			JWTAccessTokenTTL:       30 * time.Minute,
+			JWTRefreshTokenTTL:      168 * time.Hour,
 			RateLimitPerMinute:      60,
 			CORSAllowOrigins:        []string{"https://example.com"},
 		}
@@ -155,9 +159,12 @@ func TestValidate_RequiredFieldsIndividually(t *testing.T) {
 		{"zero read timeout", func(c *Config) { c.ServerReadTimeout = 0 }, "app.read_timeout"},
 		{"zero write timeout", func(c *Config) { c.ServerWriteTimeout = 0 }, "app.write_timeout"},
 		{"zero idle timeout", func(c *Config) { c.ServerIdleTimeout = 0 }, "app.idle_timeout"},
+		{"zero request timeout", func(c *Config) { c.ServerRequestTimeout = 0 }, "app.request_timeout"},
 		{"empty database url", func(c *Config) { c.DatabaseURL = "" }, "database.url"},
 		{"empty redis url", func(c *Config) { c.RedisURL = "" }, "redis.url"},
 		{"empty jwt secret", func(c *Config) { c.JWTSecret = "" }, "jwt.secret"},
+		{"zero access ttl", func(c *Config) { c.JWTAccessTokenTTL = 0 }, "jwt.access_ttl"},
+		{"zero refresh ttl", func(c *Config) { c.JWTRefreshTokenTTL = 0 }, "jwt.refresh_ttl"},
 		{"zero rate limit", func(c *Config) { c.RateLimitPerMinute = 0 }, "rate_limit.per_minute"},
 		{"empty cors origins", func(c *Config) { c.CORSAllowOrigins = nil }, "cors.allow_origins"},
 	}
@@ -182,9 +189,12 @@ func TestValidate_RejectsReadTimeoutLessThanReadHeaderTimeout(t *testing.T) {
 		ServerReadTimeout:       5, // < ServerReadHeaderTimeout
 		ServerWriteTimeout:      30,
 		ServerIdleTimeout:       120,
+		ServerRequestTimeout:    5,
 		DatabaseURL:             "postgres://u:p@localhost:5432/app?sslmode=disable",
 		RedisURL:                "redis://localhost:6379/0",
 		JWTSecret:               "some-secret",
+		JWTAccessTokenTTL:       30 * time.Minute,
+		JWTRefreshTokenTTL:      168 * time.Hour,
 		RateLimitPerMinute:      60,
 		CORSAllowOrigins:        []string{"https://example.com"},
 	}

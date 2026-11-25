@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"backend/pkg/errcode"
@@ -236,5 +237,45 @@ func TestRateLimit_StoreErrorReturnsJSON503(t *testing.T) {
 	if body.Code != errcode.ErrServiceUnavailable.Code {
 		t.Fatalf("redis down: expected code %d, got %d body=%s",
 			errcode.ErrServiceUnavailable.Code, body.Code, w.Body.String())
+	}
+}
+
+type rateLimitFallbackRecorder struct {
+	mu     sync.Mutex
+	scopes []string
+}
+
+func (r *rateLimitFallbackRecorder) ObserveRateLimitFallback(scope string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.scopes = append(r.scopes, scope)
+}
+
+// TestRateLimit_RedisUnavailableFallsBackWithObservation 构造期限流 store 不可用时，
+// 仍要能服务（进程内限流），但必须通过观察者留下信号，不能再静默降级。
+func TestRateLimit_RedisUnavailableFallsBackWithObservation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	mr.Close() // 构造期预加载 Lua 脚本失败 → 走内存兜底
+
+	recorder := &rateLimitFallbackRecorder{}
+	r := gin.New()
+	r.Use(RateLimit(100, rdb, "test", WithRateLimitFallbackObserver(recorder)))
+	r.GET("/api/v1/auth/ping", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/ping", nil)
+	req.RemoteAddr = "9.9.9.9:1234"
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected memory fallback to keep serving, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(recorder.scopes) != 1 || recorder.scopes[0] != "ip" {
+		t.Fatalf("expected one fallback event for scope ip, got %v", recorder.scopes)
 	}
 }

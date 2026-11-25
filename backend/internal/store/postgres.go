@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +14,10 @@ type PostgresOptions struct {
 	MinConns    int
 	MaxConnIdle time.Duration
 	MaxConnLife time.Duration
+
+	// StatementTimeout 通过连接参数 statement_timeout 下发到每个新建连接，
+	// 由服务端强制中止超时语句，避免慢查询长期占用连接池（0 = 不设置）。
+	StatementTimeout time.Duration
 }
 
 // NewPostgres 创建 PostgreSQL 连接池。
@@ -34,6 +39,13 @@ func NewPostgres(ctx context.Context, databaseURL string, opts PostgresOptions, 
 	if opts.MaxConnLife > 0 {
 		cfg.MaxConnLifetime = opts.MaxConnLife
 	}
+	if opts.StatementTimeout > 0 {
+		if cfg.ConnConfig.RuntimeParams == nil {
+			cfg.ConnConfig.RuntimeParams = make(map[string]string, 1)
+		}
+		// PostgreSQL 的 statement_timeout 单位是毫秒。
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = fmt.Sprintf("%d", opts.StatementTimeout.Milliseconds())
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -49,6 +61,7 @@ func NewPostgres(ctx context.Context, databaseURL string, opts PostgresOptions, 
 		log.Info("PostgreSQL 连接成功",
 			zap.Int32("max_conns", cfg.MaxConns),
 			zap.Int32("min_conns", cfg.MinConns),
+			zap.Duration("statement_timeout", opts.StatementTimeout),
 		)
 	}
 

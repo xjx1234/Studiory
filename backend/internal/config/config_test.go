@@ -17,6 +17,9 @@ func TestValidateRejectsUnsafeProductionDefaults(t *testing.T) {
 		AuthMockCodeEnabled: false,
 		// 其余生产项保持安全默认，让这条用例只因 JWT 默认密钥而失败。
 		AuthRequireCodeForPasswordRegister: true,
+
+		JWTAccessTokenTTL:  30 * time.Minute,
+		JWTRefreshTokenTTL: 168 * time.Hour,
 	}
 
 	if err := cfg.Validate(); err == nil {
@@ -36,6 +39,9 @@ func TestValidateRejectsOAuthDevModeInProduction(t *testing.T) {
 		AuthMockCodeEnabled:                false,
 		AuthRequireCodeForPasswordRegister: true,
 		OAuthDevMode:                       true,
+
+		JWTAccessTokenTTL:  30 * time.Minute,
+		JWTRefreshTokenTTL: 168 * time.Hour,
 	}
 
 	if err := cfg.Validate(); err == nil {
@@ -54,6 +60,9 @@ func TestValidateRejectsShortJWTSecretInProduction(t *testing.T) {
 		CORSAllowOrigins:                   []string{"https://example.com"},
 		AuthMockCodeEnabled:                false,
 		AuthRequireCodeForPasswordRegister: true,
+
+		JWTAccessTokenTTL:  30 * time.Minute,
+		JWTRefreshTokenTTL: 168 * time.Hour,
 	}
 
 	if err := cfg.Validate(); err == nil {
@@ -69,9 +78,12 @@ func TestValidateAccepts32ByteJWTSecretInProduction(t *testing.T) {
 		ServerReadTimeout:       15 * time.Second,
 		ServerWriteTimeout:      30 * time.Second,
 		ServerIdleTimeout:       120 * time.Second,
+		ServerRequestTimeout:    5 * time.Second,
 		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=require",
 		RedisURL:                "redis://localhost:6379/0",
 		JWTSecret:               "0123456789abcdef0123456789abcdef", // 正好 32 字节
+		JWTAccessTokenTTL:       30 * time.Minute,
+		JWTRefreshTokenTTL:      168 * time.Hour,
 		RateLimitPerMinute:      60,
 		CORSAllowOrigins:        []string{"https://example.com"},
 		AuthMockCodeEnabled:     false,
@@ -94,9 +106,12 @@ func TestValidateAcceptsDevelopmentDefaults(t *testing.T) {
 		ServerReadTimeout:       15 * time.Second,
 		ServerWriteTimeout:      30 * time.Second,
 		ServerIdleTimeout:       120 * time.Second,
+		ServerRequestTimeout:    5 * time.Second,
 		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
 		RedisURL:                "redis://localhost:6379/0",
 		JWTSecret:               "dev-secret-change-in-production",
+		JWTAccessTokenTTL:       30 * time.Minute,
+		JWTRefreshTokenTTL:      168 * time.Hour,
 		RateLimitPerMinute:      120,
 		CORSAllowOrigins:        []string{"http://localhost:5173"},
 		AuthMockCodeEnabled:     true,
@@ -115,6 +130,7 @@ func TestValidateRejectsInvalidServerTimeouts(t *testing.T) {
 		ServerReadTimeout:       15 * time.Second,
 		ServerWriteTimeout:      30 * time.Second,
 		ServerIdleTimeout:       120 * time.Second,
+		ServerRequestTimeout:    5 * time.Second,
 		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
 		RedisURL:                "redis://localhost:6379/0",
 		JWTSecret:               "dev-secret",
@@ -129,6 +145,28 @@ func TestValidateRejectsInvalidServerTimeouts(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsRequestTimeoutLongerThanWriteTimeout 请求超时必须给写回 503 留出时间。
+func TestValidateRejectsRequestTimeoutLongerThanWriteTimeout(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.ServerRequestTimeout = cfg.ServerWriteTimeout + time.Second
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected request_timeout > write_timeout to be rejected")
+	}
+}
+
+// TestValidateRejectsAccessTTLNotShorterThanRefresh 两种 token 的有效期不允许倒挂或相等。
+func TestValidateRejectsAccessTTLNotShorterThanRefresh(t *testing.T) {
+	for _, ttl := range []time.Duration{168 * time.Hour, 200 * time.Hour} {
+		cfg := prodBaseConfig()
+		cfg.JWTAccessTokenTTL = ttl
+
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected access_ttl=%s (>= refresh_ttl) to be rejected", ttl)
+		}
+	}
+}
+
 func prodBaseConfig() Config {
 	return Config{
 		AppEnv:                  "production",
@@ -137,9 +175,12 @@ func prodBaseConfig() Config {
 		ServerReadTimeout:       15 * time.Second,
 		ServerWriteTimeout:      30 * time.Second,
 		ServerIdleTimeout:       120 * time.Second,
+		ServerRequestTimeout:    5 * time.Second,
 		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=require",
 		RedisURL:                "redis://localhost:6379/0",
 		JWTSecret:               "prod-secret-that-is-at-least-32-bytes-long",
+		JWTAccessTokenTTL:       30 * time.Minute,
+		JWTRefreshTokenTTL:      168 * time.Hour,
 		RateLimitPerMinute:      60,
 		CORSAllowOrigins:        []string{"https://example.com"},
 		AuthMockCodeEnabled:     false,

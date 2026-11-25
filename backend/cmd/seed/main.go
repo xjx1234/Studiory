@@ -79,7 +79,7 @@ func main() {
 		}
 	} else {
 		var pool *pgxpool.Pool
-		pool, err = store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{MaxConns: 2, MinConns: 1}, logger)
+		pool, err = store.NewPostgres(ctx, cfg.DatabaseURL, store.PostgresOptions{MaxConns: 2, MinConns: 1, StatementTimeout: cfg.DBStatementTimeout}, logger)
 		if err == nil {
 			users = pg.NewStore(pool).Users()
 			closeDB = pool.Close

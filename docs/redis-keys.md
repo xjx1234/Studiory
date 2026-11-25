@@ -49,8 +49,8 @@
 
 | 键格式 | 类型 | TTL | 说明 |
 |--------|------|-----|------|
-| `app:session:{session_id}` | string（user_id） | 与 Refresh Token 有效期一致 | 单个会话是否存在 |
-| `app:sessions:uid:{user_id}` | SET（session_id…） | 与 Refresh Token 一致 | **多设备模式**：该用户全部有效 session |
+| `app:session:{session_id}` | string（user_id） | 与 Refresh Token 一致（登录时写入，**绝对过期**） | 单个会话是否存在（唯一的有效性依据） |
+| `app:sessions:uid:{user_id}` | SET（session_id…） | 滚动设为「最新一次登录 + Refresh TTL」 | **多设备模式**：`RevokeAll` 的枚举索引，不参与有效性判断 |
 | `app:active_session:uid:{user_id}` | string（session_id） | 与 Refresh Token 一致 | **单设备模式**：当前唯一有效 session |
 
 - JWT 的 `sid` 声明与 Redis 会话一一对应。
@@ -58,7 +58,9 @@
   所以「用 canonical 形式登录、用大写形式吊销」仍然命中同一把键；`app:session:{id}` 的 value 也存归一化后的 ID。
 - **多设备模式**（`multi_device_enabled=true`，默认）：每次登录新建 session，互不影响；登出仅 `Revoke` 当前 session。
 - **单设备模式**（`multi_device_enabled=false`）：新登录前 `RevokeAll` 并写入新的 `active_session`，旧设备 token 立即失效。
-- `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 是否仍在 Redis 中有效。Session 校验同样按 `auth.redis_fail_open` 策略降级。
+- **绝对过期**：`Refresh` 不续期 `session:{sid}`；`sessions:uid` 集合会随新登录续期，但它只是 `RevokeAll` 的枚举索引，
+  有效性判断只看 `session:{sid}`，所以旧 sid 的键到期后即使仍在集合里也会被拒绝。
+- `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 对应的 `session:{sid}` 键是否存在且 userID 匹配。Session 校验同样按 `auth.redis_fail_open` 策略降级。
 
 ---
 
