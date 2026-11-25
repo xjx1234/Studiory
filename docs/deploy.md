@@ -171,6 +171,43 @@ docker run --rm \
   -database "$DATABASE_URL" up
 ```
 
+### 迁移失败处置（历史重复邮箱/手机号）
+
+`000005_identity_canonical` 会创建 `users_email_lower_key`，并把手机号清洗成裸 11 位。
+如果历史数据里存在「仅大小写/空白不同的重复邮箱」或「清洗后撞号的手机号」，迁移会**故意中止**
+（建唯一索引 / 触发 `users_phone_key` 冲突），而不是静默合并或丢数据。按下面步骤处理：
+
+1. 先查冲突行（在业务库执行，`normalized` 即归一化后的标识）：
+
+   ```sql
+   -- 重复邮箱
+   SELECT lower(btrim(email)) AS normalized, array_agg(id ORDER BY created_at) AS ids, count(*)
+   FROM users
+   WHERE email IS NOT NULL
+   GROUP BY 1 HAVING count(*) > 1;
+
+   -- 清洗后撞号的手机号（与迁移同样的清洗规则）
+   SELECT regexp_replace(phone, '[^0-9]', '', 'g') AS normalized,
+          array_agg(id ORDER BY created_at) AS ids, count(*)
+   FROM users
+   WHERE phone IS NOT NULL
+   GROUP BY 1 HAVING count(*) > 1;
+   ```
+
+2. 人工决定每个冲突组保留哪一行：登录频率高/绑定 OAuth、订单等关联数据多的账号优先保留。
+   其余账号要么合并（把 `user_oauth`、业务表里的 `user_id` 改指保留行后再删），要么直接停用
+   （`status = 'disabled'`）而不是物理删除，避免外键与审计信息丢失。
+
+3. golang-migrate 在失败时会把版本标记为 **dirty**，修完数据后先回到上一版本再重跑：
+
+   ```bash
+   migrate -path backend/migrations -database "$DATABASE_URL" force 4
+   migrate -path backend/migrations -database "$DATABASE_URL" up
+   ```
+
+   数据已人工合并干净时，也可以在 `force 4` 后直接 `up`；不要用 `force 5` 跳过，
+   否则唯一索引实际没有建成，大小写重复注册的口子会继续存在。
+
 ## 四、Kubernetes 部署示例
 
 示例清单位于 [`deploy/k8s/`](../deploy/k8s/)，包含 Deployment（探针 + 资源限制 + 优雅下线 + 反亲和）、Service、ConfigMap（非敏感配置）、Ingress（域名 + TLS）、PodDisruptionBudget、ServiceMonitor（可选）、迁移 Job 与 Secret 模板。

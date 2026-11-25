@@ -226,15 +226,6 @@ func databaseReadyCheck(db repo.Storage) func(ctx context.Context) error {
 	}
 }
 
-func postgresReadyCheck(pool *pgxpool.Pool) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
-		if pool == nil {
-			return errors.New("postgres pool is nil")
-		}
-		return pool.Ping(ctx)
-	}
-}
-
 // redisReadyCheck 构造 /ready 使用的 Redis 探针。
 func redisReadyCheck(rdb redis.UniversalClient) func(ctx context.Context) error {
 	return func(ctx context.Context) error {

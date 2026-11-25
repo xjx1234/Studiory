@@ -3,6 +3,8 @@ package validator
 import (
 	"regexp"
 
+	"backend/pkg/strutil"
+
 	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
 )
@@ -23,10 +25,14 @@ func registerCustomRules(v *validator.Validate, zhTrans, enTrans ut.Translator) 
 	registerPassword(v, zhTrans, enTrans)
 }
 
-// phone_cn 校验中国大陆手机号（1[3-9]xxxxxxxxx）
+// phone_cn 校验中国大陆手机号（1[3-9]xxxxxxxxx）。
+//
+// 先归一化再匹配：允许 "+86 138-0013-8000"、"(138) 0013 8000" 这类书写形式，
+// 与 send-code 的 target 判定口径一致。请求体本身不做改写，service 层仍会
+// 调 strutil.NormalizePhone，落库/查库使用的都是裸 11 位。
 func registerPhoneCN(v *validator.Validate, zhTrans, enTrans ut.Translator) {
 	_ = v.RegisterValidation("phone_cn", func(fl validator.FieldLevel) bool {
-		return reChinaPhone.MatchString(fl.Field().String())
+		return reChinaPhone.MatchString(strutil.NormalizePhone(fl.Field().String()))
 	})
 
 	_ = v.RegisterTranslation("phone_cn", zhTrans,

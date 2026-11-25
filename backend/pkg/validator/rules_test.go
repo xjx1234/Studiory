@@ -27,6 +27,12 @@ func TestPhoneCN_ValidNumbers(t *testing.T) {
 		"15912345678",
 		"19999999999",
 		"18600000000",
+		// 归一化后的写法与 send-code 一致，register/login 也必须接受
+		"+8613800138000",
+		"0086 13800138000",
+		"138-0013-8000",
+		"138 0013 8000",
+		"(138) 0013-8000",
 	}
 	for _, phone := range valid {
 		if err := v.Var(phone, "phone_cn"); err != nil {
@@ -38,13 +44,13 @@ func TestPhoneCN_ValidNumbers(t *testing.T) {
 func TestPhoneCN_InvalidNumbers(t *testing.T) {
 	v := engine(t)
 	invalid := []string{
-		"",               // 空
-		"12800138000",    // 第二位不在 3-9 范围
-		"1380013800",     // 10 位，少一位
-		"138001380000",   // 12 位，多一位
-		"abcdefghijk1",   // 非数字
-		"+8613800138000", // 带国际前缀
-		"023800138000",   // 不是以 1 开头
+		"",             // 空
+		"12800138000",  // 第二位不在 3-9 范围
+		"1380013800",   // 10 位，少一位
+		"138001380000", // 12 位，多一位
+		"abcdefghijk1", // 非数字
+		"023800138000", // 不是以 1 开头
+		"861380013800", // 去掉 86 后只有 10 位
 	}
 	for _, phone := range invalid {
 		if err := v.Var(phone, "phone_cn"); err == nil {

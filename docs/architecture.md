@@ -62,9 +62,9 @@ Client
 ### 1. 数据库
 
 ```bash
-# 新建 migration
-backend/migrations/000002_orders.up.sql
-backend/migrations/000002_orders.down.sql
+# 新建 migration（编号取当前最大编号 +1；仓库现有迁移到 000005）
+backend/migrations/000006_orders.up.sql
+backend/migrations/000006_orders.down.sql
 ```
 
 执行 `migrate up` 后，把新文件加入 `backend/sqlc.yaml` 的 `schema` 列表。
@@ -219,13 +219,16 @@ make sqlc
 
 CI 位于 `.github/workflows/ci.yml`，会校验 `go.mod`/`go.sum` 是否与 `go mod tidy` 结果一致、sqlc 生成代码、**OpenAPI 契约**、运行测试并构建后端。带 `-tags=integration` 的集成/E2E 测试需本机 Docker（`make test-integration`、`make test-e2e`）。
 
-## 多端与子服务
+## 多端与子服务（当前不存在）
 
-- **frontend/**：只调 `backend` HTTP API。
-- **apps/node/**：BFF、WebSocket；对前端暴露，可再调 backend。
-- **apps/python/**：算力密集任务；由 backend 通过 HTTP/RPC 调用，对前端透明。
+仓库目前只有 `backend/` 一个可运行服务，**没有** `frontend/`、`apps/node/`、`apps/python/` 目录。
+需要多端或异构子服务时，再按下面的职责边界新建，不必一次写满：
 
-克隆仓库后，子服务目录可按需创建，不必一次写满。
+- `frontend/`：只调 `backend` HTTP API。
+- `apps/node/`：BFF、WebSocket；对前端暴露，可再调 backend。
+- `apps/python/`：算力密集任务；由 backend 通过 HTTP/RPC 调用，对前端透明。
+
+新建前请同步更新本节与部署文档，避免文档继续承诺不存在的目录。
 
 ## 内置示例：Todo 模块
 

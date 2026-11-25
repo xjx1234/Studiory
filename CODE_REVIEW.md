@@ -30,9 +30,9 @@
 | P2-4 | **未动** | [admin/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L145-L217) 仍只有“不能改/禁自己”，无“最后一个 admin”统计；`migrations/` 与 `internal/` 全文无 `audit` |
 | P2-5 | **未动** | [cors.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/cors.go#L16-L34) `ExposeHeaders` 仍只有 `Content-Length`（`X-Request-Id` 已由 requestid 写入响应头，但浏览器读不到，排障体验未改善）；`Validate` 仍不拒绝 `allow_origins: ["*"]` + `allow_credentials: true`；L18-L20 的 localhost 兜底仍是死代码（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L324-L326) 已禁止空 origins） |
 | P2-6 | **未动** | `Validate` 仍只校验 server/限流/origins 非空与生产项，未加 `access_ttl < refresh_ttl`、`key_prefix` 非空、CORS 组合校验 |
-| P2-7 | **未动** | [app.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/app/app.go#L218-L225) 的 `postgresReadyCheck` 仍无生产调用（L173-L176 用的是 `databaseReadyCheck`），仅被 `app_test.go:22` 引用 |
+| P2-7 | **已修复** | 死代码 `postgresReadyCheck` 及其单测已删除，`/ready` 只用 `databaseReadyCheck`（[app.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/app/app.go#L219-L227)） |
 | P2-8 | **未动** | [health.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/health.go#L26-L40) 仍串行 `for` + 共享一个 2s ctx，一个慢探针会拖垮全部 |
-| P2-9 | **未动** | [architecture.md](file:///Users/pxiong/Code/personal/Studiory/docs/architecture.md#L220-L222) 仍列 `frontend/`、`apps/node/`、`apps/python/`；L66-L67 示例仍用 `000002_orders`，与实际的 `000002_example_todos` 冲突 |
+| P2-9 | **已修复** | [architecture.md](file:///Users/pxiong/Code/personal/Studiory/docs/architecture.md#L222-L231) 已注明 `frontend/`、`apps/node/`、`apps/python/` 当前不存在；示例迁移编号改为 `000006_orders`（L64-L68） |
 | P2-10 | **未动** | [deps.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/deps.go#L26-L52) `Deps` 字段未变 |
 | P2-11 | **未动** | [middleware/auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/auth.go#L54-L92) 仍是 `GET revoke` + `session.Validate`（`SIsMember` + 兜底 `GET`），最坏 3 次往返 |
 | P2-12 | **未动** | PG [users.sql](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/sqlc/query/users.sql#L57-L70) 仍 `ILIKE '%kw%'`，MySQL [store.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go#L114-L131) 仍 `LIKE '%kw%'`；两边都是 `LIMIT/OFFSET` 深翻页 |
@@ -64,6 +64,15 @@
 - **P1-5 部分修复**：新增 `middleware.Timeout`（`app.request_timeout`，ctx 透传 DB/Redis，超时统一 503）；PG 连接下发 `statement_timeout`；Redis 显式读写超时。**MySQL 侧语句超时未实现，随 P1-1 双栈治理一并处理**。
 - **P1-6 已修复**：限流 store 降级改为 `logger.Error` + `rate_limit_store_fallback_total{scope}`（metrics 关闭时仍记日志），并提供 `TestRateLimit_RedisUnavailableFallsBackWithObservation`。
 - 本批同样**未编译、未跑测试**（本机无 Go）。上方 0.2 表格是第二批的时点快照，其中 P1-3~P1-6 的“未动”结论已被本节取代。
+
+### 0.6 第四批改动（清单 1–6）
+
+- `sqlc.yaml` 已登记 `000005_identity_canonical.up.sql`，sqlc 看到的 schema 与真实迁移序列一致。
+- 手机号入参口径统一：`phone_cn` 校验先走 `strutil.NormalizePhone`，register/login 与 send-code 一样接受 `+86 138-0013-8000` 等写法；落库仍是裸 11 位。
+- `000005` 增加手机号清洗（去分隔符、剥 `0086`/`86` 国家码），与邮箱清洗同批完成。
+- [deploy.md](file:///Users/pxiong/Code/personal/Studiory/docs/deploy.md) 新增「迁移失败处置」：历史重复邮箱/手机号导致迁移中止时的排查 SQL、保留策略、`migrate force` 恢复步骤。
+- 删除死代码 `postgresReadyCheck` 及其单测（P2-7）。
+- 文档纠正：`frontend/`、`apps/node/`、`apps/python/` 标注为当前不存在（P2-9）；示例迁移编号 `000002_orders` → `000006_orders`。
 
 ---
 

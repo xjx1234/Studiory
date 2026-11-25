@@ -19,5 +19,23 @@ WHERE email IS NOT NULL AND email <> lower(btrim(email));
 -- 唯一约束 users_email_key 仍保留：等值查询 WHERE email = ? 走它，归一化后的输入即可命中。
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key ON users (lower(email)) WHERE email IS NOT NULL;
 
--- phone 无大小写问题，唯一性由 000001 的 UNIQUE 覆盖；书写形式（分隔符、+86）由服务层归一化，
--- 不建表达式索引，避免为了 SQL 旁路写入而牺牲等值查询的索引命中。
+-- phone：把历史行里带分隔符/国家码的写法清洗成裸 11 位，与服务层 strutil.NormalizePhone 对齐。
+-- 只对能明确判定为中国大陆手机号的行剥国家码（去前缀后仍匹配 1[3-9]\d{9}），
+-- 其他国家号码只去分隔符，不做国家码推断——推断错会改动真实号码。
+UPDATE users
+SET phone = regexp_replace(phone, '[^0-9]', '', 'g')
+WHERE phone IS NOT NULL AND phone ~ '[^0-9]';
+
+UPDATE users
+SET phone = substring(phone FROM 5)
+WHERE phone ~ '^0086(1[3-9][0-9]{9})$';
+
+UPDATE users
+SET phone = substring(phone FROM 3)
+WHERE phone ~ '^86(1[3-9][0-9]{9})$';
+
+-- 清洗后若与既有行撞号，会违反 users_phone_key 而使本迁移失败。
+-- 这是刻意的：同一号码的多行账号需要人工决定保留哪个，处理方式见 docs/deploy.md「迁移失败处置」。
+--
+-- 注意：已经在旧版本 000005 上执行过的库不会重跑本文件（golang-migrate 按版本号记录），
+-- 需手工执行上面三条 phone 清洗语句（可先按 docs/deploy.md 的查询确认没有撞号）。

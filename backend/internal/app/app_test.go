@@ -18,13 +18,6 @@ import (
 
 // ── 健康检查探针 ────────────────────────────────────────────────────────────
 
-func TestPostgresReadyCheck_NilPoolReturnsError(t *testing.T) {
-	check := postgresReadyCheck(nil)
-	if err := check(context.Background()); err == nil {
-		t.Fatal("expected error when postgres pool is nil")
-	}
-}
-
 func TestRedisReadyCheck_NilClientReturnsError(t *testing.T) {
 	check := redisReadyCheck(nil)
 	if err := check(context.Background()); err == nil {
