@@ -47,6 +47,7 @@ func allDefinedErrors() map[string]*Error {
 		"ErrTooManyRequests":    ErrTooManyRequests,
 		"ErrNotFound":           ErrNotFound,
 		"ErrAlreadyExists":      ErrAlreadyExists,
+		"ErrLastAdmin":          ErrLastAdmin,
 		"ErrInternal":           ErrInternal,
 		"ErrServiceUnavailable": ErrServiceUnavailable,
 	}

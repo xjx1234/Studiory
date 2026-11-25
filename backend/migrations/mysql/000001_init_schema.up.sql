@@ -37,3 +37,21 @@ CREATE TABLE todos (
 ALTER TABLE users ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active';
 -- 与 PG 侧 000003_user_status 对齐：status 只允许 active/disabled
 ALTER TABLE users ADD CONSTRAINT chk_users_status CHECK (status IN ('active', 'disabled'));
+
+-- 与 PG 侧 000006_admin_audit_logs 对齐：后台管理操作审计，只追加。
+-- 注意：000001 是合并后的初始迁移，已建库的环境不会重跑本文件；
+-- 这些环境需要手工执行本段 CREATE TABLE（字段与 PG 保持一致）。
+CREATE TABLE admin_audit_logs (
+    id           CHAR(36) NOT NULL PRIMARY KEY,
+    operator_id  CHAR(36) NULL,
+    target_id    CHAR(36) NULL,
+    action       VARCHAR(64) NOT NULL,
+    before_value JSON NULL,
+    after_value  JSON NULL,
+    created_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    INDEX idx_admin_audit_logs_created_at (created_at DESC),
+    INDEX idx_admin_audit_logs_operator (operator_id, created_at DESC),
+    INDEX idx_admin_audit_logs_target (target_id, created_at DESC),
+    CONSTRAINT fk_admin_audit_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_admin_audit_target FOREIGN KEY (target_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

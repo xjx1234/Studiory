@@ -8,6 +8,7 @@ type Storage interface {
 	Users() UserRepo
 	OAuth() OAuthRepo
 	Todos() TodoRepo
+	Audit() AdminAuditRepo
 	Ping(context.Context) error
 	Close()
 }

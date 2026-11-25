@@ -37,6 +37,9 @@ type UserRepo interface {
 	// 后台管理
 	List(ctx context.Context, params *ListUsersParams) ([]*User, error)
 	Count(ctx context.Context, keyword, status string) (int64, error)
+	// UpdateRole 修改角色。若目标当前是最后一个 active admin，而 role 又不再是 admin，
+	// 返回 ErrLastAdmin 且不做修改（守卫与更新在同一条 SQL 内完成，避免先查后改的竞态）。
 	UpdateRole(ctx context.Context, id uuid.UUID, role string) (*User, error)
+	// UpdateStatus 修改状态。禁用最后一个 active admin 同样返回 ErrLastAdmin。
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*User, error)
 }

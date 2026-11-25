@@ -33,6 +33,15 @@ Client
 
 管理端统一挂在 `router.go` 的 `admin := v1.Group("/admin", Auth, UserRateLimit, RequireRole("admin"))`，真实业务只需要继续注册到该分组。
 
+管理操作还有两条跨模块约束：
+
+- **最后一个管理员保护**：`UpdateRole` / `UpdateStatus` 的守卫直接写在 SQL 的 `WHERE` 里
+  （降权/禁用后必须仍存在 `role='admin' AND status='active'` 的其他账号），守卫不满足时更新 0 行，
+  repo 返回 `repo.ErrLastAdmin`，service 映射为 409。先查后改会留下竞态窗口，不要把守卫挪回 service。
+- **操作审计**：改角色 / 改状态成功后向 `admin_audit_logs` 追加一条记录
+  （`operator_id`、`target_id`、`action`、`before_value`、`after_value`）。表只追加，不提供 UPDATE/DELETE；
+  审计写失败不回滚已生效的业务变更，但会记录内部错误日志，便于事后补录。
+
 ### `internal/service/{module}`
 
 - 定义 `Service` 接口与实现。

@@ -171,6 +171,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		),
 		AdminService: adminservice.New(storage.Users(),
 			adminservice.WithLogger(logger),
+			adminservice.WithAuditRepo(storage.Audit()),
 			adminservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
 			adminservice.WithSessionStore(sessionStore),
 		),

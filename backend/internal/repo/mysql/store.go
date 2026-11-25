@@ -29,6 +29,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db, q: db} }
 func (s *Store) Users() repo.UserRepo           { return &userRepo{q: s.q} }
 func (s *Store) OAuth() repo.OAuthRepo          { return &oauthRepo{q: s.q} }
 func (s *Store) Todos() repo.TodoRepo           { return &todoRepo{q: s.q} }
+func (s *Store) Audit() repo.AdminAuditRepo     { return &auditRepo{q: s.q} }
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 func (s *Store) Close()                         { _ = s.db.Close() }
 
@@ -95,10 +96,44 @@ func (r *userRepo) UpdateProfile(ctx context.Context, id uuid.UUID, nickname, av
 	return r.update(ctx, id, `UPDATE users SET nickname=?, avatar=?, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?`, nickname, avatar, id.String())
 }
 func (r *userRepo) UpdateRole(ctx context.Context, id uuid.UUID, role string) (*repo.User, error) {
-	return r.update(ctx, id, `UPDATE users SET role=?, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?`, role, id.String())
+	// 子查询读取的 users 用派生表包一层：MySQL 不允许 UPDATE 的 WHERE 子查询直接引用目标表
+	// （错误 1093），派生表会被物化，从而既避开限制又能读到同一时刻的其他管理员状态。
+	return r.updateGuarded(ctx, id,
+		`UPDATE users SET role=?, updated_at=CURRENT_TIMESTAMP(6)
+		 WHERE id=?
+		   AND (?='admin' OR EXISTS (
+		       SELECT 1 FROM (SELECT id, role, status FROM users) AS other
+		       WHERE other.id<>? AND other.role='admin' AND other.status='active'))`,
+		role, id.String(), role, id.String())
 }
 func (r *userRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*repo.User, error) {
-	return r.update(ctx, id, `UPDATE users SET status=?, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?`, status, id.String())
+	return r.updateGuarded(ctx, id,
+		`UPDATE users SET status=?, updated_at=CURRENT_TIMESTAMP(6)
+		 WHERE id=?
+		   AND (?='active' OR EXISTS (
+		       SELECT 1 FROM (SELECT id, role, status FROM users) AS other
+		       WHERE other.id<>? AND other.role='admin' AND other.status='active'))`,
+		status, id.String(), status, id.String())
+}
+
+// updateGuarded 执行带“最后一个管理员”守卫的更新：
+// 0 行受影响时回查用户，存在则说明守卫拒绝（ErrLastAdmin），不存在则是 ErrNotFound。
+func (r *userRepo) updateGuarded(ctx context.Context, id uuid.UUID, query string, args ...any) (*repo.User, error) {
+	res, err := r.q.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		if _, getErr := r.GetByID(ctx, id); getErr != nil {
+			return nil, getErr
+		}
+		return nil, repo.ErrLastAdmin
+	}
+	return r.GetByID(ctx, id)
 }
 func (r *userRepo) update(ctx context.Context, id uuid.UUID, query string, args ...any) (*repo.User, error) {
 	if _, err := r.q.ExecContext(ctx, query, args...); err != nil {

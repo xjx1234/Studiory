@@ -268,10 +268,16 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg *UpdateUserProfileP
 }
 
 const updateUserRole = `-- name: UpdateUserRole :one
-UPDATE users
+UPDATE users AS target
 SET role = $2,
     updated_at = now()
-WHERE id = $1
+WHERE target.id = $1
+  AND ($2 = 'admin'
+       OR EXISTS (SELECT 1
+                  FROM users AS other
+                  WHERE other.id <> target.id
+                    AND other.role = 'admin'
+                    AND other.status = 'active'))
 RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 `
 
@@ -280,6 +286,8 @@ type UpdateUserRoleParams struct {
 	Role string      `json:"role"`
 }
 
+// “最后一个管理员”保护：目标降为非 admin 时，必须还存在另一个 active admin，
+// 否则本次更新不匹配任何行（repo 层据此返回 ErrLastAdmin）。
 func (q *Queries) UpdateUserRole(ctx context.Context, arg *UpdateUserRoleParams) (*User, error) {
 	row := q.db.QueryRow(ctx, updateUserRole, arg.ID, arg.Role)
 	var i User
@@ -299,10 +307,16 @@ func (q *Queries) UpdateUserRole(ctx context.Context, arg *UpdateUserRoleParams)
 }
 
 const updateUserStatus = `-- name: UpdateUserStatus :one
-UPDATE users
+UPDATE users AS target
 SET status = $2,
     updated_at = now()
-WHERE id = $1
+WHERE target.id = $1
+  AND ($2 = 'active'
+       OR EXISTS (SELECT 1
+                  FROM users AS other
+                  WHERE other.id <> target.id
+                    AND other.role = 'admin'
+                    AND other.status = 'active'))
 RETURNING id, phone, email, password_hash, nickname, avatar, role, created_at, updated_at, status
 `
 
@@ -311,6 +325,7 @@ type UpdateUserStatusParams struct {
 	Status string      `json:"status"`
 }
 
+// 禁用（status <> 'active'）时同样要求存在另一个 active admin。
 func (q *Queries) UpdateUserStatus(ctx context.Context, arg *UpdateUserStatusParams) (*User, error) {
 	row := q.db.QueryRow(ctx, updateUserStatus, arg.ID, arg.Status)
 	var i User

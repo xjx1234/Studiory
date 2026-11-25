@@ -66,6 +66,9 @@ other = "User not found"
 [err_already_exists]
 other = "Resource already exists"
 
+[err_last_admin]
+other = "Cannot remove the last active administrator; assign another admin first"
+
 # ── Server Internal ────────────────────────────────────────────────────────────
 
 [err_body_too_large]

@@ -120,7 +120,7 @@ func (r *userRepo) UpdateRole(ctx context.Context, id uuid.UUID, role string) (*
 		Role: role,
 	})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, r.updateGuardErr(ctx, id, err)
 	}
 	return userFromRow(row), nil
 }
@@ -131,9 +131,21 @@ func (r *userRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status string
 		Status: status,
 	})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, r.updateGuardErr(ctx, id, err)
 	}
 	return userFromRow(row), nil
+}
+
+// updateGuardErr 区分 UpdateUserRole/UpdateUserStatus 的两种 0 行情况：
+// 守卫条件不满足与记录不存在在 SQL 层都是“没有匹配行”，必须回查一次才能给出正确语义。
+func (r *userRepo) updateGuardErr(ctx context.Context, id uuid.UUID, err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, getErr := r.GetByID(ctx, id); getErr != nil {
+			return getErr
+		}
+		return repo.ErrLastAdmin
+	}
+	return wrapErr(err)
 }
 
 // wrapErr 将底层 PostgreSQL/pgx 错误转换为 repo 层稳定错误。

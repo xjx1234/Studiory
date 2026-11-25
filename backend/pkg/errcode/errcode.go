@@ -47,6 +47,8 @@ var (
 	// ── 业务资源  3xxxx ───────────────────────────────────────────────────────
 	ErrNotFound      = &Error{Code: 30001, MsgID: "err_not_found", HTTPStatus: http.StatusNotFound}
 	ErrAlreadyExists = &Error{Code: 30002, MsgID: "err_already_exists", HTTPStatus: http.StatusConflict}
+	// ErrLastAdmin 拒绝会让系统失去最后一个可用管理员的操作（降权/禁用）。
+	ErrLastAdmin = &Error{Code: 30003, MsgID: "err_last_admin", HTTPStatus: http.StatusConflict}
 
 	// ── 服务器内部  5xxxx ─────────────────────────────────────────────────────
 	ErrInternal           = &Error{Code: 50001, MsgID: "err_internal", HTTPStatus: http.StatusInternalServerError}

@@ -8,6 +8,7 @@ sql:
       - "migrations/000003_user_status.up.sql"
       - "migrations/000004_optimize_indexes.up.sql"
       - "migrations/000005_identity_canonical.up.sql"
+      - "migrations/000006_admin_audit_logs.up.sql"
     queries:
       - "internal/repo/sqlc/query"
     gen:

@@ -162,6 +162,10 @@ func (r *FakeUserRepo) UpdateRole(_ context.Context, id uuid.UUID, role string) 
 	if !ok {
 		return nil, repo.ErrNotFound
 	}
+	// 与 SQL 守卫保持一致：把最后一个 active admin 降为非 admin 时拒绝。
+	if role != repo.RoleAdmin && u.Role == repo.RoleAdmin && u.Status == repo.StatusActive && !r.hasOtherActiveAdmin(id) {
+		return nil, repo.ErrLastAdmin
+	}
 	u.Role = role
 	return u, nil
 }
@@ -171,6 +175,20 @@ func (r *FakeUserRepo) UpdateStatus(_ context.Context, id uuid.UUID, status stri
 	if !ok {
 		return nil, repo.ErrNotFound
 	}
+	// 与 SQL 守卫保持一致：禁用最后一个 active admin 时拒绝。
+	if status != repo.StatusActive && u.Role == repo.RoleAdmin && u.Status == repo.StatusActive && !r.hasOtherActiveAdmin(id) {
+		return nil, repo.ErrLastAdmin
+	}
 	u.Status = status
 	return u, nil
+}
+
+// hasOtherActiveAdmin 判断除 id 外是否还有可用管理员（与 SQL 里的 EXISTS 等价）。
+func (r *FakeUserRepo) hasOtherActiveAdmin(id uuid.UUID) bool {
+	for uid, u := range r.Users {
+		if uid != id && u.Role == repo.RoleAdmin && u.Status == repo.StatusActive {
+			return true
+		}
+	}
+	return false
 }

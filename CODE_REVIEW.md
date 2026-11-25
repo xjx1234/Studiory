@@ -27,7 +27,7 @@
 | P2-1 | **未动** | [auth/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/service.go#L26-L34) 等接口仍返回 `*errcode.Error` |
 | P2-2 | **未动** | [logging.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/logging.go#L17-L23) 的 `LogInternal` 无 `ctx` 参数，日志无 `request_id` |
 | P2-3 | **未动** | 仅有 `go.mod` 里 otel 的 **indirect** 依赖（[go.mod](file:///Users/pxiong/Code/personal/Studiory/backend/go.mod#L116-L120)），无 `TracerProvider`/gin 中间件/pgx tracer 初始化代码 |
-| P2-4 | **未动** | [admin/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L145-L217) 仍只有“不能改/禁自己”，无“最后一个 admin”统计；`migrations/` 与 `internal/` 全文无 `audit` |
+| P2-4 | **已修复** | 降权/禁用增加「最后一个 active admin」守卫（SQL 内完成，返回 `ErrLastAdmin`/409），并新增 `admin_audit_logs` 审计表记录操作者/目标/动作/前后值（[admin/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L145-L270)、[000006_admin_audit_logs.up.sql](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000006_admin_audit_logs.up.sql)） |
 | P2-5 | **未动** | [cors.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/cors.go#L16-L34) `ExposeHeaders` 仍只有 `Content-Length`（`X-Request-Id` 已由 requestid 写入响应头，但浏览器读不到，排障体验未改善）；`Validate` 仍不拒绝 `allow_origins: ["*"]` + `allow_credentials: true`；L18-L20 的 localhost 兜底仍是死代码（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L324-L326) 已禁止空 origins） |
 | P2-6 | **未动** | `Validate` 仍只校验 server/限流/origins 非空与生产项，未加 `access_ttl < refresh_ttl`、`key_prefix` 非空、CORS 组合校验 |
 | P2-7 | **已修复** | 死代码 `postgresReadyCheck` 及其单测已删除，`/ready` 只用 `databaseReadyCheck`（[app.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/app/app.go#L219-L227)） |
@@ -73,6 +73,13 @@
 - [deploy.md](file:///Users/pxiong/Code/personal/Studiory/docs/deploy.md) 新增「迁移失败处置」：历史重复邮箱/手机号导致迁移中止时的排查 SQL、保留策略、`migrate force` 恢复步骤。
 - 删除死代码 `postgresReadyCheck` 及其单测（P2-7）。
 - 文档纠正：`frontend/`、`apps/node/`、`apps/python/` 标注为当前不存在（P2-9）；示例迁移编号 `000002_orders` → `000006_orders`。
+
+### 0.7 第五批改动（P2-4）
+
+- **最后一个管理员保护**：`UpdateUserRole` / `UpdateUserStatus` 在 SQL 里加守卫（降权/禁用后必须仍有其他 `role='admin' AND status='active'` 账号），0 行时 repo 返回 `repo.ErrLastAdmin`，service 映射为 `ErrLastAdmin`（30003 / 409）。PG 与 MySQL 双实现，MySQL 用派生表规避 1093。
+- **管理审计**：新增 `admin_audit_logs`（迁移 `000006_admin_audit_logs`，同步写入 `sqlc.yaml`），记录 `operator_id`、`target_id`、`action`（`user.role.update` / `user.status.update`）、`before_value`、`after_value`；只追加，外键 `ON DELETE SET NULL` 保留历史。审计写失败不回滚业务变更，记内部错误日志。
+- 新增 `repo.AdminAuditRepo`、`Storage.Audit()`、`WithAuditRepo` option；`FakeUserRepo` 补齐同规则守卫，新增 `FakeAuditRepo`。
+- 测试：`TestUpdateRole_RejectsDemotingLastAdmin`、`TestUpdateRole_AllowsDemotingWhenAnotherAdminExists`、`TestSetStatus_RejectsDisablingLastAdmin`、`TestUpdateRole_WritesAuditLog`、`TestSetStatus_WritesAuditLog`、`TestSetStatus_AuditFailureDoesNotFailOperation`。
 
 ---
 

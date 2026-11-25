@@ -15,8 +15,15 @@ import (
 	"backend/pkg/errcode"
 	"backend/pkg/pagination"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+)
+
+// 写入 admin_audit_logs 的 action 取值；按 action 过滤即可还原某类管理操作的历史。
+const (
+	AuditActionUpdateRole = "user.role.update"
+	AuditActionSetStatus  = "user.status.update"
 )
 
 // UserItem 后台用户视图（对外输出结构）。
@@ -53,6 +60,7 @@ type adminServiceImpl struct {
 	baseservice.LogSupport
 
 	users     repo.UserRepo
+	audit     repo.AdminAuditRepo
 	sessions  *session.Store
 	rdb       redis.UniversalClient
 	keyPrefix string
@@ -80,6 +88,14 @@ func WithLogger(logger *zap.Logger) Option {
 func WithSessionStore(store *session.Store) Option {
 	return func(s *adminServiceImpl) {
 		s.sessions = store
+	}
+}
+
+// WithAuditRepo 注入审计仓库，改角色/改状态后写入 admin_audit_logs。
+// 未注入时不写审计（单测与最小化装配场景）。
+func WithAuditRepo(audit repo.AdminAuditRepo) Option {
+	return func(s *adminServiceImpl) {
+		s.audit = audit
 	}
 }
 
@@ -156,10 +172,28 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 		return nil, errcode.ErrCannotModifySelf
 	}
 
-	updated, err := s.users.UpdateRole(ctx, id, role)
+	before, err := s.users.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
+		}
+		s.LogInternal("UpdateRole lookup", err,
+			baseservice.UserIDField(targetUserID),
+			baseservice.ActorUserIDField(actingUserID),
+		)
+		return nil, errcode.ErrInternal
+	}
+	// 先快照旧值再更新：审计的 before 不能依赖更新后仍指向同一行的对象。
+	previousRole := before.Role
+
+	updated, err := s.users.UpdateRole(ctx, id, role)
+	if err != nil {
+		switch {
+		case errors.Is(err, repo.ErrNotFound):
+			return nil, errcode.ErrNotFound
+		case errors.Is(err, repo.ErrLastAdmin):
+			// 守卫在 SQL 内完成：会让系统失去最后一个可用管理员的降权被拒绝。
+			return nil, errcode.ErrLastAdmin
 		}
 		s.LogInternal("UpdateRole update", err,
 			baseservice.UserIDField(targetUserID),
@@ -167,6 +201,11 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 		)
 		return nil, errcode.ErrInternal
 	}
+
+	s.recordAudit(ctx, actingUserID, id, AuditActionUpdateRole,
+		map[string]string{"role": previousRole},
+		map[string]string{"role": updated.Role},
+	)
 
 	// 角色变更后立即吊销该用户所有旧 access token，使旧角色即时失效。
 	// 与 SetStatus 禁用行为保持一致：权限变更必须立即生效，
@@ -193,10 +232,26 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 		return nil, errcode.ErrCannotModifySelf
 	}
 
-	updated, err := s.users.UpdateStatus(ctx, id, status)
+	before, err := s.users.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
+		}
+		s.LogInternal("SetStatus lookup", err,
+			baseservice.UserIDField(targetUserID),
+			baseservice.ActorUserIDField(actingUserID),
+		)
+		return nil, errcode.ErrInternal
+	}
+	previousStatus := before.Status
+
+	updated, err := s.users.UpdateStatus(ctx, id, status)
+	if err != nil {
+		switch {
+		case errors.Is(err, repo.ErrNotFound):
+			return nil, errcode.ErrNotFound
+		case errors.Is(err, repo.ErrLastAdmin):
+			return nil, errcode.ErrLastAdmin
 		}
 		s.LogInternal("SetStatus update", err,
 			baseservice.UserIDField(targetUserID),
@@ -204,6 +259,11 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 		)
 		return nil, errcode.ErrInternal
 	}
+
+	s.recordAudit(ctx, actingUserID, id, AuditActionSetStatus,
+		map[string]string{"status": previousStatus},
+		map[string]string{"status": updated.Status},
+	)
 
 	// 禁用后立即吊销该用户所有旧 access token，使其当前会话即时失效。
 	item := toUserItem(updated)
@@ -238,6 +298,39 @@ func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string
 		s.LogInternal("revoke access tokens", err, baseservice.UserIDField(userID))
 	}
 	return ok
+}
+
+// recordAudit 写入一条后台管理审计日志（操作者、目标、动作、前后值）。
+//
+// 审计写失败不回滚已经生效的角色/状态变更：同库写入失败通常已由业务语句暴露，
+// 回滚也救不回丢失的日志；这里保留内部错误日志便于按日志补录。若合规要求更高，
+// 可改为与业务变更同事务（fail-closed），届时需要 repo 层提供事务句柄。
+func (s *adminServiceImpl) recordAudit(ctx context.Context, actingUserID string, targetID uuid.UUID, action string, before, after map[string]string) {
+	if s.audit == nil {
+		return
+	}
+
+	actorID, err := uuid.Parse(baseservice.CanonicalUserID(actingUserID))
+	if err != nil {
+		s.LogInternal("write audit log: invalid actor id", err,
+			baseservice.ActorUserIDField(actingUserID),
+		)
+		return
+	}
+
+	entry := &repo.AdminAuditLog{
+		OperatorID: &actorID,
+		TargetID:   &targetID,
+		Action:     action,
+		Before:     before,
+		After:      after,
+	}
+	if err := s.audit.Create(ctx, entry); err != nil {
+		s.LogInternal("write audit log", err,
+			baseservice.UserIDField(targetID.String()),
+			baseservice.ActorUserIDField(actingUserID),
+		)
+	}
 }
 
 func isValidRole(role string) bool {

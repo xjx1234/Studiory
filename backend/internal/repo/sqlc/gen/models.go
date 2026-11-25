@@ -8,6 +8,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminAuditLog struct {
+	ID          pgtype.UUID        `json:"id"`
+	OperatorID  pgtype.UUID        `json:"operator_id"`
+	TargetID    pgtype.UUID        `json:"target_id"`
+	Action      string             `json:"action"`
+	BeforeValue []byte             `json:"before_value"`
+	AfterValue  []byte             `json:"after_value"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Todo struct {
 	ID        pgtype.UUID        `json:"id"`
 	UserID    pgtype.UUID        `json:"user_id"`

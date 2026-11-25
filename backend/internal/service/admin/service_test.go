@@ -2,6 +2,7 @@ package adminservice
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -259,5 +260,121 @@ func TestSetStatus_SelfReactivateAllowed(t *testing.T) {
 	// 允许对自己设置 active（仅禁用自己被拦截）
 	if _, e := svc.SetStatus(context.Background(), self.ID.String(), self.ID.String(), repo.StatusActive); e != nil {
 		t.Fatalf("self re-activate should be allowed, got %+v", e)
+	}
+}
+
+// TestUpdateRole_RejectsDemotingLastAdmin 降权最后一个 active admin 必须被拒绝。
+// 守卫与 UPDATE 在同一条 SQL 内完成，不存在“先查后改”的竞态窗口。
+func TestUpdateRole_RejectsDemotingLastAdmin(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	admin := seedUser(r, repo.RoleAdmin, repo.StatusActive, "13800000001", time.Now())
+	svc := New(r)
+
+	_, e := svc.UpdateRole(context.Background(), uuid.New().String(), admin.ID.String(), repo.RoleUser)
+	if e == nil || e.Code != errcode.ErrLastAdmin.Code {
+		t.Fatalf("expected ErrLastAdmin, got %+v", e)
+	}
+	if admin.Role != repo.RoleAdmin {
+		t.Fatal("role was changed despite the guard")
+	}
+}
+
+// TestUpdateRole_AllowsDemotingWhenAnotherAdminExists 仍有其他可用管理员时允许降权。
+func TestUpdateRole_AllowsDemotingWhenAnotherAdminExists(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	operator := seedUser(r, repo.RoleAdmin, repo.StatusActive, "13800000001", time.Now())
+	target := seedUser(r, repo.RoleAdmin, repo.StatusActive, "13800000002", time.Now())
+	svc := New(r)
+
+	item, e := svc.UpdateRole(context.Background(), operator.ID.String(), target.ID.String(), repo.RoleUser)
+	if e != nil {
+		t.Fatalf("demote should be allowed when another admin remains: %+v", e)
+	}
+	if item.Role != repo.RoleUser {
+		t.Fatalf("role = %s, want user", item.Role)
+	}
+}
+
+// TestSetStatus_RejectsDisablingLastAdmin 禁用最后一个 active admin 必须被拒绝。
+func TestSetStatus_RejectsDisablingLastAdmin(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	admin := seedUser(r, repo.RoleAdmin, repo.StatusActive, "13800000001", time.Now())
+	svc := New(r)
+
+	_, e := svc.SetStatus(context.Background(), uuid.New().String(), admin.ID.String(), repo.StatusDisabled)
+	if e == nil || e.Code != errcode.ErrLastAdmin.Code {
+		t.Fatalf("expected ErrLastAdmin, got %+v", e)
+	}
+	if admin.Status != repo.StatusActive {
+		t.Fatal("status was changed despite the guard")
+	}
+}
+
+// TestUpdateRole_WritesAuditLog 审计必须记录操作者、目标、动作与前后值。
+func TestUpdateRole_WritesAuditLog(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	operator := seedUser(r, repo.RoleAdmin, repo.StatusActive, "13800000001", time.Now())
+	target := seedUser(r, repo.RoleUser, repo.StatusActive, "13800000002", time.Now())
+	audit := &testutil.FakeAuditRepo{}
+	svc := New(r, WithAuditRepo(audit))
+
+	if _, e := svc.UpdateRole(context.Background(), operator.ID.String(), target.ID.String(), repo.RoleAdmin); e != nil {
+		t.Fatalf("update role failed: %+v", e)
+	}
+	if len(audit.Logs) != 1 {
+		t.Fatalf("audit logs = %d, want 1", len(audit.Logs))
+	}
+	entry := audit.Logs[0]
+	if entry.Action != AuditActionUpdateRole {
+		t.Errorf("action = %q, want %q", entry.Action, AuditActionUpdateRole)
+	}
+	if entry.OperatorID == nil || *entry.OperatorID != operator.ID {
+		t.Errorf("operator = %v, want %s", entry.OperatorID, operator.ID)
+	}
+	if entry.TargetID == nil || *entry.TargetID != target.ID {
+		t.Errorf("target = %v, want %s", entry.TargetID, target.ID)
+	}
+	if entry.Before["role"] != repo.RoleUser || entry.After["role"] != repo.RoleAdmin {
+		t.Errorf("before/after = %v/%v, want role user->admin", entry.Before, entry.After)
+	}
+}
+
+// TestSetStatus_WritesAuditLog 禁用操作同样留痕，before/after 记录状态变化。
+func TestSetStatus_WritesAuditLog(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	operator := seedUser(r, repo.RoleAdmin, repo.StatusActive, "13800000001", time.Now())
+	target := seedUser(r, repo.RoleUser, repo.StatusActive, "13800000002", time.Now())
+	audit := &testutil.FakeAuditRepo{}
+	svc := New(r, WithAuditRepo(audit))
+
+	if _, e := svc.SetStatus(context.Background(), operator.ID.String(), target.ID.String(), repo.StatusDisabled); e != nil {
+		t.Fatalf("set status failed: %+v", e)
+	}
+	if len(audit.Logs) != 1 {
+		t.Fatalf("audit logs = %d, want 1", len(audit.Logs))
+	}
+	entry := audit.Logs[0]
+	if entry.Action != AuditActionSetStatus {
+		t.Errorf("action = %q, want %q", entry.Action, AuditActionSetStatus)
+	}
+	if entry.Before["status"] != repo.StatusActive || entry.After["status"] != repo.StatusDisabled {
+		t.Errorf("before/after = %v/%v, want status active->disabled", entry.Before, entry.After)
+	}
+}
+
+// TestSetStatus_AuditFailureDoesNotFailOperation 审计写失败不回滚业务变更：
+// 业务语句已经生效，这里仍返回成功，失败细节进内部日志。
+func TestSetStatus_AuditFailureDoesNotFailOperation(t *testing.T) {
+	r := testutil.NewFakeUserRepo()
+	operator := seedUser(r, repo.RoleAdmin, repo.StatusActive, "13800000001", time.Now())
+	target := seedUser(r, repo.RoleUser, repo.StatusActive, "13800000002", time.Now())
+	audit := &testutil.FakeAuditRepo{Err: errors.New("audit db is down")}
+	svc := New(r, WithAuditRepo(audit))
+
+	if _, e := svc.SetStatus(context.Background(), operator.ID.String(), target.ID.String(), repo.StatusDisabled); e != nil {
+		t.Fatalf("business change should still succeed: %+v", e)
+	}
+	if target.Status != repo.StatusDisabled {
+		t.Fatal("status change was rolled back by audit failure")
 	}
 }
