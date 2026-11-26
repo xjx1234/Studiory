@@ -15,6 +15,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// sendCodeRoute 是 AuthModule 注册的发码端点路由模板，也是唯一需要放宽请求预算的路由。
+// 这里写的是完整模板路径，必须与 module.go 的分组注册保持一致：
+// TestSendCodeRouteMatchesRegistration 会把真实注册的路径逐一比对，防止改路由名后预算静默失效。
+const sendCodeRoute = "/api/v1/auth/send-code"
+
 // NewRouter 构建 Gin 路由：先挂全局中间件，再逐个注册 deps.Modules。
 //
 // 中间件顺序：RequestID → … → Safe → Timeout → CORS → RateLimit(IP)
@@ -56,7 +61,9 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	// 请求级超时：ctx 透传给 CORS/限流/Auth 以及 handler 内的 DB/Redis 调用。
 	// 放在访问日志与 Recovery 之内、业务中间件之外——这样 503 仍会被 ginzap 记录为最终状态码，
 	// 同时 CORS 头也能加到超时响应上。
-	r.Use(middleware.Timeout(deps.Cfg.ServerRequestTimeout))
+	// send-code 单独放宽预算：它同步外呼 SMTP/短信，全局 5s 装不下内层超时之和。
+	r.Use(middleware.Timeout(deps.Cfg.ServerRequestTimeout,
+		middleware.RouteBudget{Path: sendCodeRoute, Budget: deps.Cfg.SendCodeRequestBudget()}))
 	// CORS 先于限流：让 429/503 也带上跨域头；预检在这里直接结束，不占用限流配额。
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowOrigins:     deps.Cfg.CORSAllowOrigins,
