@@ -46,6 +46,18 @@ metrics:
   同时日配额已在下发前扣掉（配额按请求计数，不因下发失败退还）。
 - 只在 `metrics.enabled=true` 时装配；关闭指标时会传 nil observer，业务逻辑不受影响。
 
+### 限流
+
+| 指标 | 类型 | label | 说明 |
+|------|------|-------|------|
+| `rate_limit_store_fallback_total` | counter | `scope` | 限流存储从 Redis 降级为进程内内存的次数 |
+
+- `scope`：`ip`（公开路由按客户端 IP）/ `uid`（已鉴权路由按 user_id）。
+- 降级在 **store 初始化（进程启动）时判定一次**，不是每次请求累加：单进程内每个 `scope` 最多 +1，
+  所以这条指标读的是「有没有发生过」，不要用 rate() 看趋势。
+- 非 0 表示限流计数只在单个副本内生效：**多副本部署下实际阈值≈配置值 × 副本数**，
+  429 会比预期少得多。降级同时打 `logger.Error`，因此关掉指标（`metrics.enabled=false`）也看得见。
+
 ### PostgreSQL 连接池（pgxpool）
 
 | 指标 | 类型 | 说明 |
@@ -103,6 +115,9 @@ sum(rate(auth_code_send_total{outcome="dispatch_error"}[10m]))
 
 # 清理失败：持续非 0 表示用户除了收不到验证码，还要再被冷却键挡 60 秒，且日配额已白扣
 sum by (channel) (rate(auth_code_cleanup_total{result="error"}[10m]))
+
+# 限流降级（启动期判定，用 increase 而非 rate）
+sum by (scope) (increase(rate_limit_store_fallback_total[1h])) > 0
 ```
 
 > 配额按**请求**计数，下发失败不退还（滚动 24h 窗口，见 [code-sender.md](code-sender.md)）。
