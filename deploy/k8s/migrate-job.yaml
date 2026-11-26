@@ -1,5 +1,10 @@
 # 部署前一次性执行数据库迁移（或在 CI/CD 流水线中先于 Deployment 运行）
 #
+# 0. 存量库升级前必须先跑前置检查，否则迁移可能中途 dirty：
+#    psql "$DATABASE_URL" -f scripts/check_phone_collisions.sql
+#    psql "$DATABASE_URL" -f scripts/check_email_collisions.sql
+#    连接与处置方式见 docs/deploy.md「阻塞性迁移的前置检查」与「部署步骤（示例）」第 3.5 步。
+#
 # 1. 从仓库 migrations 创建 ConfigMap：
 #    kubectl create configmap studiory-migrations \
 #      --from-file=backend/migrations/ \

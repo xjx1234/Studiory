@@ -179,21 +179,17 @@ docker run --rm \
 归一化口径与服务层一致：邮箱是 `lower(btrim(email))`；手机号先去非数字字符，再依次剥 `0086` / `86` 前缀
 （仅当剩余部分匹配 `1[3-9]\d{9}`，避免误改其他国家号码）。
 
-**发布前怎么跑**：**存在存量库时必须先跑**（每次要执行 000005 / 000007 的环境都要跑，不是一次性动作）：
+**发布前怎么跑**：**存在存量库时必须先跑**（每次要执行 000005 / 000007 的环境都要跑，不是一次性动作）。
+两个脚本都是只读查询、口径与迁移预检完全一致，不要在别处复制 SQL：
 
 ```bash
-# 手机号：只读脚本，与 000007 的预检口径完全一致
 psql "$DATABASE_URL" -f scripts/check_phone_collisions.sql
-
-# 重复邮箱
-psql "$DATABASE_URL" -c "
-SELECT lower(btrim(email)) AS normalized, array_agg(id ORDER BY created_at) AS ids, count(*)
-FROM users
-WHERE email IS NOT NULL
-GROUP BY 1 HAVING count(*) > 1;"
+psql "$DATABASE_URL" -f scripts/check_email_collisions.sql
 ```
 
-两条命令都没有输出，才可以发布。
+两条命令都没有输出，才可以发布。各执行路径的接入位置：
+K8s 见[部署步骤第 3.5 步](#部署步骤示例)；compose 一键栈见 `docker-compose.yml` 的 `migrate` 服务注释；
+本地开发在 `make migrate-up` 前手动跑一次（命令会提示）。
 
 **撞了怎么处置**：人工决定每组保留哪一行——登录频率高、绑定 OAuth、业务数据多的账号优先保留。
 其余账号要么合并（把 `user_oauth`、业务表里的 `user_id` 改指保留行后再删），要么直接停用
@@ -225,6 +221,22 @@ migrate -path backend/migrations -database "$DATABASE_URL" up
 - 跳过 `000007`：数据库停在 version 6，手机号仍是带分隔符/国家码的写法，服务层按裸 11 位查询不到这些账号。
 
 确认要承担后果时才跳过，并在后续版本里补偿。
+
+### 迁移不可变闸门（GitHub 侧）
+
+CI 的 `Migrations` workflow 会以**最早可达**的 `migrations-baseline-*` tag 为基线，对比 HEAD 检查
+`backend/migrations/**` 是否只新增文件（脚本：[scripts/check_migrations_immutable.sh](../scripts/check_migrations_immutable.sh)）。
+无 tag → 失败；有 tag 但都不在当前历史里（分支未 rebase）→ 失败并提示 rebase；首次接入用
+`MIGRATIONS_BASELINE_BOOTSTRAP=1` 显式放行一次，打完基线 tag 后必须删除该变量。
+
+仓库侧还必须加一道设置，否则有写权限的人可以在自己提交上自打一个基线 tag 绕过检查：
+
+> **GitHub → Settings → Rules → Rulesets → New tag ruleset**
+> - Target tags：`migrations-baseline-*`
+> - 勾选 **Restrict creations** 与 **Restrict deletions**，Bypass list 只保留管理员/组织 owner。
+
+注意：`git push origin <tag>` 默认不受分支保护限制，没有这条规则时任何有写权限的账号都能推送 tag。
+设置后，正常发版打基线需要管理员操作，绕过闸门也就无法做到“无痕”。
 
 ## 四、Kubernetes 部署示例
 
@@ -436,6 +448,16 @@ cp deploy/k8s/secret.example.yaml secret.yaml
 # 不需要某个 OAuth 渠道时，从 configmap.yaml 的 OAUTH_PROVIDERS 里移除它即可。
 # 编辑 secret.yaml 后：
 kubectl apply -f secret.yaml
+
+# 3.5 存量库前置检查（必须先跑，否则第 4 步迁移会 dirty）
+# 连接方式固定为 port-forward：把 PG Service 临时映射到本机 5433，在仓库根目录用只读脚本检查。
+# Service 名/命名空间按实际环境替换（示例假设 PG 在 default 命名空间、Service 名为 postgres）。
+kubectl port-forward svc/postgres 5433:5432 >/dev/null 2>&1 &
+PF_PID=$!
+psql "postgres://USER:PASSWORD@localhost:5433/app?sslmode=disable" -f scripts/check_phone_collisions.sql
+psql "postgres://USER:PASSWORD@localhost:5433/app?sslmode=disable" -f scripts/check_email_collisions.sql
+kill $PF_PID
+# 两个脚本都必须无输出才能继续；有输出先按「阻塞性迁移的前置检查」处置，不能直接跑第 4 步。
 
 # 4. 迁移（先于 API 上线）
 kubectl create configmap studiory-migrations \

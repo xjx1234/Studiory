@@ -29,6 +29,10 @@ services:
 
   # 一次性迁移任务：API 启动前确保数据库 schema 已就绪。
   # 迁移不打入 API 镜像，由独立任务执行（生产可换成 CI/CD 或 K8s Job）。
+  # 存量库升级前先跑前置检查（只读，防 000005/000007 中途 dirty）：
+  #   psql "$DATABASE_URL" -f scripts/check_phone_collisions.sql
+  #   psql "$DATABASE_URL" -f scripts/check_email_collisions.sql
+  # 说明见 docs/deploy.md「阻塞性迁移的前置检查」。
   migrate:
     image: migrate/migrate:v4.17.0
     container_name: app-migrate

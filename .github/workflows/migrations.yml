@@ -6,6 +6,7 @@ on:
     paths:
       - 'backend/migrations/**'
       - 'scripts/check_phone_collisions.sql'
+      - 'scripts/check_email_collisions.sql'
       - 'scripts/check_migrations_immutable.sh'
       - 'scripts/migration_upgrade_test.sh'
       - '.github/workflows/migrations.yml'
@@ -13,6 +14,7 @@ on:
     paths:
       - 'backend/migrations/**'
       - 'scripts/check_phone_collisions.sql'
+      - 'scripts/check_email_collisions.sql'
       - 'scripts/check_migrations_immutable.sh'
       - 'scripts/migration_upgrade_test.sh'
       - '.github/workflows/migrations.yml'

@@ -70,6 +70,7 @@ compose-down:
 	docker compose down
 
 migrate-up:
+	@echo "存量库升级前先跑 docs/deploy.md「阻塞性迁移的前置检查」：scripts/check_phone_collisions.sql、scripts/check_email_collisions.sql"
 	migrate -path $(MIGRATIONS_DIR) -database "$(MIGRATE_DATABASE_URL)" up
 
 migrate-down:
