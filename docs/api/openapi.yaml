@@ -447,6 +447,11 @@ paths:
   /api/v1/auth/send-code:
     post:
       tags: [auth]
+      description: >-
+        配额按**请求**计数，且在下发之前扣减：网关拒绝、超时等下发失败同样消耗一次配额（防用「失败重试」刷上限），
+        调用方不应把 500 当成可免费重试的信号。失败时会清除 60 秒冷却键与验证码键，允许立即再试。
+        本接口同步调用短信/邮件网关，请求预算由 `app.send_code_request_timeout` 单独放宽
+        （默认 20s，须大于 `smtp.dial_timeout` + `smtp.send_timeout`）。
       requestBody:
         required: true
         content:
@@ -468,7 +473,25 @@ paths:
         '429':
           description: >-
             触发限流（code 20003）：60 秒内重复请求同一目标；或超过滚动 24 小时配额
-            （同一目标默认 10 次、同一 IP 默认 100 次）。
+            （同一目标默认 10 次、同一 IP 默认 100 次）。配额在下发前扣减且不退还，
+            因此下发持续失败的窗口内也可能撞到该响应。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '500':
+          description: >-
+            下发失败（code 50001）：所有 Provider 均拒绝或写验证码到 Redis 失败。
+            冷却键与验证码键会被清除（清理走独立于请求的上下文，请求已超时也能生效），
+            用户可立即重试；配额已消耗。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedResponse'
+        '503':
+          description: >-
+            请求预算耗尽（code 50002）：网关在 `app.send_code_request_timeout` 内没有返回。
+            与 500 同样会清理冷却/验证码键，但配额仍已消耗。
           content:
             application/json:
               schema:

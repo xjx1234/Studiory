@@ -97,6 +97,8 @@ make run
 | `DATABASE_URL` / `REDIS_URL` | 不能为空；`DATABASE_URL` 必须显式携带 `sslmode=require/verify-ca/verify-full`（防止 TLS 被静默绕过） |
 | `AUTH_MULTI_DEVICE_ENABLED` | 按需设置（见下方「多/单设备 Session」） |
 | HTTP 超时 | `read_timeout` ≥ `read_header_timeout`，四项均须 > 0（见下方） |
+| `SERVER_SEND_CODE_REQUEST_TIMEOUT` | 可选；一旦设置须满足 `app.request_timeout` ≤ 该值 ≤ `app.write_timeout`（见下方「HTTP Server 超时」） |
+| `SMTP_DIAL_TIMEOUT` / `SMTP_SEND_TIMEOUT` | 配置了 `SMTP_HOST` 时均须 > 0，且两者之和 < 发码请求预算（见下方） |
 
 ### HTTP Server 超时
 
@@ -109,8 +111,31 @@ make run
 | `app.write_timeout` | `SERVER_WRITE_TIMEOUT` | `30s` | 限制写入响应 |
 | `app.idle_timeout` | `SERVER_IDLE_TIMEOUT` | `120s` | keep-alive 空闲连接存活时间 |
 | `app.request_timeout` | `SERVER_REQUEST_TIMEOUT` | `5s` | 单请求 context 超时（DB/Redis 共享），须小于 `write_timeout`；超时统一 503 |
+| `app.send_code_request_timeout` | `SERVER_SEND_CODE_REQUEST_TIMEOUT` | `20s` | 仅 `/api/v1/auth/send-code` 的请求预算（同步外呼短信/邮件网关）；`0`/留空 = 沿用 `app.request_timeout` |
 
 生产环境一般保持默认即可；若后续接入大文件上传，可适当调大 `read_timeout` / `write_timeout`。
+
+**放宽某一条路由的预算只有一处写法**：`middleware.Timeout` 在创建 ctx 之前按路由模板选预算。
+`context.WithTimeout` 只能缩短、不能延长已有 deadline，所以在这条全局中间件之内再挂一层更大的
+`Timeout` 是静默无效的（`middleware/timeout_test.go` 里有用例钉住这一点）。
+
+发码链路的超时必须自洽，`Validate()` 在启动阶段就断言（不满足直接拒绝启动，而不是等线上恒 503）：
+
+```
+smtp.dial_timeout + smtp.send_timeout < app.send_code_request_timeout ≤ app.write_timeout
+app.send_code_request_timeout ≥ app.request_timeout
+```
+
+左侧留出的余量是给 Redis/DB 与响应写回的；右侧留不出余量时，503 信封来不及写回客户端就被
+`http.Server` 关掉连接。默认值（SMTP `5s` + `10s`、预算 `20s`、`write_timeout` `30s`）满足该链，
+推导关系见 `config/config_test.go` 的 `TestValidateRejectsInconsistentTimeoutBudget`。
+
+| 配置项 | 环境变量 | 默认 | 作用 |
+|--------|----------|------|------|
+| `smtp.dial_timeout` | `SMTP_DIAL_TIMEOUT` | `5s` | 建立 TCP + TLS 连接的预算 |
+| `smtp.send_timeout` | `SMTP_SEND_TIMEOUT` | `10s` | 从 EHLO 到 `QUIT` 的预算；`deliver` 取 `min(send_timeout, 请求剩余)`，所以它与请求预算是共享而非相加 |
+
+未配置 `smtp.host` 的部署不受该链约束（不启用 SMTP 时这些键不参与校验），升级不会让原本正常的部署凭空启动失败。
 
 连接池与依赖超时：
 

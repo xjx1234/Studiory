@@ -213,6 +213,11 @@ Redis 键说明见 [redis-keys.md](redis-keys.md) 第 2、7 节。
 `resp.Fail` 在 ctx 已超时时统一改写为 503，避免把“依赖超时”误报成 500。它位于访问日志之内、业务中间件之外，
 保证 503 被访问日志记录且带上 CORS 头。
 
+同一条中间件支持按路由模板覆盖预算（`middleware.RouteBudget`），目前只有 `/api/v1/auth/send-code`
+用 `app.send_code_request_timeout` 放宽：它同步外呼短信/邮件网关，全局 5s 装不下内层超时之和。
+覆盖必须发生在**创建 ctx 之前**——`context.WithTimeout` 只能缩短、不能延长已有 deadline，
+在这条中间件之内再套一层更大的 `Timeout` 是静默无效的。
+
 `CORS` 必须在 `RateLimit` 之前：429/503 也是浏览器要读取的响应，缺少 `Access-Control-Allow-Origin` 时前端只能看到 CORS 报错；预检 `OPTIONS` 由 CORS 直接 204 结束，不占用 IP 限流配额。
 
 ## 路由模块化注册

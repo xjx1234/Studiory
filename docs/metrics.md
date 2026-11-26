@@ -36,10 +36,14 @@ metrics:
 | 指标 | 类型 | label | 说明 |
 |------|------|-------|------|
 | `auth_code_send_total` | counter | `channel`, `outcome` | 验证码下发次数 |
+| `auth_code_cleanup_total` | counter | `channel`, `result` | 下发失败后清理冷却/验证码键的次数 |
 
 - `channel`：`sms` / `email` / `unknown`（请求体里的其它值统一归为 `unknown`，避免标签基数无上限）。
 - `outcome`：`sent` / `cooldown` / `target_quota` / `ip_quota` / `unsupported_channel` /
   `invalid_request` / `storage_error` / `dispatch_error`。
+- `result`：`ok` / `error`。清理走独立于请求的 ctx（`context.WithoutCancel` + 独立超时），
+  慢 SMTP 把请求预算耗尽后仍能真的删掉键。`error` 持续非 0 意味着用户看不到邮件、重试又被 429，
+  同时日配额已在下发前扣掉（配额按请求计数，不因下发失败退还）。
 - 只在 `metrics.enabled=true` 时装配；关闭指标时会传 nil observer，业务逻辑不受影响。
 
 ### PostgreSQL 连接池（pgxpool）
@@ -92,7 +96,18 @@ pgxpool_acquired_conns / pgxpool_max_conns
 # Redis 连接池未命中率
 rate(redis_pool_misses_total[5m])
   / (rate(redis_pool_hits_total[5m]) + rate(redis_pool_misses_total[5m]))
+
+# 下发失败占比（慢 SMTP / 网关故障的主信号，适合做告警；阈值按自身量级定）
+sum(rate(auth_code_send_total{outcome="dispatch_error"}[10m]))
+  / sum(rate(auth_code_send_total[10m]))
+
+# 清理失败：持续非 0 表示用户除了收不到验证码，还要再被冷却键挡 60 秒，且日配额已白扣
+sum by (channel) (rate(auth_code_cleanup_total{result="error"}[10m]))
 ```
+
+> 配额按**请求**计数，下发失败不退还（滚动 24h 窗口，见 [code-sender.md](code-sender.md)）。
+> 因此 `dispatch_error` 与 `auth_code_cleanup_total{result="error"}` 同时上升时，
+> 单个目标可能在窗口内被自己的重试打进 `target_quota`，只看 5xx 率会低估影响面。
 
 ## 本地验证
 

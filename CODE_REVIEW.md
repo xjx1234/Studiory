@@ -105,6 +105,21 @@
 - **升级路径测试**：`scripts/migration_upgrade_test.sh` 用最早基线 tag 的迁移建库、写入 `+86 138-0013-8000` 等脏号，再 up 到 HEAD 断言裸号；并验证 force 后重跑幂等、撞号时脚本能报出、000007 预检能中止。
 - 文档：deploy.md 拆成「阻塞性迁移的前置检查」与「迁移失败处置（dirty）」，版本号改为按 `migrate version` 输出推导；architecture.md 标注迁移只可追加。
 
+### 0.11 第九批改动（发码链路超时预算，R-1）
+
+- **问题**：`app.request_timeout: 5s` 全局挂在业务中间件之外，而 SMTP 的 5s 建连 + 10s 全流程是包内常量；慢网关下每次发码都以 503 收场，且没有任何启动校验把两层串起来。
+  机制上不是「5s + 10s 相加」：`SMTPProvider.deliver` 取 `min(now+send_timeout, ctx.Deadline())`，请求预算比内层小时是**共享**这 5s。
+- **顺带挖出（更值得说）**：超时路径上的「回滚冷却与验证码」从未生效——清理用 `_ = s.cache.Del(ctx, ...)` 复用已取消的请求 ctx，go-redis 直接返回 ctx 错误并被吞掉。
+  结果是用户没收到邮件、立刻重试被 429 挡 60 秒，脏验证码键还在 Redis 躺 5 分钟，而日配额早在下发前扣掉。邮箱渠道独有（短信无真实 Provider）。
+- **修复 1（按路由预算）**：`middleware.Timeout` 支持 `RouteBudget{Path, Budget}`，在**创建 ctx 之前**按 `c.FullPath()` 选预算；`app.send_code_request_timeout`（默认 20s，`0` = 沿用 `request_timeout`）只放宽 send-code，不抬全局。
+  `context.WithTimeout` 只能缩短不能延长，所以「在路由上再挂一层更大的 Timeout」是静默无效的——`TestTimeout_NestedLongerBudgetCannotExtend` 钉住这一点。
+- **修复 2（配置化 + 启动校验链）**：`smtp.dial_timeout` / `smtp.send_timeout` 进配置（`WithSMTPTimeouts` 落到连接层，`TestSMTPProvider_WithSMTPTimeoutsAppliesToConnection` 防「写了没接线」）；
+  `Validate()` 断言 `dial + send < 预算 ≤ write_timeout` 且 `预算 ≥ request_timeout`，不满足直接拒绝启动。未配 `smtp.host` 的部署不受约束，升级不会凭空启动失败。
+- **修复 3（清理真的执行）**：`rollbackCodeKeys` 用 `context.WithoutCancel(ctx)` + 独立 2s 预算（保留 ctx 里的请求字段、只摘掉取消信号），三处 `_ =` 全部替换，结果进 `auth_code_cleanup_total{channel,result}` 并打日志。
+- **修复 4（Router 预算切分）**：`sender.Router` 顺序尝试多个 Provider 时按「剩余预算 ÷ 剩余尝试数」切分，主通道拖满再也不会让备用通道拿到过期 ctx；上下文已结束则停止空转，并在错误里写明剩余通道未被尝试。
+- **未做（有意）**：`dispatch_error` 不退还配额——滚动 24h 窗口按请求计数是刻意设计（防用失败重试刷上限），改为文档化 + 指标告警口径（metrics.md / openapi.yaml）。发码异步化（`status=queued`）留作后续。
+- 测试均为反向验证过：把修复改回旧实现后对应用例转红（超时后键残留 `exists=2`、备用通道 `live=false`、send-code 预算读回 100ms）。
+
 ---
 
 ## 一、总体结论
