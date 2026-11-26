@@ -173,42 +173,58 @@ docker run --rm \
   -database "$DATABASE_URL" up
 ```
 
-### 迁移失败处置（历史重复邮箱/手机号）
+### 阻塞性迁移的前置检查
 
-`000005_identity_canonical` 会创建 `users_email_lower_key`，并把手机号清洗成裸 11 位。
-如果历史数据里存在「仅大小写/空白不同的重复邮箱」或「清洗后撞号的手机号」，迁移会**故意中止**
-（建唯一索引 / 触发 `users_phone_key` 冲突），而不是静默合并或丢数据。按下面步骤处理：
+**检查什么**：会被唯一索引或迁移预检拦下的历史数据只有两类——归一化后相同的邮箱、归一化后相同的手机号。
+归一化口径与服务层一致：邮箱是 `lower(btrim(email))`；手机号先去非数字字符，再依次剥 `0086` / `86` 前缀
+（仅当剩余部分匹配 `1[3-9]\d{9}`，避免误改其他国家号码）。
 
-1. 先查冲突行（在业务库执行，`normalized` 即归一化后的标识）：
+**发布前怎么跑**：**存在存量库时必须先跑**（每次要执行 000005 / 000007 的环境都要跑，不是一次性动作）：
 
-   ```sql
-   -- 重复邮箱
-   SELECT lower(btrim(email)) AS normalized, array_agg(id ORDER BY created_at) AS ids, count(*)
-   FROM users
-   WHERE email IS NOT NULL
-   GROUP BY 1 HAVING count(*) > 1;
+```bash
+# 手机号：只读脚本，与 000007 的预检口径完全一致
+psql "$DATABASE_URL" -f scripts/check_phone_collisions.sql
 
-   -- 清洗后撞号的手机号（与迁移同样的清洗规则）
-   SELECT regexp_replace(phone, '[^0-9]', '', 'g') AS normalized,
-          array_agg(id ORDER BY created_at) AS ids, count(*)
-   FROM users
-   WHERE phone IS NOT NULL
-   GROUP BY 1 HAVING count(*) > 1;
-   ```
+# 重复邮箱
+psql "$DATABASE_URL" -c "
+SELECT lower(btrim(email)) AS normalized, array_agg(id ORDER BY created_at) AS ids, count(*)
+FROM users
+WHERE email IS NOT NULL
+GROUP BY 1 HAVING count(*) > 1;"
+```
 
-2. 人工决定每个冲突组保留哪一行：登录频率高/绑定 OAuth、订单等关联数据多的账号优先保留。
-   其余账号要么合并（把 `user_oauth`、业务表里的 `user_id` 改指保留行后再删），要么直接停用
-   （`status = 'disabled'`）而不是物理删除，避免外键与审计信息丢失。
+两条命令都没有输出，才可以发布。
 
-3. golang-migrate 在失败时会把版本标记为 **dirty**，修完数据后先回到上一版本再重跑：
+**撞了怎么处置**：人工决定每组保留哪一行——登录频率高、绑定 OAuth、业务数据多的账号优先保留。
+其余账号要么合并（把 `user_oauth`、业务表里的 `user_id` 改指保留行后再删），要么直接停用
+（`status = 'disabled'`）而不是物理删除，避免外键与审计信息丢失。处理完重新跑上面的检查，直到无输出。
 
-   ```bash
-   migrate -path backend/migrations -database "$DATABASE_URL" force 4
-   migrate -path backend/migrations -database "$DATABASE_URL" up
-   ```
+### 迁移失败处置（dirty 状态）
 
-   数据已人工合并干净时，也可以在 `force 4` 后直接 `up`；不要用 `force 5` 跳过，
-   否则唯一索引实际没有建成，大小写重复注册的口子会继续存在。
+golang-migrate 不记录迁移文件的 checksum，只在 `schema_migrations` 里记录 `version` 与 `dirty`；
+执行中途失败会停在「目标版本 + `dirty=true`」。先确认当前版本：
+
+```bash
+migrate -path backend/migrations -database "$DATABASE_URL" version
+# 例：7 (dirty)
+```
+
+然后 `force` 到该版本的**前一个成功版本**再重跑——不要照抄示例里的数字，以命令输出为准：
+
+```bash
+migrate -path backend/migrations -database "$DATABASE_URL" force 6
+migrate -path backend/migrations -database "$DATABASE_URL" up
+```
+
+> 锚点：当前阻塞性失败点有两个——`000005`（重复邮箱导致 `users_email_lower_key` 建不出来）与
+> `000007`（手机号清洗预检撞号）。上面的示例按 000007 失败写成 `force 6`；新增迁移版本后
+> 请以 `migrate version` 的输出为准，不要直接沿用文档里的数字。
+
+不要把 `force` 到失败版本本身当成解决办法：
+- 跳过 `000005`：`users_email_lower_key` 实际没有建成，大小写重复注册的口子会继续存在；
+- 跳过 `000007`：数据库停在 version 6，手机号仍是带分隔符/国家码的写法，服务层按裸 11 位查询不到这些账号。
+
+确认要承担后果时才跳过，并在后续版本里补偿。
 
 ## 四、Kubernetes 部署示例
 

@@ -71,12 +71,16 @@ Client
 ### 1. 数据库
 
 ```bash
-# 新建 migration（编号取当前最大编号 +1；仓库现有迁移到 000005）
-backend/migrations/000006_orders.up.sql
-backend/migrations/000006_orders.down.sql
+# 新建 migration：编号取当前最大编号 +1（仓库现有迁移到 000007）
+backend/migrations/000008_orders.up.sql
+backend/migrations/000008_orders.down.sql
 ```
 
 执行 `migrate up` 后，把新文件加入 `backend/sqlc.yaml` 的 `schema` 列表。
+
+> **迁移不可变**：已发布的迁移文件（含 `000005`）不得修改或删除，只允许新增版本。
+> CI 的 `Migrations` workflow 以 `migrations-baseline-*` tag 为基线校验（`scripts/check_migrations_immutable.sh`），
+> 并在真实 PostgreSQL 上跑存量库升级路径（`scripts/migration_upgrade_test.sh`）。
 
 ### 2. sqlc
 

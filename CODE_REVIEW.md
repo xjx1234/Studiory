@@ -19,7 +19,7 @@
 | 编号 | 结论 | 依据（当前代码现状） |
 |------|------|----------------------|
 | P1-1 | **未动** | `repo/mysql`、`migrations/mysql/000001`、compose `mysql`/`api-mysql` profile、Makefile `DB_DRIVER` 分支、CI MySQL job 全部存在；[README.md](file:///Users/pxiong/Code/personal/Studiory/README.md#L11) 仍只写“PostgreSQL 迁移”，`docs/*.md` 全文 0 处 `mysql`，[env-vars.md](file:///Users/pxiong/Code/personal/Studiory/docs/env-vars.md#L33) 仍无 `DB_DRIVER`；[sqlc.yaml](file:///Users/pxiong/Code/personal/Studiory/backend/sqlc.yaml#L1-L10) 仍只有 postgresql 一组 |
-| P1-2 | **已修复** | 归一化落在 [strutil.go](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/strutil/strutil.go#L69-L118)，覆盖 `SendCode`/三个验证码键/`loginWithCode`/`findUserByAccount`/`loginAccountID`/`RegisterInput.Canonicalize`/`checkAccountExists`/`cmd/seed`/`SendCodeReq.Validate`；[000005](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000005_identity_canonical.up.sql) 清洗历史邮箱并建 `lower(email)` 部分唯一索引；三张单测表 + `canonical_test.go` + PG/MySQL 集成断言齐备。另确认 `UpdateProfile` 只改昵称/头像（[user/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/user/service.go#L28-L33)），不存在绕过归一化改邮箱/手机号的旁路，覆盖面完整 |
+| P1-2 | **已修复** | 归一化落在 [strutil.go](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/strutil/strutil.go#L69-L118)，覆盖 `SendCode`/三个验证码键/`loginWithCode`/`findUserByAccount`/`loginAccountID`/`RegisterInput.Canonicalize`/`checkAccountExists`/`cmd/seed`/`SendCodeReq.Validate`；[000005](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000005_identity_canonical.up.sql) 清洗历史邮箱并建 `lower(email)` 部分唯一索引；手机号历史清洗后来单独补在 [000007](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000007_identity_canonical_phone.up.sql)（含撞号预检）；三张单测表 + `canonical_test.go` + PG/MySQL 集成断言齐备。另确认 `UpdateProfile` 只改昵称/头像（[user/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/user/service.go#L28-L33)），不存在绕过归一化改邮箱/手机号的旁路，覆盖面完整 |
 | P1-3 | **未动** | [token.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/token.go#L57-L104) 的 `Refresh` 仍只校验+签发，无 `Expire` 续期；[session.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/session/session.go#L114-L140) 的“session 键兜底”分支仍在，集合续期副作用依旧隐式 |
 | P1-4 | **未动** | [base.yaml](file:///Users/pxiong/Code/personal/Studiory/backend/config/base.yaml#L45) 仍 `access_ttl: 2h`；[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L220-L328) 的 `Validate` 仍无 access/refresh TTL 关系校验 |
 | P1-5 | **未动** | [router.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/router.go#L32-L64) 中间件链无 `Timeout`；[postgres.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/store/postgres.go#L16-L51) 未设 `statement_timeout`/`query_timeout`；[redis.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/store/redis.go#L13-L33) 未显式设读写超时（修正一处：go-redis 默认 3s 读写、5s dial，Redis 侧实际有兜底，**PG 语句超时才是真缺口**） |
@@ -46,7 +46,7 @@
 |---|------|------|
 | N-1 | **违反既有约定（应修）** | [architecture.md](file:///Users/pxiong/Code/personal/Studiory/docs/architecture.md#L70) 明确要求“执行 `migrate up` 后，把新文件加入 `backend/sqlc.yaml` 的 schema 列表”，但 `000005` **没有登记**。当前无功能影响（只含数据清洗+表达式索引，不改表结构，`sqlc generate` 不会产出 diff），但同一次提交就漏掉了这条规则，说明该约定目前只靠人记；下次迁移若含列变更会被静默漏检。修复成本 1 行 |
 | N-2 | 新引入的口径不一致（低） | `SendCode` 现在接受 `+86 138-0013-8000`（[auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/auth.go#L76-L93)），但 `RegisterReq.Phone` / `LoginReq.Phone` 仍绑 `phone_cn`（[auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/auth.go#L40-L45)、[rules.go](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/validator/rules.go#L11)）只接受裸 11 位 → 同一个号码“能收码、不能注册/登录”。建议二者取齐：要么绑定前先归一化，要么 send-code 也只收裸号 |
-| N-3 | 迁移覆盖不全（低-中） | `000005` 只清洗 PG 的 `email`，不清洗 `phone`。当前注册/登录 binding 一直是 `phone_cn`，线上应无脏号；风险在历史 `cmd/seed`（本批才加归一化，此前 `-phone` 原样入库）或直连 SQL 写入的 `+86…`/`86138…` 行——这些行会“查不到、还能再注册一个”。建议上线前跑一次 `SELECT count(*) FROM users WHERE phone !~ '^1[3-9][0-9]{9}$'` 核对 |
+| N-3 | **已修复** | 手机号历史清洗不再塞进已发布的 000005，而是新增 [000007_identity_canonical_phone](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000007_identity_canonical_phone.up.sql)：先做撞号预检（RAISE 带出冲突 phone 与 id），再执行三条幂等 UPDATE；[scripts/check_phone_collisions.sql](file:///Users/pxiong/Code/personal/Studiory/scripts/check_phone_collisions.sql) 提供只读预检，`Migrations` workflow 用真实 PG 验证「基线建库 + 脏号码 → up 到 HEAD」 |
 | N-4 | 部署说明缺失（低） | `000005` 的 `UPDATE users SET email = lower(btrim(email))` 在历史重复邮箱上会因 `users_email_key` 冲突**刻意中止迁移**（SQL 注释已说明），但 `docs/deploy.md` 没有对应处置说明，滚动发布会表现为“新 Pod 起不来”。建议补一句：先查重、人工合并、再发布 |
 | N-5 | 理论边界（可忽略） | `lower(email)` 在 PG 由数据库 locale 决定，Go 的 `strings.ToLower` 走 Unicode 规则；极端非 ASCII（如土耳其语 `İ`）在特定 `lc_ctype` 下清洗结果可能与写入形式不一致。实际邮箱基本都是 ASCII，建议在迁移注释里限定 ASCII 即可 |
 | N-6 | 未破坏分层/契约 | 归一化放在 `pkg/strutil` + service 入口，repo/sqlc 查询未改、handler 未写 SQL；OpenAPI 未新增必填或格式约束，契约测试不受影响；migration 编号 `000005` 单调，未与既有文件冲突 |
@@ -96,6 +96,14 @@
 - **P2-10 模块化注册**：新增 `Module` 接口与 4 个模块（Auth/User/Todo/Admin），模块自持 service 与路由中间件；`Deps` 只保留 Cfg/Logger/全局限流/健康检查/指标/Modules；`router.go` 循环注册，`validateDeps` 只校验全局依赖。
 - 测试：session 包新增 MGET 单次往返断言（go-redis Hook 计数）与吊销/签发时间/session 失效/uid 形式/降级错误用例；鉴权流程测试改为通过真实 `session.Store` 驱动；路由用例统一用 `newTestModules` 组装模块。
 - 文档：architecture.md 增加「路由模块化注册」，session.md / redis-keys.md 标注一次往返。
+
+### 0.10 第八批改动（迁移不可变）
+
+- **问题**：`000005` 在发布后被原地追加手机号清洗，执行过旧版的库停在 version 5 不再重跑，清洗静默失效；golang-migrate 只记录 `version` + `dirty`，不存 checksum，不会报错。
+- **修复**：`000005` up/down 恢复为 `39523b7` 原始内容（字节级一致），并打基线 tag `migrations-baseline-20261126`；清洗移到 `000007_identity_canonical_phone`，含撞号预检 DO 块与幂等 UPDATE，down 为带说明的 no-op。
+- **闸门**：`.github/workflows/migrations.yml` + `scripts/check_migrations_immutable.sh`，以最新基线 tag 为基准，`backend/migrations/**` 只允许新增（A），M/D/R 一律失败；无 tag 时告警跳过（bootstrap）。
+- **升级路径测试**：`scripts/migration_upgrade_test.sh` 用最早基线 tag 的迁移建库、写入 `+86 138-0013-8000` 等脏号，再 up 到 HEAD 断言裸号；并验证 force 后重跑幂等、撞号时脚本能报出、000007 预检能中止。
+- 文档：deploy.md 拆成「阻塞性迁移的前置检查」与「迁移失败处置（dirty）」，版本号改为按 `migrate version` 输出推导；architecture.md 标注迁移只可追加。
 
 ---
 
