@@ -65,7 +65,7 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 		case errors.Is(lookupErr, repo.ErrNotFound):
 			return nil, errcode.ErrInvalidToken
 		default:
-			s.LogInternal("Refresh lookup user", lookupErr, baseservice.UserIDField(claims.UserID))
+			s.LogInternal(ctx, "Refresh lookup user", lookupErr, baseservice.UserIDField(claims.UserID))
 			return nil, errcode.ErrInternal
 		}
 	}
@@ -87,7 +87,7 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 	}
 	ok, err := s.cache.SetNX(ctx, blackKey, "1", ttl)
 	if err != nil {
-		s.LogInternal("Refresh blacklist old token", err, baseservice.UserIDField(claims.UserID))
+		s.LogInternal(ctx, "Refresh blacklist old token", err, baseservice.UserIDField(claims.UserID))
 		return nil, errcode.ErrInternal
 	}
 	if !ok {
@@ -99,7 +99,7 @@ func (s *AuthServiceImpl) Refresh(ctx context.Context, refreshToken string) (*au
 	// refresh token 会变成「可无限续命的永久凭证」，与 docs/session.md 的承诺不符。
 	pair, issueErr := s.tokens.IssueTokenPair(claims.UserID, claims.Role, sessionID)
 	if issueErr != nil {
-		s.LogInternal("Refresh issue token pair", issueErr, baseservice.UserIDField(claims.UserID))
+		s.LogInternal(ctx, "Refresh issue token pair", issueErr, baseservice.UserIDField(claims.UserID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -126,14 +126,14 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, refreshToken string) *errc
 	if ttl, ok := s.blacklistTTL(claims); ok {
 		key := s.blacklistKey(refreshToken)
 		if err := s.cache.Set(ctx, key, "1", ttl); err != nil {
-			s.LogInternal("Logout blacklist refresh token", err, baseservice.UserIDField(claims.UserID))
+			s.LogInternal(ctx, "Logout blacklist refresh token", err, baseservice.UserIDField(claims.UserID))
 			logoutErr = errcode.ErrInternal
 		}
 	}
 
 	if claims.SessionID != "" && s.sessions != nil {
 		if err := s.sessions.Revoke(ctx, claims.UserID, claims.SessionID); err != nil {
-			s.LogInternal("Logout revoke session", err, baseservice.UserIDField(claims.UserID))
+			s.LogInternal(ctx, "Logout revoke session", err, baseservice.UserIDField(claims.UserID))
 			logoutErr = errcode.ErrInternal
 		}
 	}
@@ -150,14 +150,14 @@ func (s *AuthServiceImpl) issueResult(ctx context.Context, user *repo.User) (*au
 	sessionID := session.NewSessionID()
 	if s.sessions != nil {
 		if err := s.sessions.Register(ctx, user.ID.String(), sessionID); err != nil {
-			s.LogInternal("issueResult register session", err, baseservice.UserIDField(user.ID.String()))
+			s.LogInternal(ctx, "issueResult register session", err, baseservice.UserIDField(user.ID.String()))
 			return nil, errcode.ErrInternal
 		}
 	}
 
 	pair, err := s.tokens.IssueTokenPair(user.ID.String(), user.Role, sessionID)
 	if err != nil {
-		s.LogInternal("issueResult issue token pair", err, baseservice.UserIDField(user.ID.String()))
+		s.LogInternal(ctx, "issueResult issue token pair", err, baseservice.UserIDField(user.ID.String()))
 		return nil, errcode.ErrInternal
 	}
 

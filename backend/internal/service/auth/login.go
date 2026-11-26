@@ -100,7 +100,7 @@ func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, c
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound.WithMessage("err_user_not_found")
 		}
-		s.LogInternal("loginWithCode lookup user", err, baseservice.TargetField(target))
+		s.LogInternal(ctx, "loginWithCode lookup user", err, baseservice.TargetField(target))
 		return nil, errcode.ErrInternal
 	}
 
@@ -138,7 +138,7 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 		if errors.Is(err, oauth.ErrNoProvider) || errors.Is(err, oauth.ErrNotConfigured) {
 			return nil, errcode.ErrUnsupportedGrant
 		}
-		s.LogInternal("loginWithOAuth verify token", err, zap.String("provider", provider))
+		s.LogInternal(ctx, "loginWithOAuth verify token", err, zap.String("provider", provider))
 		return nil, errcode.ErrInternal
 	}
 	if openID == "" {
@@ -150,7 +150,7 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 		return s.issueResult(ctx, user)
 	}
 	if !errors.Is(lookupErr, repo.ErrNotFound) {
-		s.LogInternal("loginWithOAuth lookup user", lookupErr,
+		s.LogInternal(ctx, "loginWithOAuth lookup user", lookupErr,
 			zap.String("provider", provider),
 			baseservice.TargetField(openID),
 		)
@@ -162,7 +162,7 @@ func (s *AuthServiceImpl) loginWithOAuth(ctx context.Context, req *auth.LoginReq
 	}
 	created, createErr := s.createOAuthUser(ctx, nickname, provider, openID)
 	if createErr != nil {
-		s.LogInternal("loginWithOAuth create user", createErr,
+		s.LogInternal(ctx, "loginWithOAuth create user", createErr,
 			zap.String("provider", provider),
 			baseservice.TargetField(openID),
 		)
@@ -294,7 +294,7 @@ func (s *AuthServiceImpl) findUserByAccount(ctx context.Context, phone, email, a
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrInvalidCredentials
 		}
-		s.LogInternal("findUserByAccount lookup user", err,
+		s.LogInternal(ctx, "findUserByAccount lookup user", err,
 			baseservice.TargetField(strutil.FirstNonEmpty(phone, email, account)),
 		)
 		return nil, errcode.ErrInternal

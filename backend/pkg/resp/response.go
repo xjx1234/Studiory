@@ -77,6 +77,24 @@ func FailWithMessage(c *gin.Context, err *errcode.Error, msg string) {
 	})
 }
 
+// FailWithData 与 Fail 相同，但把附加信息放进 data（例如 /ready 的逐项探活结果）。
+func FailWithData(c *gin.Context, err *errcode.Error, data interface{}) {
+	if c.Request != nil && errors.Is(c.Request.Context().Err(), context.DeadlineExceeded) {
+		err = errcode.ErrServiceUnavailable
+	}
+
+	status := err.HTTPStatus
+	if status == 0 {
+		status = http.StatusBadRequest
+	}
+	c.AbortWithStatusJSON(status, Response{
+		Code:      err.Code,
+		Message:   pkgi18n.Localize(c, err.MsgID),
+		Data:      data,
+		RequestID: requestid.Get(c),
+	})
+}
+
 // FailWithValidation 返回参数校验失败响应，data.fields 包含每个字段的错误详情。
 //
 // 响应示例：

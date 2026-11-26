@@ -81,6 +81,9 @@ func TestValidateAccepts32ByteJWTSecretInProduction(t *testing.T) {
 		ServerRequestTimeout:    5 * time.Second,
 		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=require",
 		RedisURL:                "redis://localhost:6379/0",
+		RedisKeyPrefix:          "app",
+		RedisReadTimeout:        3 * time.Second,
+		RedisWriteTimeout:       3 * time.Second,
 		JWTSecret:               "0123456789abcdef0123456789abcdef", // 正好 32 字节
 		JWTAccessTokenTTL:       30 * time.Minute,
 		JWTRefreshTokenTTL:      168 * time.Hour,
@@ -109,6 +112,9 @@ func TestValidateAcceptsDevelopmentDefaults(t *testing.T) {
 		ServerRequestTimeout:    5 * time.Second,
 		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=disable",
 		RedisURL:                "redis://localhost:6379/0",
+		RedisKeyPrefix:          "app",
+		RedisReadTimeout:        3 * time.Second,
+		RedisWriteTimeout:       3 * time.Second,
 		JWTSecret:               "dev-secret-change-in-production",
 		JWTAccessTokenTTL:       30 * time.Minute,
 		JWTRefreshTokenTTL:      168 * time.Hour,
@@ -167,6 +173,28 @@ func TestValidateRejectsAccessTTLNotShorterThanRefresh(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsWildcardOriginWithCredentials 浏览器不允许 `*` 与 credentials 并用，
+// 这类配置应在启动阶段失败，而不是等到前端请求被浏览器静默拦截。
+func TestValidateRejectsWildcardOriginWithCredentials(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.CORSAllowOrigins = []string{"https://example.com", "*"}
+	cfg.CORSAllowCredentials = true
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected wildcard origin with credentials to be rejected")
+	}
+}
+
+func TestValidateAllowsWildcardOriginWithoutCredentials(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.CORSAllowOrigins = []string{"*"}
+	cfg.CORSAllowCredentials = false
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("wildcard origin without credentials should be accepted: %v", err)
+	}
+}
+
 func prodBaseConfig() Config {
 	return Config{
 		AppEnv:                  "production",
@@ -178,6 +206,9 @@ func prodBaseConfig() Config {
 		ServerRequestTimeout:    5 * time.Second,
 		DatabaseURL:             "postgres://postgres:password@localhost:5432/app?sslmode=require",
 		RedisURL:                "redis://localhost:6379/0",
+		RedisKeyPrefix:          "app",
+		RedisReadTimeout:        3 * time.Second,
+		RedisWriteTimeout:       3 * time.Second,
 		JWTSecret:               "prod-secret-that-is-at-least-32-bytes-long",
 		JWTAccessTokenTTL:       30 * time.Minute,
 		JWTRefreshTokenTTL:      168 * time.Hour,

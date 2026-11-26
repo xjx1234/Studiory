@@ -211,7 +211,7 @@ Redis 键说明见 [redis-keys.md](redis-keys.md) 第 2、7 节。
 ## 健康检查
 
 - `/health`：轻量存活检查，只说明进程可响应。适合 **liveness** 探针。
-- `/ready`：就绪检查，会 ping PostgreSQL 与 Redis，适合 **readiness** 探针。K8s 示例见 [deploy.md](deploy.md) 第四节与 `deploy/k8s/`。
+- `/ready`：就绪检查，**并发** ping PostgreSQL 与 Redis（共享 2s 预算），逐项返回结果，适合 **readiness** 探针。K8s 示例见 [deploy.md](deploy.md) 第四节与 `deploy/k8s/`。
 
 ## 工程化命令
 

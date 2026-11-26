@@ -89,7 +89,9 @@ make run
 | `OAUTH_WECHAT_APP_ID` | 启用 wechat 登录时必填 |
 | `METRICS_TOKEN` | `METRICS_ENABLED=true` 时必填（`/metrics` bearer token） |
 | `AUTH_REDIS_FAIL_OPEN` | 生产默认 `false`（安全优先）；可用性优先可设为 `true` |
-| `CORS_ALLOW_ORIGINS` | 至少配置一个来源 |
+| `CORS_ALLOW_ORIGINS` | 至少配置一个来源；`CORS_ALLOW_CREDENTIALS=true` 时不能包含 `*` |
+| `REDIS_KEY_PREFIX` | 不能为空，不能含冒号或空白 |
+| `REDIS_READ_TIMEOUT` / `REDIS_WRITE_TIMEOUT` | 必须大于 0（不再依赖 go-redis 默认值） |
 | `RATE_LIMIT_PER_MINUTE` | 必须大于 0（公开路由按 IP） |
 | `RATE_LIMIT_USER_PER_MINUTE` | 可选；未配置时默认与 `RATE_LIMIT_PER_MINUTE` 相同（已鉴权路由按 user_id） |
 | `DATABASE_URL` / `REDIS_URL` | 不能为空；`DATABASE_URL` 必须显式携带 `sslmode=require/verify-ca/verify-full`（防止 TLS 被静默绕过） |
@@ -217,7 +219,11 @@ docker run --rm \
 | 探针 | 路径 | 作用 | 失败后果 |
 |------|------|------|----------|
 | **liveness** | `GET /health` | 进程是否存活（不查 PG/Redis） | kubelet **重启** Pod |
-| **readiness** | `GET /ready` | PG + Redis 是否可用 | 从 Service **摘除**流量，不重启 |
+| **readiness** | `GET /ready` | 并发探测 PG + Redis | 从 Service **摘除**流量，不重启 |
+
+`/ready` 并发执行所有探针（共享 2s 预算），响应 `data.checks` 逐项返回 `name`、`ok`、`latency_ms`；
+任一失败即 503，但不会中断其他探针——运维能直接看出是哪个依赖挂了。失败原因只回显「不可用/未初始化」，
+底层错误（连接串、内网地址）只写日志，避免从无鉴权的探活端点泄露内部信息。
 
 与 Docker 镜像内置 `HEALTHCHECK`（仅 `/health`）一致；K8s 额外用 `/ready` 做依赖就绪判断，避免数据库未连通时仍接收请求。
 

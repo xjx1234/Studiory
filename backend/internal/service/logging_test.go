@@ -2,7 +2,10 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"testing"
+
+	"backend/pkg/reqid"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -15,7 +18,7 @@ func TestUserIDField_OmitsEmpty(t *testing.T) {
 
 	var ls LogSupport
 	ls.SetLogger(logger)
-	ls.LogInternal("op", errTest{}, UserIDField(""))
+	ls.LogInternal(context.Background(), "op", errTest{}, UserIDField(""))
 
 	if logs.Len() != 1 {
 		t.Fatalf("expected 1 log, got %d", logs.Len())
@@ -33,7 +36,7 @@ func TestUserIDField_IncludesValue(t *testing.T) {
 
 	var ls LogSupport
 	ls.SetLogger(logger)
-	ls.LogInternal("op", errTest{}, UserIDField("uid-1"))
+	ls.LogInternal(context.Background(), "op", errTest{}, UserIDField("uid-1"))
 
 	found := false
 	for _, f := range logs.All()[0].Context {
@@ -56,7 +59,7 @@ func TestActorUserIDField_OmitsEmpty(t *testing.T) {
 
 	var ls LogSupport
 	ls.SetLogger(logger)
-	ls.LogInternal("op", errTest{}, ActorUserIDField(""))
+	ls.LogInternal(context.Background(), "op", errTest{}, ActorUserIDField(""))
 
 	for _, f := range logs.All()[0].Context {
 		if f.Key == "actor_user_id" {
@@ -71,7 +74,7 @@ func TestActorUserIDField_IncludesValue(t *testing.T) {
 
 	var ls LogSupport
 	ls.SetLogger(logger)
-	ls.LogInternal("op", errTest{}, ActorUserIDField("admin-1"))
+	ls.LogInternal(context.Background(), "op", errTest{}, ActorUserIDField("admin-1"))
 
 	found := false
 	for _, f := range logs.All()[0].Context {
@@ -90,7 +93,7 @@ func TestTargetField_OmitsEmpty(t *testing.T) {
 
 	var ls LogSupport
 	ls.SetLogger(logger)
-	ls.LogInternal("op", errTest{}, TargetField(""))
+	ls.LogInternal(context.Background(), "op", errTest{}, TargetField(""))
 
 	for _, f := range logs.All()[0].Context {
 		if f.Key == "target" {
@@ -107,7 +110,7 @@ func TestLogInternal_NilLoggerDoesNotPanic(t *testing.T) {
 			t.Fatalf("LogInternal panicked with nil logger: %v", r)
 		}
 	}()
-	ls.LogInternal("op", errTest{}, UserIDField("uid-1"))
+	ls.LogInternal(context.Background(), "op", errTest{}, UserIDField("uid-1"))
 }
 
 func TestLogInternal_NilErrorDoesNotLog(t *testing.T) {
@@ -116,10 +119,50 @@ func TestLogInternal_NilErrorDoesNotLog(t *testing.T) {
 
 	var ls LogSupport
 	ls.SetLogger(logger)
-	ls.LogInternal("op", nil, UserIDField("uid-1"))
+	ls.LogInternal(context.Background(), "op", nil, UserIDField("uid-1"))
 
 	if logs.Len() != 0 {
 		t.Fatalf("expected no log entries when err is nil, got %d", logs.Len())
+	}
+}
+
+// TestLogInternal_IncludesRequestIDFromContext service 日志要能从 ctx 拿到 request_id，
+// 与 HTTP 访问日志按同一 id 对应。
+func TestLogInternal_IncludesRequestIDFromContext(t *testing.T) {
+	core, logs := observer.New(zapcore.ErrorLevel)
+
+	var ls LogSupport
+	ls.SetLogger(zap.New(core))
+
+	ctx := reqid.WithID(context.Background(), "req-42")
+	ls.LogInternal(ctx, "op", errTest{})
+
+	if logs.Len() != 1 {
+		t.Fatalf("expected 1 log, got %d", logs.Len())
+	}
+	found := false
+	for _, f := range logs.All()[0].Context {
+		if f.Key == "request_id" && f.String == "req-42" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected request_id=req-42 in log context")
+	}
+}
+
+func TestLogInternal_OmitsRequestIDWhenAbsent(t *testing.T) {
+	core, logs := observer.New(zapcore.ErrorLevel)
+
+	var ls LogSupport
+	ls.SetLogger(zap.New(core))
+
+	ls.LogInternal(context.Background(), "op", errTest{})
+
+	for _, f := range logs.All()[0].Context {
+		if f.Key == "request_id" {
+			t.Fatal("request_id should be omitted when ctx has none")
+		}
 	}
 }
 
@@ -144,7 +187,7 @@ func TestTargetField_IncludesValue(t *testing.T) {
 
 	var ls LogSupport
 	ls.SetLogger(logger)
-	ls.LogInternal("SendCode", errTest{}, TargetField("13800138000"))
+	ls.LogInternal(context.Background(), "SendCode", errTest{}, TargetField("13800138000"))
 
 	// PII 脱敏后应为 138****8000，而非明文
 	if !bytes.Contains(buf.Bytes(), []byte(`"target":"138****8000"`)) {

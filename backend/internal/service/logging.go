@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+
+	"backend/pkg/reqid"
 	"backend/pkg/strutil"
 
 	"go.uber.org/zap"
@@ -16,8 +19,14 @@ func (l *LogSupport) SetLogger(logger *zap.Logger) {
 	l.Logger = logger
 }
 
-func (l *LogSupport) LogInternal(op string, err error, fields ...zap.Field) {
+// LogInternal 记录 service 层内部错误。
+// request_id 从 ctx 中取（由 HTTP 中间件注入），与访问日志里的 request_id 对应，
+// 排查一次请求时可直接按该字段串联。
+func (l *LogSupport) LogInternal(ctx context.Context, op string, err error, fields ...zap.Field) {
 	if l.Logger != nil && err != nil {
+		if id := reqid.FromContext(ctx); id != "" {
+			fields = append(fields, zap.String("request_id", id))
+		}
 		fields = append(fields, zap.Error(err))
 		l.Logger.Error(op, fields...)
 	}

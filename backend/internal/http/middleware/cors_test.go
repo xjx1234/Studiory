@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -45,13 +46,26 @@ func TestCORS_RejectsUnconfiguredOrigin(t *testing.T) {
 	}
 }
 
-func TestCORS_FallsBackToDefaultOriginsWhenUnconfigured(t *testing.T) {
+func TestCORS_NoFallbackWhenUnconfigured(t *testing.T) {
 	r := newCORSRouter(CORSOptions{})
 
 	w := doCORSPreflight(r, "http://localhost:5173")
 
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
-		t.Errorf("expected default dev origin to be allowed, got %q", got)
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("empty allow_origins must not fall back to dev origins, got %q", got)
+	}
+}
+
+func TestCORS_ExposesRequestIDHeader(t *testing.T) {
+	r := newCORSRouter(CORSOptions{AllowOrigins: []string{"https://app.example.com"}})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	r.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "X-Request-Id") {
+		t.Errorf("Access-Control-Expose-Headers = %q, want to contain X-Request-Id", got)
 	}
 }
 

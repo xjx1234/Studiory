@@ -71,7 +71,7 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 
 	total, err := s.todos.CountByUserID(ctx, uid)
 	if err != nil {
-		s.LogInternal("List count todos", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "List count todos", err, baseservice.UserIDField(userID))
 		return pagination.List[Item]{}, errcode.ErrInternal
 	}
 
@@ -79,7 +79,7 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 	offset := page.OffsetInt32()
 	rows, err := s.todos.ListByUserIDPaginated(ctx, uid, limit, offset)
 	if err != nil {
-		s.LogInternal("List todos", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "List todos", err, baseservice.UserIDField(userID))
 		return pagination.List[Item]{}, errcode.ErrInternal
 	}
 
@@ -102,7 +102,7 @@ func (s *serviceImpl) Get(ctx context.Context, userID, todoID string) (*Item, *e
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("Get todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
+		s.LogInternal(ctx, "Get todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
 		return nil, errcode.ErrInternal
 	}
 	item := toItem(row)
@@ -120,7 +120,7 @@ func (s *serviceImpl) Create(ctx context.Context, userID string, in *CreateInput
 
 	row, err := s.todos.Create(ctx, uid, in.Title)
 	if err != nil {
-		s.LogInternal("Create todo", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "Create todo", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 	item := toItem(row)
@@ -141,7 +141,7 @@ func (s *serviceImpl) Update(ctx context.Context, userID, todoID string, in *Upd
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("Update todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
+		s.LogInternal(ctx, "Update todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
 		return nil, errcode.ErrInternal
 	}
 	item := toItem(row)
@@ -159,7 +159,7 @@ func (s *serviceImpl) Delete(ctx context.Context, userID, todoID string) *errcod
 		if errors.Is(err, repo.ErrNotFound) {
 			return errcode.ErrNotFound
 		}
-		s.LogInternal("Delete todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
+		s.LogInternal(ctx, "Delete todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
 		return errcode.ErrInternal
 	}
 	return nil

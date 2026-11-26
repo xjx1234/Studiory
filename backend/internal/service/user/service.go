@@ -101,7 +101,7 @@ func (s *userServiceImpl) GetProfile(ctx context.Context, userID string) (*Profi
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("GetProfile lookup user", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "GetProfile lookup user", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -122,7 +122,7 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("UpdateProfile lookup user", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "UpdateProfile lookup user", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -140,7 +140,7 @@ func (s *userServiceImpl) UpdateProfile(ctx context.Context, userID string, in *
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("UpdateProfile update user", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "UpdateProfile update user", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 	return toProfileResult(updated), nil
@@ -161,7 +161,7 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		if errors.Is(err, repo.ErrNotFound) {
 			return false, errcode.ErrNotFound
 		}
-		s.LogInternal("ChangePassword lookup user", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "ChangePassword lookup user", err, baseservice.UserIDField(userID))
 		return false, errcode.ErrInternal
 	}
 
@@ -178,12 +178,12 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		s.LogInternal("ChangePassword hash new password", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "ChangePassword hash new password", err, baseservice.UserIDField(userID))
 		return false, errcode.ErrInternal
 	}
 
 	if _, err := s.users.UpdatePassword(ctx, id, string(hash)); err != nil {
-		s.LogInternal("ChangePassword update password", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "ChangePassword update password", err, baseservice.UserIDField(userID))
 		return false, errcode.ErrInternal
 	}
 
@@ -198,14 +198,14 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, revokedUserID); err != nil {
 			revoked = false
-			s.LogInternal("ChangePassword revoke all sessions", err, baseservice.UserIDField(revokedUserID))
+			s.LogInternal(ctx, "ChangePassword revoke all sessions", err, baseservice.UserIDField(revokedUserID))
 		}
 	}
 	if s.rdb != nil {
 		revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, revokedUserID)
 		if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
 			revoked = false
-			s.LogInternal("ChangePassword revoke access tokens", err, baseservice.UserIDField(revokedUserID))
+			s.LogInternal(ctx, "ChangePassword revoke access tokens", err, baseservice.UserIDField(revokedUserID))
 		}
 	}
 

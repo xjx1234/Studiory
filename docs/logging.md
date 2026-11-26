@@ -40,6 +40,13 @@ log:
 
 实现：`internal/http/middleware/access_log_fields.go` 通过 `GinzapWithConfig.Context` 注入 `request_id` / `user_id`。
 
+## service 层内部错误日志
+
+`service.LogSupport.LogInternal(ctx, op, err, fields...)` 会从 `ctx` 取 `request_id`（由
+`middleware.RequestID` 注入，键定义在 `pkg/reqid`）并作为结构化字段输出，因此同一次请求的
+「HTTP 访问日志」与「DB/Redis 内部错误日志」可以用同一个 `request_id` 串起来。
+ctx 中没有 request_id（如后台任务、单元测试）时该字段自动省略。
+
 开发环境（console）示例：
 
 ```text

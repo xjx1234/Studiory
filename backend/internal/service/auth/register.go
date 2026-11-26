@@ -46,7 +46,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 
 	hash, hashErr := bcrypt.GenerateFromPassword([]byte(input.Password), bcryptCost)
 	if hashErr != nil {
-		s.LogInternal("registerWithPassword hash password", hashErr,
+		s.LogInternal(ctx, "registerWithPassword hash password", hashErr,
 			baseservice.TargetField(strutil.FirstNonEmpty(input.Phone, input.Email)),
 		)
 		return nil, errcode.ErrInternal
@@ -65,7 +65,7 @@ func (s *AuthServiceImpl) registerWithPassword(ctx context.Context, input *Regis
 		if errors.Is(createErr, repo.ErrAlreadyExists) {
 			return nil, errcode.ErrAlreadyExists
 		}
-		s.LogInternal("registerWithPassword create user", createErr,
+		s.LogInternal(ctx, "registerWithPassword create user", createErr,
 			baseservice.TargetField(strutil.FirstNonEmpty(input.Phone, input.Email)),
 		)
 		return nil, errcode.ErrInternal
@@ -96,7 +96,7 @@ func (s *AuthServiceImpl) registerWithCode(ctx context.Context, input *RegisterI
 		if errors.Is(createErr, repo.ErrAlreadyExists) {
 			return nil, errcode.ErrAlreadyExists
 		}
-		s.LogInternal("registerWithCode create user", createErr,
+		s.LogInternal(ctx, "registerWithCode create user", createErr,
 			baseservice.TargetField(strutil.FirstNonEmpty(input.Phone, input.Email)),
 		)
 		return nil, errcode.ErrInternal
@@ -208,7 +208,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 			return errcode.ErrAlreadyExists
 		}
 		if !errors.Is(err, repo.ErrNotFound) {
-			s.LogInternal("checkAccountExists lookup phone", err, baseservice.TargetField(phone))
+			s.LogInternal(ctx, "checkAccountExists lookup phone", err, baseservice.TargetField(phone))
 			return errcode.ErrInternal
 		}
 	}
@@ -219,7 +219,7 @@ func (s *AuthServiceImpl) checkAccountExists(ctx context.Context, phone, email s
 			return errcode.ErrAlreadyExists
 		}
 		if !errors.Is(err, repo.ErrNotFound) {
-			s.LogInternal("checkAccountExists lookup email", err, baseservice.TargetField(email))
+			s.LogInternal(ctx, "checkAccountExists lookup email", err, baseservice.TargetField(email))
 			return errcode.ErrInternal
 		}
 	}

@@ -25,13 +25,13 @@
 | P1-5 | **未动** | [router.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/router.go#L32-L64) 中间件链无 `Timeout`；[postgres.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/store/postgres.go#L16-L51) 未设 `statement_timeout`/`query_timeout`；[redis.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/store/redis.go#L13-L33) 未显式设读写超时（修正一处：go-redis 默认 3s 读写、5s dial，Redis 侧实际有兜底，**PG 语句超时才是真缺口**） |
 | P1-6 | **未动** | [rate_limit.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/rate_limit.go#L96-L112) 仍是 `NewStoreWithOptions` 失败即 `memory.NewStore()`，无日志、无指标 |
 | P2-1 | **未动** | [auth/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/service.go#L26-L34) 等接口仍返回 `*errcode.Error` |
-| P2-2 | **未动** | [logging.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/logging.go#L17-L23) 的 `LogInternal` 无 `ctx` 参数，日志无 `request_id` |
+| P2-2 | **已修复** | `LogInternal` 增加 `ctx` 参数，从 `pkg/reqid` 取 `request_id`；`RequestID` 中间件在 `c.Next()` 前注入 request context（[logging.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/logging.go#L24-L35)、[request_id.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/request_id.go)） |
 | P2-3 | **未动** | 仅有 `go.mod` 里 otel 的 **indirect** 依赖（[go.mod](file:///Users/pxiong/Code/personal/Studiory/backend/go.mod#L116-L120)），无 `TracerProvider`/gin 中间件/pgx tracer 初始化代码 |
 | P2-4 | **已修复** | 降权/禁用增加「最后一个 active admin」守卫（SQL 内完成，返回 `ErrLastAdmin`/409），并新增 `admin_audit_logs` 审计表记录操作者/目标/动作/前后值（[admin/service.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L145-L270)、[000006_admin_audit_logs.up.sql](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000006_admin_audit_logs.up.sql)） |
-| P2-5 | **未动** | [cors.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/cors.go#L16-L34) `ExposeHeaders` 仍只有 `Content-Length`（`X-Request-Id` 已由 requestid 写入响应头，但浏览器读不到，排障体验未改善）；`Validate` 仍不拒绝 `allow_origins: ["*"]` + `allow_credentials: true`；L18-L20 的 localhost 兜底仍是死代码（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L324-L326) 已禁止空 origins） |
-| P2-6 | **未动** | `Validate` 仍只校验 server/限流/origins 非空与生产项，未加 `access_ttl < refresh_ttl`、`key_prefix` 非空、CORS 组合校验 |
+| P2-5 | **已修复** | 删除 localhost 兜底（空列表返回无跨域头中间件，避免 `cors.New` panic）；`ExposeHeaders` 增加 `X-Request-Id`；`Validate` 拒绝 `*` + `allow_credentials=true`（[cors.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/cors.go)、[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L374-L386)） |
+| P2-6 | **已修复** | `Validate` 现校验 `access_ttl < refresh_ttl`（前批）、`redis.key_prefix` 非空且不含冒号/空白、Redis 读写超时必须大于 0、`*` + credentials 组合（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L283-L300)） |
 | P2-7 | **已修复** | 死代码 `postgresReadyCheck` 及其单测已删除，`/ready` 只用 `databaseReadyCheck`（[app.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/app/app.go#L219-L227)） |
-| P2-8 | **未动** | [health.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/health.go#L26-L40) 仍串行 `for` + 共享一个 2s ctx，一个慢探针会拖垮全部 |
+| P2-8 | **已修复** | `/ready` 并发执行所有探针（共享 2s 预算），逐项返回 `name`/`ok`/`latency_ms`，任一失败 503，具体错误只写日志（[health.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/health.go#L44-L80)） |
 | P2-9 | **已修复** | [architecture.md](file:///Users/pxiong/Code/personal/Studiory/docs/architecture.md#L222-L231) 已注明 `frontend/`、`apps/node/`、`apps/python/` 当前不存在；示例迁移编号改为 `000006_orders`（L64-L68） |
 | P2-10 | **未动** | [deps.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/deps.go#L26-L52) `Deps` 字段未变 |
 | P2-11 | **未动** | [middleware/auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/auth.go#L54-L92) 仍是 `GET revoke` + `session.Validate`（`SIsMember` + 兜底 `GET`），最坏 3 次往返 |
@@ -80,6 +80,15 @@
 - **管理审计**：新增 `admin_audit_logs`（迁移 `000006_admin_audit_logs`，同步写入 `sqlc.yaml`），记录 `operator_id`、`target_id`、`action`（`user.role.update` / `user.status.update`）、`before_value`、`after_value`；只追加，外键 `ON DELETE SET NULL` 保留历史。审计写失败不回滚业务变更，记内部错误日志。
 - 新增 `repo.AdminAuditRepo`、`Storage.Audit()`、`WithAuditRepo` option；`FakeUserRepo` 补齐同规则守卫，新增 `FakeAuditRepo`。
 - 测试：`TestUpdateRole_RejectsDemotingLastAdmin`、`TestUpdateRole_AllowsDemotingWhenAnotherAdminExists`、`TestSetStatus_RejectsDisablingLastAdmin`、`TestUpdateRole_WritesAuditLog`、`TestSetStatus_WritesAuditLog`、`TestSetStatus_AuditFailureDoesNotFailOperation`。
+
+### 0.8 第六批改动（P2-2、P2-5、P2-6、P2-8）
+
+- **P2-5 CORS**：删除 localhost 兜底（空列表返回无跨域头中间件，避免 `cors.New` panic）；`ExposeHeaders` 增加 `X-Request-Id`；`config.Validate` 拒绝 `*` + `allow_credentials=true`。
+- **P2-6 配置校验**：新增 `redis.key_prefix` 非空/不含冒号空白、`redis.read_timeout`/`write_timeout > 0` 校验；TTL 与 CORS 组合校验齐备。
+- **P2-8 `/ready`**：改为并发探活（共享 2s 预算），响应 `data.checks` 逐项返回 `name`/`ok`/`latency_ms`；失败原因只回显通用文案，底层错误写日志。新增 `resp.FailWithData`。
+- **P2-2 日志串联**：新增 `pkg/reqid`；`middleware.RequestID` 在链执行前把 id 注入 request context；`LogSupport.LogInternal(ctx, …)` 自动带 `request_id`，全部 service 调用点已迁移。
+- 测试：CORS 兜底移除/暴露头、配置校验新增用例、/ready 逐项结果与并发断言、reqid 与日志字段断言。
+- `make lint` 与 `go test ./...` 全绿（本机已具备 Go 工具链）。
 
 ---
 

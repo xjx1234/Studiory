@@ -126,7 +126,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 	)
 	if err != nil {
 		s.observeCodeSend(codeType, codeOutcomeStorageError)
-		s.LogInternal("SendCode quota check", err,
+		s.LogInternal(ctx, "SendCode quota check", err,
 			zap.String("code_type", codeType),
 			baseservice.TargetField(target),
 		)
@@ -146,7 +146,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 	}
 
 	cooldownKey := s.codeCooldownKey(codeType, target)
-	code, codeErr := s.generateCode()
+	code, codeErr := s.generateCode(ctx)
 	if codeErr != nil {
 		s.observeCodeSend(codeType, codeOutcomeStorageError)
 		_ = s.cache.Del(ctx, cooldownKey)
@@ -156,7 +156,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 	key := s.codeRedisKey(codeType, target)
 	if err := s.cache.Set(ctx, key, code, codeExpiry); err != nil {
 		s.observeCodeSend(codeType, codeOutcomeStorageError)
-		s.LogInternal("SendCode set code", err,
+		s.LogInternal(ctx, "SendCode set code", err,
 			zap.String("code_type", codeType),
 			baseservice.TargetField(target),
 		)
@@ -171,7 +171,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 			Code:    code,
 		}); err != nil {
 			s.observeCodeSend(codeType, codeOutcomeDispatchError)
-			s.LogInternal("SendCode dispatch", err,
+			s.LogInternal(ctx, "SendCode dispatch", err,
 				zap.String("code_type", codeType),
 				baseservice.TargetField(target),
 			)
@@ -214,7 +214,7 @@ func (s *AuthServiceImpl) codeChannelAllowed(codeType string) bool {
 // generateCode 生成验证码。
 // 开发模式（allowMockCodeFallback）下返回固定的 MockVerificationCode 便于联调；
 // 否则生成 6 位随机数字验证码。crypto/rand 失败时返回错误，不回退固定码。
-func (s *AuthServiceImpl) generateCode() (string, *errcode.Error) {
+func (s *AuthServiceImpl) generateCode(ctx context.Context) (string, *errcode.Error) {
 	if s.allowMockCodeFallback {
 		return MockVerificationCode, nil
 	}
@@ -224,7 +224,7 @@ func (s *AuthServiceImpl) generateCode() (string, *errcode.Error) {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
 		if err != nil {
 			// crypto/rand 失败极罕见，但必须拒绝生成而非回退固定码
-			s.LogInternal("generateCode rand", err)
+			s.LogInternal(ctx, "generateCode rand", err)
 			return "", errcode.ErrInternal
 		}
 		b[i] = digits[n.Int64()]

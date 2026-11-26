@@ -68,9 +68,9 @@
 | `REDIS_PASSWORD` | — | 否 | 密码 |
 | `REDIS_DB` | `0` | 否 | 数据库编号 |
 | `REDIS_POOL_SIZE` | `10` | 否 | 连接池大小 |
-| `REDIS_READ_TIMEOUT` | `3s` | 否 | 单次 Redis 读超时（`0` 沿用 go-redis 默认 3s） |
-| `REDIS_WRITE_TIMEOUT` | `3s` | 否 | 单次 Redis 写超时（`0` 沿用 go-redis 默认 3s） |
-| `REDIS_KEY_PREFIX` | `app` | 否 | 业务键前缀，多项目共用 Redis 时避免冲突 |
+| `REDIS_READ_TIMEOUT` | `3s` | 是 | 单次 Redis 读超时，必须大于 0 |
+| `REDIS_WRITE_TIMEOUT` | `3s` | 是 | 单次 Redis 写超时，必须大于 0 |
+| `REDIS_KEY_PREFIX` | `app` | 是 | 业务键前缀，多项目共用 Redis 时避免冲突；不能为空，也不能含冒号或空白 |
 
 ---
 
@@ -155,7 +155,7 @@
 | 变量 | 默认值 | 必填 | 说明 |
 |------|--------|------|------|
 | `CORS_ALLOW_ORIGINS` | `http://localhost:5173,http://localhost:3000` | 否 | 允许的跨域来源，逗号分隔 |
-| `CORS_ALLOW_CREDENTIALS` | `true` | 否 | 是否允许携带 Cookie |
+| `CORS_ALLOW_CREDENTIALS` | `true` | 否 | 是否允许携带 Cookie；为 `true` 时 `CORS_ALLOW_ORIGINS` 不能包含 `*`（浏览器规范不允许，启动时校验会拒绝） |
 
 ---
 

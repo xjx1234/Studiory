@@ -117,7 +117,7 @@ func (s *adminServiceImpl) ListUsers(ctx context.Context, in ListInput, page pag
 
 	total, err := s.users.Count(ctx, in.Keyword, in.Status)
 	if err != nil {
-		s.LogInternal("ListUsers count", err)
+		s.LogInternal(ctx, "ListUsers count", err)
 		return empty, errcode.ErrInternal
 	}
 
@@ -128,7 +128,7 @@ func (s *adminServiceImpl) ListUsers(ctx context.Context, in ListInput, page pag
 		Offset:  page.OffsetInt32(),
 	})
 	if err != nil {
-		s.LogInternal("ListUsers list", err)
+		s.LogInternal(ctx, "ListUsers list", err)
 		return empty, errcode.ErrInternal
 	}
 
@@ -150,7 +150,7 @@ func (s *adminServiceImpl) GetUser(ctx context.Context, userID string) (*UserIte
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("GetUser lookup", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "GetUser lookup", err, baseservice.UserIDField(userID))
 		return nil, errcode.ErrInternal
 	}
 
@@ -177,7 +177,7 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("UpdateRole lookup", err,
+		s.LogInternal(ctx, "UpdateRole lookup", err,
 			baseservice.UserIDField(targetUserID),
 			baseservice.ActorUserIDField(actingUserID),
 		)
@@ -195,7 +195,7 @@ func (s *adminServiceImpl) UpdateRole(ctx context.Context, actingUserID, targetU
 			// 守卫在 SQL 内完成：会让系统失去最后一个可用管理员的降权被拒绝。
 			return nil, errcode.ErrLastAdmin
 		}
-		s.LogInternal("UpdateRole update", err,
+		s.LogInternal(ctx, "UpdateRole update", err,
 			baseservice.UserIDField(targetUserID),
 			baseservice.ActorUserIDField(actingUserID),
 		)
@@ -237,7 +237,7 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 		if errors.Is(err, repo.ErrNotFound) {
 			return nil, errcode.ErrNotFound
 		}
-		s.LogInternal("SetStatus lookup", err,
+		s.LogInternal(ctx, "SetStatus lookup", err,
 			baseservice.UserIDField(targetUserID),
 			baseservice.ActorUserIDField(actingUserID),
 		)
@@ -253,7 +253,7 @@ func (s *adminServiceImpl) SetStatus(ctx context.Context, actingUserID, targetUs
 		case errors.Is(err, repo.ErrLastAdmin):
 			return nil, errcode.ErrLastAdmin
 		}
-		s.LogInternal("SetStatus update", err,
+		s.LogInternal(ctx, "SetStatus update", err,
 			baseservice.UserIDField(targetUserID),
 			baseservice.ActorUserIDField(actingUserID),
 		)
@@ -286,7 +286,7 @@ func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, userID); err != nil {
 			ok = false
-			s.LogInternal("revoke all sessions", err, baseservice.UserIDField(userID))
+			s.LogInternal(ctx, "revoke all sessions", err, baseservice.UserIDField(userID))
 		}
 	}
 	if s.rdb == nil {
@@ -295,7 +295,7 @@ func (s *adminServiceImpl) revokeAccessTokens(ctx context.Context, userID string
 	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", s.keyPrefix, userID)
 	if err := s.rdb.Set(ctx, revokeKey, time.Now().Unix(), s.accessTTL).Err(); err != nil {
 		ok = false
-		s.LogInternal("revoke access tokens", err, baseservice.UserIDField(userID))
+		s.LogInternal(ctx, "revoke access tokens", err, baseservice.UserIDField(userID))
 	}
 	return ok
 }
@@ -312,7 +312,7 @@ func (s *adminServiceImpl) recordAudit(ctx context.Context, actingUserID string,
 
 	actorID, err := uuid.Parse(baseservice.CanonicalUserID(actingUserID))
 	if err != nil {
-		s.LogInternal("write audit log: invalid actor id", err,
+		s.LogInternal(ctx, "write audit log: invalid actor id", err,
 			baseservice.ActorUserIDField(actingUserID),
 		)
 		return
@@ -326,7 +326,7 @@ func (s *adminServiceImpl) recordAudit(ctx context.Context, actingUserID string,
 		After:      after,
 	}
 	if err := s.audit.Create(ctx, entry); err != nil {
-		s.LogInternal("write audit log", err,
+		s.LogInternal(ctx, "write audit log", err,
 			baseservice.UserIDField(targetID.String()),
 			baseservice.ActorUserIDField(actingUserID),
 		)

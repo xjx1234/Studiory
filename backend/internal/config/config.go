@@ -283,6 +283,21 @@ func (c *Config) Validate() error {
 	if c.RedisURL == "" {
 		return errors.New("redis.url 不能为空")
 	}
+	// key_prefix 参与拼接所有 Redis 键（{prefix}:session:{sid}、{prefix}:revoke:uid:{uid} 等），
+	// 含冒号或空白会破坏键的层级，导致中间件读写的键与运维排查时看到的不一致。
+	if strings.TrimSpace(c.RedisKeyPrefix) == "" {
+		return errors.New("redis.key_prefix 不能为空")
+	}
+	if strings.ContainsAny(c.RedisKeyPrefix, ": \t\n") {
+		return errors.New("redis.key_prefix 不能包含冒号或空白字符")
+	}
+	// 显式要求超时为正数：0 会悄悄退回 go-redis 默认值，配置写错时无从发现。
+	if c.RedisReadTimeout <= 0 {
+		return errors.New("redis.read_timeout 必须大于 0")
+	}
+	if c.RedisWriteTimeout <= 0 {
+		return errors.New("redis.write_timeout 必须大于 0")
+	}
 	if c.JWTSecret == "" {
 		return errors.New("jwt.secret 不能为空")
 	}
@@ -358,6 +373,15 @@ func (c *Config) Validate() error {
 	}
 	if len(c.CORSAllowOrigins) == 0 {
 		return errors.New("cors.allow_origins 至少需要配置一个来源")
+	}
+	// 浏览器规范不允许 Access-Control-Allow-Origin: * 与 credentials 同时使用；
+	// 放行会在运行期被浏览器拒绝，且等价于把带 Cookie 的接口暴露给任意站点。
+	if c.CORSAllowCredentials {
+		for _, origin := range c.CORSAllowOrigins {
+			if strings.TrimSpace(origin) == "*" {
+				return errors.New("cors.allow_credentials=true 时 cors.allow_origins 不能包含 *")
+			}
+		}
 	}
 	return nil
 }
