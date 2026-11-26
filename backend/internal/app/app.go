@@ -255,10 +255,12 @@ func redisReadyCheck(rdb redis.UniversalClient) func(ctx context.Context) error 
 func buildCodeSender(cfg *config.Config, logger *zap.Logger) (*sender.Router, error) {
 	var providers []sender.Provider
 
-	// 邮件：配置了 SMTP 即启用真实邮件下发
+	// 邮件：配置了 SMTP 即启用真实邮件下发。超时按配置下发，
+	// 与 app.send_code_request_timeout 的不变量链由 config.Validate 在启动时保证。
 	if cfg.SMTPHost != "" {
 		providers = append(providers, sender.NewSMTPProvider(
 			cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom,
+			sender.WithSMTPTimeouts(cfg.SMTPDialTimeout, cfg.SMTPSendTimeout),
 		))
 	}
 

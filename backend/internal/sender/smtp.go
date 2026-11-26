@@ -38,18 +38,42 @@ type SMTPProvider struct {
 }
 
 // NewSMTPProvider 构造 SMTP 邮件 Provider。username 为空时不做鉴权（适合内网中继）。
-func NewSMTPProvider(host string, port int, username, password, from string) *SMTPProvider {
+// 超时缺省用包内常量，可由 opts 覆写（配置项 smtp.dial_timeout / smtp.send_timeout）。
+func NewSMTPProvider(host string, port int, username, password, from string, opts ...SMTPOption) *SMTPProvider {
 	var auth smtp.Auth
 	if username != "" {
 		auth = smtp.PlainAuth("", username, password, host)
 	}
-	return &SMTPProvider{
+	p := &SMTPProvider{
 		host:        host,
 		addr:        net.JoinHostPort(host, strconv.Itoa(port)),
 		auth:        auth,
 		from:        from,
 		dialTimeout: defaultSMTPDialTimeout,
 		sendTimeout: defaultSMTPSendTimeout,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+	return p
+}
+
+// SMTPOption 按需覆写 SMTP Provider 的行为。用可选参数而非追加位置参数，
+// 是为了让既有 5 参数构造调用（含测试）保持不变。
+type SMTPOption func(*SMTPProvider)
+
+// WithSMTPTimeouts 覆写建连与全流程超时。非正数沿用默认值：配置校验已拒绝 0，
+// 这里只兜底直接调用构造器的使用方，避免一个漏配把 SMTP 变成「连上就超时」。
+func WithSMTPTimeouts(dialTimeout, sendTimeout time.Duration) SMTPOption {
+	return func(p *SMTPProvider) {
+		if dialTimeout > 0 {
+			p.dialTimeout = dialTimeout
+		}
+		if sendTimeout > 0 {
+			p.sendTimeout = sendTimeout
+		}
 	}
 }
 

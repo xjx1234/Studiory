@@ -120,3 +120,37 @@ func TestSMTPProvider_ContextCancellationInterruptsBlockingIO(t *testing.T) {
 		t.Fatalf("send blocked for %s; ctx cancellation did not interrupt I/O", elapsed)
 	}
 }
+
+// TestSMTPProvider_WithSMTPTimeoutsAppliesToConnection 配置项必须真的落到连接层：
+// 黑洞 SMTP 下把 send_timeout 收到 50ms，就应在 50ms 附近失败，
+// 而不是按包内默认的 10s 干等（这条用例专门盯「smtp.send_timeout 写了但没接线」）。
+func TestSMTPProvider_WithSMTPTimeoutsAppliesToConnection(t *testing.T) {
+	host, port := startFakeSMTP(t, false, true)
+	p := NewSMTPProvider(host, port, "", "", "no-reply@example.com",
+		WithSMTPTimeouts(time.Second, 50*time.Millisecond))
+
+	start := time.Now()
+	err := p.Send(context.Background(), Message{Channel: ChannelEmail, Target: "a@b.c", Code: "123456"})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("黑洞 SMTP 应在 send_timeout 到点后失败")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("耗时 %s，说明 smtp.send_timeout 没下发到连接（仍在用默认 %s）", elapsed, defaultSMTPSendTimeout)
+	}
+}
+
+// TestSMTPProvider_WithSMTPTimeoutsIgnoresNonPositive 非正数沿用包内默认：
+// 一个漏配的 0 会把 SMTP 变成「一连上就超时」，宁可退回已知默认值。
+func TestSMTPProvider_WithSMTPTimeoutsIgnoresNonPositive(t *testing.T) {
+	p := NewSMTPProvider("smtp.example.com", 25, "", "", "no-reply@example.com",
+		WithSMTPTimeouts(0, -time.Second))
+
+	if p.dialTimeout != defaultSMTPDialTimeout {
+		t.Errorf("dialTimeout = %s, want %s", p.dialTimeout, defaultSMTPDialTimeout)
+	}
+	if p.sendTimeout != defaultSMTPSendTimeout {
+		t.Errorf("sendTimeout = %s, want %s", p.sendTimeout, defaultSMTPSendTimeout)
+	}
+}
