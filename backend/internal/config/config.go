@@ -37,6 +37,11 @@ type Config struct {
 	// ServerRequestTimeout 是单个请求的 context 超时（DB/Redis 调用共享该 ctx）。
 	// 必须小于 write_timeout：否则超时后已经没有时间把 503 信封写回客户端。
 	ServerRequestTimeout time.Duration
+	// ServerSendCodeRequestTimeout 是 /api/v1/auth/send-code 专用的请求预算，0 = 沿用
+	// ServerRequestTimeout。发码是同步外呼（SMTP/短信），默认预算装不下 SMTP 的建连+全流程
+	// 超时，慢 SMTP 下每次请求都会以 503 收场，因此这条路由单独放宽。
+	// 不变量链由 Validate 强制：smtp.dial_timeout + smtp.send_timeout < 预算 ≤ write_timeout。
+	ServerSendCodeRequestTimeout time.Duration
 	// ServerTrustedProxies 反向代理/LB 的来源 IP 或 CIDR 列表（如 "10.0.0.0/8"）。
 	// Gin 默认信任所有代理，这会让客户端能自行伪造 X-Forwarded-For；这里显式收紧：
 	// 列表为空（默认值）时不信任任何代理，XFF 一律忽略，限流与访问日志只认 TCP 对端地址。
@@ -103,6 +108,11 @@ type Config struct {
 	SMTPUsername string
 	SMTPPassword string
 	SMTPFrom     string
+	// SMTPDialTimeout / SMTPSendTimeout 是 SMTP 建连与全流程超时。
+	// 外呼预算（ServerSendCodeRequestTimeout）必须容得下两者之和，否则请求 ctx 会先于
+	// SMTP 自身超时到期，把连接 deadline 拉到当下、读写立刻失败（启动阶段即校验）。
+	SMTPDialTimeout time.Duration
+	SMTPSendTimeout time.Duration
 
 	// ── OAuth ─────────────────────────────────────────────────────────────
 	OAuthDevMode         bool
@@ -140,14 +150,15 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		AppEnv:                  v.GetString("app.env"),
-		ServerAddr:              v.GetString("app.server_addr"),
-		ServerReadHeaderTimeout: v.GetDuration("app.read_header_timeout"),
-		ServerReadTimeout:       v.GetDuration("app.read_timeout"),
-		ServerWriteTimeout:      v.GetDuration("app.write_timeout"),
-		ServerIdleTimeout:       v.GetDuration("app.idle_timeout"),
-		ServerRequestTimeout:    v.GetDuration("app.request_timeout"),
-		ServerTrustedProxies:    getStringSlice(v, "app.trusted_proxies"),
+		AppEnv:                       v.GetString("app.env"),
+		ServerAddr:                   v.GetString("app.server_addr"),
+		ServerReadHeaderTimeout:      v.GetDuration("app.read_header_timeout"),
+		ServerReadTimeout:            v.GetDuration("app.read_timeout"),
+		ServerWriteTimeout:           v.GetDuration("app.write_timeout"),
+		ServerIdleTimeout:            v.GetDuration("app.idle_timeout"),
+		ServerRequestTimeout:         v.GetDuration("app.request_timeout"),
+		ServerSendCodeRequestTimeout: v.GetDuration("app.send_code_request_timeout"),
+		ServerTrustedProxies:         getStringSlice(v, "app.trusted_proxies"),
 
 		DBDriver:      strings.ToLower(v.GetString("database.driver")),
 		DBHost:        v.GetString("database.host"),
@@ -186,11 +197,13 @@ func Load() (*Config, error) {
 		AuthCodeDailyLimitPerTarget:        v.GetInt("auth.code_daily_limit_per_target"),
 		AuthCodeDailyLimitPerIP:            v.GetInt("auth.code_daily_limit_per_ip"),
 
-		SMTPHost:     v.GetString("smtp.host"),
-		SMTPPort:     v.GetInt("smtp.port"),
-		SMTPUsername: v.GetString("smtp.username"),
-		SMTPPassword: v.GetString("smtp.password"),
-		SMTPFrom:     v.GetString("smtp.from"),
+		SMTPHost:        v.GetString("smtp.host"),
+		SMTPPort:        v.GetInt("smtp.port"),
+		SMTPUsername:    v.GetString("smtp.username"),
+		SMTPPassword:    v.GetString("smtp.password"),
+		SMTPFrom:        v.GetString("smtp.from"),
+		SMTPDialTimeout: v.GetDuration("smtp.dial_timeout"),
+		SMTPSendTimeout: v.GetDuration("smtp.send_timeout"),
 
 		OAuthDevMode:         v.GetBool("oauth.dev_mode"),
 		OAuthProviders:       getStringSlice(v, "oauth.providers"),
@@ -263,6 +276,34 @@ func (c *Config) Validate() error {
 	}
 	if c.ServerRequestTimeout > c.ServerWriteTimeout {
 		return errors.New("app.request_timeout 不能大于 app.write_timeout（超时后需要留出写回 503 的时间）")
+	}
+	// 发码预算：0 表示不单独放宽（沿用 request_timeout），非 0 时才受下面两条约束。
+	if c.ServerSendCodeRequestTimeout > 0 {
+		if c.ServerSendCodeRequestTimeout < c.ServerRequestTimeout {
+			// 这条预算存在的意义是给外呼放宽时间；小于 request_timeout 等于把它写成收紧，
+			// 配置写反时宁可启动失败，也不要看着配了、实际仍是全局值封顶。
+			return errors.New("app.send_code_request_timeout 不能小于 app.request_timeout（要整体收紧请改 request_timeout）")
+		}
+		if c.ServerSendCodeRequestTimeout > c.ServerWriteTimeout {
+			return errors.New("app.send_code_request_timeout 不能大于 app.write_timeout（超时后需要留出写回 503 的时间）")
+		}
+	}
+	if c.SMTPHost != "" {
+		if c.SMTPDialTimeout <= 0 {
+			return errors.New("smtp.dial_timeout 必须大于 0")
+		}
+		if c.SMTPSendTimeout <= 0 {
+			return errors.New("smtp.send_timeout 必须大于 0")
+		}
+		// 「外层小于内层」是慢 SMTP 下发码恒 503 的根因：请求 ctx 先到期会把 SMTP 连接
+		// deadline 拉到当下、读写立刻失败。这类错配必须在启动时炸，而不是等线上 503。
+		// 取严格小于：预算等于 dial+send 意味着 Redis/DB 与响应写回一点时间都不剩。
+		if budget := c.SendCodeRequestBudget(); c.SMTPDialTimeout+c.SMTPSendTimeout >= budget {
+			return fmt.Errorf(
+				"smtp.dial_timeout(%s)+smtp.send_timeout(%s) 必须小于发码请求预算 %s："+
+					"请放宽 app.send_code_request_timeout（并保持在 app.write_timeout 之内）或收紧 SMTP 超时",
+				c.SMTPDialTimeout, c.SMTPSendTimeout, budget)
+		}
 	}
 	if c.ServerReadTimeout < c.ServerReadHeaderTimeout {
 		return errors.New("app.read_timeout 不能小于 app.read_header_timeout")
@@ -431,6 +472,16 @@ func (c *Config) IsProd() bool {
 	return c.AppEnv == "production"
 }
 
+// SendCodeRequestBudget 返回发码端点实际使用的请求预算：
+// 未单独配置时沿用全局 request_timeout。中间件与启动校验共用这一处判断，
+// 避免两边各写一遍取值规则、日后放宽忘了同步校验。
+func (c *Config) SendCodeRequestBudget() time.Duration {
+	if c.ServerSendCodeRequestTimeout > 0 {
+		return c.ServerSendCodeRequestTimeout
+	}
+	return c.ServerRequestTimeout
+}
+
 // ── 内部 ─────────────────────────────────────────────────────────────────────
 
 func loadViper() (*viper.Viper, error) {
@@ -489,6 +540,13 @@ func loadViper() (*viper.Viper, error) {
 	v.SetDefault("auth.code_daily_limit_per_target", 10)
 	v.SetDefault("auth.code_daily_limit_per_ip", 100)
 
+	// SMTP 超时同理：老配置目录里没有这两个 key 时，缺省值必须与代码内默认一致，
+	// 否则升级后要么预算缺失、要么 SMTP 拿到 0 超时立刻打断读写。
+	// app.send_code_request_timeout 刻意不给缺省：留空就是「不放宽」，由 base.yaml 提供 20s，
+	// 避免把 write_timeout 配得比 20s 小的部署在升级瞬间卡在启动校验上。
+	v.SetDefault("smtp.dial_timeout", "5s")
+	v.SetDefault("smtp.send_timeout", "10s")
+
 	return v, nil
 }
 
@@ -534,6 +592,7 @@ func bindEnvs(v *viper.Viper) {
 		"app.write_timeout":                       "SERVER_WRITE_TIMEOUT",
 		"app.idle_timeout":                        "SERVER_IDLE_TIMEOUT",
 		"app.request_timeout":                     "SERVER_REQUEST_TIMEOUT",
+		"app.send_code_request_timeout":           "SERVER_SEND_CODE_REQUEST_TIMEOUT",
 		"app.trusted_proxies":                     "SERVER_TRUSTED_PROXIES",
 		"database.url":                            "DATABASE_URL",
 		"database.host":                           "DB_HOST",
@@ -571,6 +630,8 @@ func bindEnvs(v *viper.Viper) {
 		"smtp.username":                           "SMTP_USERNAME",
 		"smtp.password":                           "SMTP_PASSWORD",
 		"smtp.from":                               "SMTP_FROM",
+		"smtp.dial_timeout":                       "SMTP_DIAL_TIMEOUT",
+		"smtp.send_timeout":                       "SMTP_SEND_TIMEOUT",
 		"oauth.dev_mode":                          "OAUTH_DEV_MODE",
 		"oauth.providers":                         "OAUTH_PROVIDERS",
 		"oauth.wechat.app_id":                     "OAUTH_WECHAT_APP_ID",

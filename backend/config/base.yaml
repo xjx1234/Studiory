@@ -13,6 +13,11 @@ app:
   # 单个请求的 context 超时：DB/Redis 调用共享该 ctx，超时后连接及时归还连接池。
   # 必须小于 write_timeout，否则 503 信封没有时间写回客户端。
   request_timeout: 5s
+  # /api/v1/auth/send-code 单独的请求预算：发码是同步外呼（SMTP/短信），
+  # 5s 装不下 smtp.dial_timeout + smtp.send_timeout，慢 SMTP 下每次请求都会 503。
+  # 不变量链（启动校验会拦）：dial_timeout + send_timeout < 本项 ≤ write_timeout，且 ≥ request_timeout。
+  # 0 = 不单独放宽（沿用 request_timeout）；预算取 SMTP 两者之和再加余量（15s + 5s 给 Redis/DB 与响应写回）。
+  send_code_request_timeout: 20s
   # 可信反向代理/LB 的来源 IP 或 CIDR，逗号分隔（如 "10.0.0.0/8, 192.168.1.1"）。
   # 留空 = 不信任任何代理：X-Forwarded-For 一律忽略，IP 限流与日志只认 TCP 对端地址，
   # 客户端无法靠伪造请求头绕过限流。部署在 nginx/SLB/Ingress 之后必须填入代理网段，
@@ -79,6 +84,10 @@ smtp:
   username: ""
   password: ""
   from: "no-reply@example.com"
+  # 建连超时与全流程（握手到 QUIT）超时。两者之和必须小于 app.send_code_request_timeout，
+  # 否则请求 ctx 先到期、把连接 deadline 拉到当下，SMTP 读写立刻失败（启动校验会拦下）。
+  dial_timeout: 5s
+  send_timeout: 10s
 
 oauth:
   dev_mode: true              # 开发模式：直接用 provider + open_id 登录（不校验第三方 token）

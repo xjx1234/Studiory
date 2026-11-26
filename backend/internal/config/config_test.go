@@ -396,3 +396,73 @@ func TestValidateRejectsInvalidTrustedProxies(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateAcceptsSMTPWithinSendCodeBudget 默认链路 dial(5)+send(10) < 预算(20) ≤ write(30) 应通过。
+func TestValidateAcceptsSMTPWithinSendCodeBudget(t *testing.T) {
+	cfg := prodBaseConfig()
+	cfg.SMTPHost = "smtp.example.com"
+	cfg.SMTPDialTimeout = 5 * time.Second
+	cfg.SMTPSendTimeout = 10 * time.Second
+	cfg.ServerSendCodeRequestTimeout = 20 * time.Second
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expect the documented default chain to pass, got %v", err)
+	}
+}
+
+// TestValidateIgnoresSMTPBudgetChainWhenSMTPDisabled 没启用 SMTP 的部署不受新键影响：
+// 全部预算/SMTP 超时留空也必须校验通过，否则升级会让原本正常的部署凭空启动失败。
+func TestValidateIgnoresSMTPBudgetChainWhenSMTPDisabled(t *testing.T) {
+	cfg := prodBaseConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("SMTP-less config with unset timeouts/budget should stay valid, got %v", err)
+	}
+}
+
+// TestValidateRejectsInconsistentTimeoutBudget 「外层小于内层」这类错配要在启动时炸，
+// 而不是等线上发码恒 503 才发现。
+func TestValidateRejectsInconsistentTimeoutBudget(t *testing.T) {
+	cases := []struct {
+		name       string
+		dial, send time.Duration
+		budget     time.Duration
+	}{
+		// 预算留空 = 沿用 request_timeout(5s)，装不下 15s 的 SMTP
+		{"no budget, slow smtp", 5 * time.Second, 10 * time.Second, 0},
+		// 预算恰好等于 dial+send：Redis/DB 与响应写回一点余量都不剩
+		{"budget equals smtp sum", 5 * time.Second, 10 * time.Second, 15 * time.Second},
+		// 预算超过 write_timeout：503 信封来不及写回客户端
+		{"budget above write timeout", 5 * time.Second, 10 * time.Second, 40 * time.Second},
+		// 预算小于 request_timeout：写了等于没写，放宽没发生
+		{"budget below request timeout", 5 * time.Second, 2 * time.Second, 2 * time.Second},
+		// SMTP 超时被配成 0：连接一建立就被打断
+		{"zero dial timeout", 0, 10 * time.Second, 20 * time.Second},
+		{"zero send timeout", 5 * time.Second, 0, 20 * time.Second},
+	}
+
+	for _, tc := range cases {
+		cfg := prodBaseConfig()
+		cfg.SMTPHost = "smtp.example.com"
+		cfg.SMTPDialTimeout = tc.dial
+		cfg.SMTPSendTimeout = tc.send
+		cfg.ServerSendCodeRequestTimeout = tc.budget
+
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: expected Validate() to reject dial=%s send=%s budget=%s",
+				tc.name, tc.dial, tc.send, tc.budget)
+		}
+	}
+}
+
+// TestSendCodeRequestBudget 预算取值只有一处实现：中间件与启动校验共用它。
+func TestSendCodeRequestBudget(t *testing.T) {
+	cfg := prodBaseConfig()
+	if got := cfg.SendCodeRequestBudget(); got != cfg.ServerRequestTimeout {
+		t.Errorf("未配置单独预算时应沿用 request_timeout，got %s want %s", got, cfg.ServerRequestTimeout)
+	}
+
+	cfg.ServerSendCodeRequestTimeout = 20 * time.Second
+	if got := cfg.SendCodeRequestBudget(); got != 20*time.Second {
+		t.Errorf("配置了单独预算时应取该值，got %s", got)
+	}
+}
