@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -93,6 +94,11 @@ func (r *Router) Channels() []Channel {
 }
 
 // Send 选择对应渠道的 Provider 依次尝试，任一成功即返回；全部失败返回最后一个错误。
+//
+// 同渠道多个 Provider 共用调用方的 deadline，因此每次尝试只切「剩余预算 ÷ 剩余尝试数」：
+// 否则主通道把时间耗光后，备用通道拿到的是已过期的 ctx，故障转移形同虚设
+// （线上表现为「配了备用 SMTP 却从来没救回来过」）。主通道快速失败时，
+// 省下的时间会自动让给后面的通道。
 func (r *Router) Send(ctx context.Context, msg Message) error {
 	providers := r.byChannel[msg.Channel]
 	if len(providers) == 0 {
@@ -100,17 +106,43 @@ func (r *Router) Send(ctx context.Context, msg Message) error {
 	}
 
 	var lastErr error
-	for _, p := range providers {
-		if err := p.Send(ctx, msg); err != nil {
-			lastErr = err
-			r.logger.Warn("code provider send failed, trying next",
-				zap.String("provider", p.Name()),
-				zap.String("channel", string(msg.Channel)),
-				zap.Error(err),
-			)
-			continue
+	for i, p := range providers {
+		attemptCtx, cancel := attemptBudget(ctx, len(providers)-i)
+		if attemptCtx == nil {
+			// 上下文已结束（请求超时或客户端断开）：剩下的 provider 一个都不会被尝试。
+			// 不能静默当作「和上次一样失败」，否则排查时会以为备用通道也试过。
+			return fmt.Errorf("sender: send context already done, %d of %d provider(s) for channel %s not attempted (last error: %v)",
+				len(providers)-i, len(providers), msg.Channel, lastErr)
 		}
-		return nil
+
+		err := p.Send(attemptCtx, msg)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		r.logger.Warn("code provider send failed, trying next",
+			zap.String("provider", p.Name()),
+			zap.String("channel", string(msg.Channel)),
+			zap.Error(err),
+		)
 	}
 	return fmt.Errorf("all providers failed for channel %s: %w", msg.Channel, lastErr)
+}
+
+// attemptBudget 为单次尝试派生上下文：调用方没有 deadline 时原样透传（不在这里发明超时），
+// 有 deadline 时按剩余尝试数均分剩余时间；上下文已结束则返回 nil ctx 表示不该继续尝试。
+func attemptBudget(ctx context.Context, attemptsLeft int) (context.Context, context.CancelFunc) {
+	noop := func() {}
+	if ctx.Err() != nil {
+		return nil, noop
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return ctx, noop
+	}
+	if share := time.Until(deadline) / time.Duration(attemptsLeft); share > 0 {
+		return context.WithTimeout(ctx, share)
+	}
+	return nil, noop
 }
