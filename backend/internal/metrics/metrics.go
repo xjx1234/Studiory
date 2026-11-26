@@ -31,6 +31,8 @@ type Metrics struct {
 
 	codeSendTotal *prometheus.CounterVec
 
+	cleanupTotal *prometheus.CounterVec
+
 	rateLimitFallbackTotal *prometheus.CounterVec
 }
 
@@ -62,12 +64,18 @@ func New() *Metrics {
 			Help: "验证码下发次数（按渠道与结果）。channel 取值：sms/email/unknown（请求体里的其它值统一归为 unknown）；outcome 取值：sent/cooldown/target_quota/ip_quota/unsupported_channel/invalid_request/storage_error/dispatch_error。",
 		}, []string{"channel", "outcome"}),
 
+		cleanupTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "auth_code_cleanup_total",
+			Help: "验证码下发失败后清理冷却/验证码键的次数（按渠道与结果）。result 取值：ok/error；error 非 0 表示用户会继续被冷却键挡住 60 秒，" +
+				"且那 5 分钟内躺在 Redis 里的验证码对应的邮件其实没发出去。",
+		}, []string{"channel", "result"}),
+
 		rateLimitFallbackTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "rate_limit_store_fallback_total",
 			Help: "限流存储从 Redis 降级为进程内内存的次数（按限流域）。非 0 表示多副本部署下限流阈值会按副本数放大。",
 		}, []string{"scope"}),
 	}
-	reg.MustRegister(m.reqTotal, m.reqDuration, m.inFlight, m.codeSendTotal, m.rateLimitFallbackTotal)
+	reg.MustRegister(m.reqTotal, m.reqDuration, m.inFlight, m.codeSendTotal, m.cleanupTotal, m.rateLimitFallbackTotal)
 	return m
 }
 
@@ -79,6 +87,12 @@ func (m *Metrics) ObserveRateLimitFallback(scope string) {
 // ObserveCodeSend 记录一次验证码下发结果（实现 authservice.CodeSendObserver）。
 func (m *Metrics) ObserveCodeSend(channel, outcome string) {
 	m.codeSendTotal.WithLabelValues(channel, outcome).Inc()
+}
+
+// ObserveCodeCleanup 记录一次「下发失败后清理冷却/验证码键」的结果
+// （实现 authservice.CodeSendObserver）。
+func (m *Metrics) ObserveCodeCleanup(channel, result string) {
+	m.cleanupTotal.WithLabelValues(channel, result).Inc()
 }
 
 // Registerer 返回底层注册表，供注册自定义 Collector（pgxpool / Redis）。

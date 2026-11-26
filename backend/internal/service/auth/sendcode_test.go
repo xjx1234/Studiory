@@ -3,6 +3,7 @@ package authservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,11 +145,16 @@ func quotaSvc(t *testing.T, rdb redis.UniversalClient, opts ...Option) (*AuthSer
 type captureObserver struct {
 	channels []string
 	outcomes []string
+	cleanups []string
 }
 
 func (c *captureObserver) ObserveCodeSend(channel, outcome string) {
 	c.channels = append(c.channels, channel)
 	c.outcomes = append(c.outcomes, outcome)
+}
+
+func (c *captureObserver) ObserveCodeCleanup(channel, result string) {
+	c.cleanups = append(c.cleanups, channel+":"+result)
 }
 
 func TestSendCode_TargetDailyQuota(t *testing.T) {
@@ -259,5 +265,122 @@ func TestSendCode_RecordsOutcomes(t *testing.T) {
 		if obs.channels[i] != wantChannels[i] {
 			t.Errorf("channel[%d] = %q, want %q", i, obs.channels[i], wantChannels[i])
 		}
+	}
+}
+
+// expireOnSendSender 在邮件真正发出去之前取消请求 ctx，复刻「慢 SMTP 把预算耗尽」的时序：
+// 前面的配额与写码都用的活 ctx，只有走到清理这一步时 ctx 已经失效。
+type expireOnSendSender struct {
+	expire func()
+}
+
+func (e *expireOnSendSender) Send(ctx context.Context, _ sender.Message) error {
+	e.expire()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// recordingDelStore 记录每次 Del 携带的 ctx 状态，并可强制删除失败。
+// 用来盯两件修复前无人看守的事：清理是否带着自己的 deadline、失败是否被观察到。
+type recordingDelStore struct {
+	CacheStore
+	delErr    error
+	budgets   []time.Duration
+	cancelled []bool
+}
+
+func (r *recordingDelStore) Del(ctx context.Context, keys ...string) error {
+	if d, ok := ctx.Deadline(); ok {
+		r.budgets = append(r.budgets, time.Until(d))
+	} else {
+		r.budgets = append(r.budgets, 0)
+	}
+	r.cancelled = append(r.cancelled, ctx.Err() != nil)
+
+	if r.delErr != nil {
+		return r.delErr
+	}
+	return r.CacheStore.Del(ctx, keys...)
+}
+
+func sendCodeSvcWithStore(t *testing.T, store CacheStore, snd sender.Sender, obs *captureObserver) *AuthServiceImpl {
+	t.Helper()
+	svc, ok := New(testutil.NewFakeUserRepo(), store,
+		WithTokenIssuer(testTokenIssuer()),
+		WithMockCodeFallback(true),
+		WithCodeSender(snd),
+		WithCodeSendObserver(obs),
+	).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+	return svc
+}
+
+// TestSendCode_CleanupSurvivesExpiredRequestContext 是超时路径的回归用例。
+//
+// 修复前是 `_ = s.cache.Del(ctx, ...)`：复用已过期的请求 ctx，go-redis 直接返回 ctx 错误
+// 且被吞掉，于是「回滚」在最需要它的场景里从未生效——冷却键继续挡用户 60 秒、
+// 验证码键再躺 5 分钟，而配额早已在下发前扣掉。用户观感是「没收到邮件、重试还被 429」。
+func TestSendCode_CleanupSurvivesExpiredRequestContext(t *testing.T) {
+	_, rdb := newTestRDB(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	obs := &captureObserver{}
+	svc := sendCodeSvcWithStore(t, NewRedisCacheStore(rdb), &expireOnSendSender{expire: cancel}, obs)
+
+	if e := svc.SendCode(ctx, "email", "a@example.com", "1.1.1.1"); e != errcode.ErrInternal {
+		t.Fatalf("SendCode error = %v, want ErrInternal", e)
+	}
+	// 前置条件：请求 ctx 必须真的已失效，否则用例退化成「拿活 ctx 也能通过」的假阳性。
+	if ctx.Err() == nil {
+		t.Fatal("sender did not expire the request ctx, the test proves nothing")
+	}
+	// 同样条件下「沿用请求 ctx 删除」必须失败——这正是修复前留下脏键的原因。
+	if err := rdb.Del(ctx, svc.codeCooldownKey("email", "a@example.com")).Err(); err == nil {
+		t.Error("Del with the expired request ctx unexpectedly succeeded, so this test can no longer distinguish the fix")
+	}
+
+	if n, _ := rdb.Exists(context.Background(),
+		svc.codeCooldownKey("email", "a@example.com"),
+		svc.codeRedisKey("email", "a@example.com"),
+	).Result(); n != 0 {
+		t.Errorf("expected cooldown and code keys cleared after timeout rollback, exists=%d", n)
+	}
+	if got := strings.Join(obs.cleanups, ","); got != "email:ok" {
+		t.Errorf("cleanup observations = %q, want %q", got, "email:ok")
+	}
+}
+
+// TestSendCode_CleanupUsesOwnBudgetAndReportsFailure 固定清理的两条契约：
+// 独立预算（不裸奔、也不借用已失效的请求 deadline）与失败必须可观测。
+func TestSendCode_CleanupUsesOwnBudgetAndReportsFailure(t *testing.T) {
+	_, rdb := newTestRDB(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	obs := &captureObserver{}
+	store := &recordingDelStore{CacheStore: NewRedisCacheStore(rdb), delErr: errors.New("redis: i/o timeout")}
+	svc := sendCodeSvcWithStore(t, store, &expireOnSendSender{expire: cancel}, obs)
+
+	if e := svc.SendCode(ctx, "email", "a@example.com", "1.1.1.1"); e != errcode.ErrInternal {
+		t.Fatalf("SendCode error = %v, want ErrInternal", e)
+	}
+	if len(store.budgets) == 0 {
+		t.Fatal("cleanup never attempted")
+	}
+	for i, budget := range store.budgets {
+		if budget <= 0 || budget > codeCleanupTimeout {
+			t.Errorf("cleanup #%d budget = %s, want (0, %s]", i, budget, codeCleanupTimeout)
+		}
+	}
+	for i, cancelled := range store.cancelled {
+		if cancelled {
+			t.Errorf("cleanup #%d ran on a cancelled ctx; 清理必须脱离请求 ctx 才能真的发出 DEL", i)
+		}
+	}
+	if got := strings.Join(obs.cleanups, ","); got == "" || strings.Contains(got, "ok") {
+		t.Errorf("cleanup observations = %q, want only error results", got)
 	}
 }

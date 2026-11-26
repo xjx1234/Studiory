@@ -22,6 +22,14 @@ const (
 	// codeQuotaWindow 是下发配额的统计窗口（滚动窗口，从首次下发开始计时）。
 	codeQuotaWindow = 24 * time.Hour
 
+	// codeCleanupTimeout 是「下发失败后清理冷却/验证码键」的独立预算：Redis 卡住时
+	// 也不能把 handler 无限挂住。慢 SMTP 走到清理这一步时请求 ctx 已经过期，
+	// 沿用请求 ctx 的 Del 会被 go-redis 立刻拒绝，等于没有回滚。
+	codeCleanupTimeout = 2 * time.Second
+
+	cleanupResultOK    = "ok"
+	cleanupResultError = "error"
+
 	// verifyCodeLua 原子校验验证码：匹配则删除并返回 1；key 不存在返回 -1；不匹配返回 0。
 	verifyCodeLua = `
 local val = redis.call('GET', KEYS[1])
@@ -149,7 +157,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 	code, codeErr := s.generateCode(ctx)
 	if codeErr != nil {
 		s.observeCodeSend(codeType, codeOutcomeStorageError)
-		_ = s.cache.Del(ctx, cooldownKey)
+		s.rollbackCodeKeys(ctx, codeType, target, "generate-code", cooldownKey)
 		return codeErr
 	}
 
@@ -160,7 +168,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 			zap.String("code_type", codeType),
 			baseservice.TargetField(target),
 		)
-		_ = s.cache.Del(ctx, cooldownKey)
+		s.rollbackCodeKeys(ctx, codeType, target, "store-code", cooldownKey)
 		return errcode.ErrInternal
 	}
 
@@ -176,7 +184,7 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 				baseservice.TargetField(target),
 			)
 			// 下发失败：回滚冷却与验证码，便于用户重试
-			_ = s.cache.Del(ctx, cooldownKey, key)
+			s.rollbackCodeKeys(ctx, codeType, target, "dispatch", cooldownKey, key)
 			return errcode.ErrInternal
 		}
 	}
@@ -185,9 +193,42 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 	return nil
 }
 
+// rollbackCodeKeys 清掉冷却/验证码键，让用户能立刻重试。
+//
+// 清理不能沿用请求 ctx：走到这一步多半是慢 SMTP 把请求预算耗光了，ctx 已取消，
+// go-redis 会立刻返回 ctx 错误而根本不发起 DEL。原来 `_ = s.cache.Del(ctx, ...)`
+// 把那个错误吞掉，于是「回滚」在超时路径上从未生效：冷却键继续挡用户 60 秒、
+// 验证码键再躺 5 分钟，而配额已经在下发前扣掉了。
+// WithoutCancel 只摘掉取消信号、保留 ctx 里的请求字段；2 秒独立预算防止 Redis 卡住
+// 把 handler 无限挂住。清理结果一定要出指标和日志——它是用户「明明没收到 yet 被限流」的线索。
+func (s *AuthServiceImpl) rollbackCodeKeys(ctx context.Context, codeType, target, reason string, keys ...string) {
+	if len(keys) == 0 {
+		return
+	}
+
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), codeCleanupTimeout)
+	defer cancel()
+
+	if err := s.cache.Del(cleanupCtx, keys...); err != nil {
+		s.observeCodeCleanup(codeType, cleanupResultError)
+		s.LogInternal(ctx, "SendCode rollback "+reason, err,
+			zap.String("code_type", codeType),
+			baseservice.TargetField(target),
+		)
+		return
+	}
+	s.observeCodeCleanup(codeType, cleanupResultOK)
+}
+
 func (s *AuthServiceImpl) observeCodeSend(channel, outcome string) {
 	if s.codeObserver != nil {
 		s.codeObserver.ObserveCodeSend(codeChannelLabel(channel), outcome)
+	}
+}
+
+func (s *AuthServiceImpl) observeCodeCleanup(channel, result string) {
+	if s.codeObserver != nil {
+		s.codeObserver.ObserveCodeCleanup(codeChannelLabel(channel), result)
 	}
 }
 

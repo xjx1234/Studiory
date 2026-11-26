@@ -36,6 +36,10 @@ type Service interface {
 // CodeSendObserver 记录验证码下发结果，用于指标与告警（由 metrics 包实现）。
 type CodeSendObserver interface {
 	ObserveCodeSend(channel, outcome string)
+	// ObserveCodeCleanup 记录一次「下发失败后清理冷却/验证码键」的结果（ok / error）。
+	// 清理失败意味着冷却键会留满 60 秒、验证码键留满 5 分钟，用户端表现为被限流或收不到码，
+	// 必须能被看见，不能再被 `_ =` 吞掉。
+	ObserveCodeCleanup(channel, result string)
 }
 
 // AuthServiceImpl 持有 repo 与 redis，实现业务逻辑。
