@@ -258,6 +258,10 @@ func TestUserRepo_UpdateRoleAndStatus(t *testing.T) {
 		t.Errorf("role = %q, want admin", roleUpdated.Role)
 	}
 
+	// u 已是 admin：再建一个 admin，避免禁用时命中「最后一个管理员」守卫
+	// （守卫只允许禁用/降权非唯一 active admin）。
+	createTestUser(t, repo.RoleAdmin)
+
 	statusUpdated, err := users.UpdateStatus(ctx, u.ID, repo.StatusDisabled)
 	if err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
@@ -268,6 +272,50 @@ func TestUserRepo_UpdateRoleAndStatus(t *testing.T) {
 
 	if _, err := users.UpdateRole(ctx, uuid.New(), repo.RoleAdmin); !errors.Is(err, repo.ErrNotFound) {
 		t.Errorf("UpdateRole(random) error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestUserRepo_LastAdminGuard 固定守卫边界：只拦截「降权/禁用唯一的 active admin」，
+// 普通用户、已禁用账号一律放行。
+//
+// 回归背景：最初的守卫只写了 EXISTS(其他 active admin)，没判断目标本身是不是 admin，
+// 导致库里没有 admin 时连禁用普通用户都会返回 ErrLastAdmin（CI 的 repo 集成测试先踩到）。
+func TestUserRepo_LastAdminGuard(t *testing.T) {
+	ctx := context.Background()
+	users := testStore.Users()
+
+	// 把库内现有 admin 全部禁用，让本用例的前半段处于「没有任何 active admin」状态。
+	// 集成测试串行执行，不会影响其他用例。
+	if _, err := testStore.Pool().Exec(ctx,
+		`UPDATE users SET status = 'disabled' WHERE role = 'admin' AND status = 'active'`); err != nil {
+		t.Fatalf("reset admins: %v", err)
+	}
+
+	admin := createTestUser(t, repo.RoleAdmin)
+	if _, err := users.UpdateRole(ctx, admin.ID, repo.RoleUser); !errors.Is(err, repo.ErrLastAdmin) {
+		t.Errorf("demoting the last admin error = %v, want ErrLastAdmin", err)
+	}
+	if _, err := users.UpdateStatus(ctx, admin.ID, repo.StatusDisabled); !errors.Is(err, repo.ErrLastAdmin) {
+		t.Errorf("disabling the last admin error = %v, want ErrLastAdmin", err)
+	}
+
+	// 目标不是 active admin 时不得被拦截。
+	plain := createTestUser(t, repo.RoleUser)
+	if _, err := users.UpdateStatus(ctx, plain.ID, repo.StatusDisabled); err != nil {
+		t.Errorf("disabling a normal user must not be blocked: %v", err)
+	}
+	promoted := createTestUser(t, repo.RoleUser)
+	if _, err := users.UpdateRole(ctx, promoted.ID, repo.RoleAdmin); err != nil {
+		t.Errorf("promoting a normal user must not be blocked: %v", err)
+	}
+
+	// 有两个 active admin 时，允许降权/禁用其中一个。
+	if _, err := users.UpdateRole(ctx, promoted.ID, repo.RoleUser); err != nil {
+		t.Errorf("demoting one of two admins should succeed: %v", err)
+	}
+	createTestUser(t, repo.RoleAdmin)
+	if _, err := users.UpdateStatus(ctx, admin.ID, repo.StatusDisabled); err != nil {
+		t.Errorf("disabling one of two admins should succeed: %v", err)
 	}
 }
 

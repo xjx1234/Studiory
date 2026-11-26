@@ -101,7 +101,7 @@ func (r *userRepo) UpdateRole(ctx context.Context, id uuid.UUID, role string) (*
 	return r.updateGuarded(ctx, id,
 		`UPDATE users SET role=?, updated_at=CURRENT_TIMESTAMP(6)
 		 WHERE id=?
-		   AND (?='admin' OR EXISTS (
+		   AND (?='admin' OR role<>'admin' OR status<>'active' OR EXISTS (
 		       SELECT 1 FROM (SELECT id, role, status FROM users) AS other
 		       WHERE other.id<>? AND other.role='admin' AND other.status='active'))`,
 		role, id.String(), role, id.String())
@@ -110,7 +110,7 @@ func (r *userRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status string
 	return r.updateGuarded(ctx, id,
 		`UPDATE users SET status=?, updated_at=CURRENT_TIMESTAMP(6)
 		 WHERE id=?
-		   AND (?='active' OR EXISTS (
+		   AND (?='active' OR role<>'admin' OR status<>'active' OR EXISTS (
 		       SELECT 1 FROM (SELECT id, role, status FROM users) AS other
 		       WHERE other.id<>? AND other.role='admin' AND other.status='active'))`,
 		status, id.String(), status, id.String())

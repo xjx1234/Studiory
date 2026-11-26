@@ -273,6 +273,8 @@ SET role = $2,
     updated_at = now()
 WHERE target.id = $1
   AND ($2 = 'admin'
+       OR target.role <> 'admin'
+       OR target.status <> 'active'
        OR EXISTS (SELECT 1
                   FROM users AS other
                   WHERE other.id <> target.id
@@ -286,8 +288,9 @@ type UpdateUserRoleParams struct {
 	Role string      `json:"role"`
 }
 
-// “最后一个管理员”保护：目标降为非 admin 时，必须还存在另一个 active admin，
-// 否则本次更新不匹配任何行（repo 层据此返回 ErrLastAdmin）。
+// “最后一个管理员”保护：只有「目标当前是 active admin，且目标是唯一的 active admin」
+// 这一种情况才拦截。目标是普通用户 / 已禁用账号时不受限制——否则库里一个 admin 都没有时，
+// 连普通用户的改角色请求都会被拒（集成测试踩到过这个回归）。
 func (q *Queries) UpdateUserRole(ctx context.Context, arg *UpdateUserRoleParams) (*User, error) {
 	row := q.db.QueryRow(ctx, updateUserRole, arg.ID, arg.Role)
 	var i User
@@ -312,6 +315,8 @@ SET status = $2,
     updated_at = now()
 WHERE target.id = $1
   AND ($2 = 'active'
+       OR target.role <> 'admin'
+       OR target.status <> 'active'
        OR EXISTS (SELECT 1
                   FROM users AS other
                   WHERE other.id <> target.id
@@ -325,7 +330,7 @@ type UpdateUserStatusParams struct {
 	Status string      `json:"status"`
 }
 
-// 禁用（status <> 'active'）时同样要求存在另一个 active admin。
+// 同样只拦截「禁用唯一 active admin」，其余（含禁用普通用户）照常放行。
 func (q *Queries) UpdateUserStatus(ctx context.Context, arg *UpdateUserStatusParams) (*User, error) {
 	row := q.db.QueryRow(ctx, updateUserStatus, arg.ID, arg.Status)
 	var i User
