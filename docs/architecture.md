@@ -171,6 +171,9 @@ cd backend && sqlc generate
 2. 用户级 `revoke:uid`（改密/禁用兜底）
 3. `sid` 在 Redis 中仍有效
 
+第 2、3 步共用一次 **MGET** 完成（`session.Store.CheckAccess`）：两个键同属一个 key_prefix，
+合并后每个已鉴权请求只需 **1 次 Redis 往返**，而不是此前的 2 次（session 旧实现内部还有 SIsMember/GET）。
+
 ### 行为约定
 
 - **吊销键按 canonical UUID**：`revoke:uid` 与会话键的用户 ID 部分一律先归一化成小写带连字符的 UUID
@@ -207,6 +210,30 @@ Redis 键说明见 [redis-keys.md](redis-keys.md) 第 2、7 节。
 保证 503 被访问日志记录且带上 CORS 头。
 
 `CORS` 必须在 `RateLimit` 之前：429/503 也是浏览器要读取的响应，缺少 `Access-Control-Allow-Origin` 时前端只能看到 CORS 报错；预检 `OPTIONS` 由 CORS 直接 204 结束，不占用 IP 限流配额。
+
+## 路由模块化注册
+
+`/api/v1` 下的业务路由由 `[]Module` 逐个注册，而不是在 `router.go` 里写死：
+
+```go
+// internal/http/module.go
+type Module interface {
+	Name() string
+	Register(v1 *gin.RouterGroup) error
+}
+
+// internal/app/app.go
+Modules: []internalhttp.Module{
+	internalhttp.AuthModule{Svc: authSvc},
+	internalhttp.UserModule{Svc: userSvc, Auth: authMiddleware, RateLimit: userRateLimit},
+	internalhttp.TodoModule{Svc: todoSvc, Auth: authMiddleware, RateLimit: userRateLimit},
+	internalhttp.AdminModule{Svc: adminSvc, Auth: authMiddleware, RateLimit: userRateLimit},
+},
+```
+
+新增业务模块只需两步：在 `http` 包实现 `Module`（持有自己的 service 与路由级中间件），
+然后在 `app.New` 的 `Modules` 列表追加一项。`Deps` 只保留全局共享依赖，`router.go` 与 `validateDeps` 都不必再改；
+模块缺依赖时 `Register` 返回错误，启动阶段即失败。
 
 ## 健康检查
 

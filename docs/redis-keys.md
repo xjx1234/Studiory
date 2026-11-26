@@ -60,7 +60,9 @@
 - **单设备模式**（`multi_device_enabled=false`）：新登录前 `RevokeAll` 并写入新的 `active_session`，旧设备 token 立即失效。
 - **绝对过期**：`Refresh` 不续期 `session:{sid}`；`sessions:uid` 集合会随新登录续期，但它只是 `RevokeAll` 的枚举索引，
   有效性判断只看 `session:{sid}`，所以旧 sid 的键到期后即使仍在集合里也会被拒绝。
-- `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 对应的 `session:{sid}` 键是否存在且 userID 匹配。Session 校验同样按 `auth.redis_fail_open` 策略降级。
+- `Auth` 中间件除用户级 `revoke:uid` 外，会校验 `sid` 对应的 `session:{sid}` 键是否存在且 userID 匹配。
+  这两个键用一次 `MGET` 读取（`session.Store.CheckAccess`），每个已鉴权请求 1 次往返；
+  Redis 故障同样按 `auth.redis_fail_open` 策略降级。
 
 ---
 

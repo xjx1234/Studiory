@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	baseservice "backend/internal/service"
@@ -119,6 +120,77 @@ func (s *Store) Validate(ctx context.Context, userID, sessionID string) bool {
 	return s.failOpen
 }
 
+// CheckAccess 在一次 Redis 往返（MGET）内同时完成 access token 吊销检查与 session 校验。
+//
+// 鉴权中间件每个请求都要做这两件事，分开查是两次 RTT（session 校验内部还有 SIsMember/GET）。
+// 两个键同属一个 key_prefix，用 MGET 合并后最坏情况也只需一次往返。
+//
+// 返回值：
+//   - (true, nil)  token 可用；
+//   - (false, nil) 被吊销或 session 无效；
+//   - (false, err) Redis 不可用，调用方按 failOpen 策略降级并记录日志。
+//
+// issuedAt 为空（个别历史 token 没有 iat）时跳过吊销比较，只校验 session。
+func (s *Store) CheckAccess(ctx context.Context, userID, sessionID string, issuedAt *time.Time) (bool, error) {
+	if s.rdb == nil || userID == "" {
+		return true, nil
+	}
+
+	canonical := baseservice.CanonicalUserID(userID)
+	keys := make([]string, 0, 2)
+	if issuedAt != nil {
+		keys = append(keys, s.revokeKey(canonical))
+	}
+	if sessionID != "" {
+		keys = append(keys, s.sessionKey(sessionID))
+	}
+	if len(keys) == 0 {
+		return true, nil
+	}
+
+	values, err := s.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return false, err
+	}
+
+	idx := 0
+	if issuedAt != nil {
+		if raw := values[idx]; raw != nil {
+			revokedAt, ok := parseRevokeAt(raw)
+			if !ok {
+				// 吊销键的值损坏：按已吊销处理，宁可多拒一次也不放过。
+				return false, nil
+			}
+			if issuedAt.Unix() <= revokedAt {
+				return false, nil
+			}
+		}
+		idx++
+	}
+
+	if sessionID != "" {
+		uid, ok := values[idx].(string)
+		if !ok || uid != canonical {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// parseRevokeAt 解析 revoke:uid 键里存的时间戳（秒）。
+func parseRevokeAt(raw any) (int64, bool) {
+	switch v := raw.(type) {
+	case string:
+		ts, err := strconv.ParseInt(v, 10, 64)
+		return ts, err == nil
+	case []byte:
+		ts, err := strconv.ParseInt(string(v), 10, 64)
+		return ts, err == nil
+	default:
+		return 0, false
+	}
+}
+
 // Revoke 吊销单个会话（登出当前设备）。
 // 返回底层 Redis 操作中遇到的所有错误（errors.Join），调用方应记录日志：
 // 吊销失败意味着该会话在 TTL 到期前可能仍被 Validate 判定为有效。
@@ -187,6 +259,12 @@ func (s *Store) RevokeAll(ctx context.Context, userID string) error {
 
 func (s *Store) sessionKey(sessionID string) string {
 	return fmt.Sprintf("%s:session:%s", s.prefix, sessionID)
+}
+
+// revokeKey 与 admin/user service 写入吊销时间戳时使用的键名保持一致。
+// uid 必须传 canonical 形式：历史 token 的 claim 可能是大写/带花括号的形式。
+func (s *Store) revokeKey(canonicalUID string) string {
+	return fmt.Sprintf("%s:revoke:uid:%s", s.prefix, canonicalUID)
 }
 
 func (s *Store) userSessionsKey(userID string) string {

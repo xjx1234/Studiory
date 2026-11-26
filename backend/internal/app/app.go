@@ -142,49 +142,56 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		return nil, err
 	}
 
+	authSvc := authservice.New(storage.Users(), authservice.NewRedisCacheStore(rdb),
+		authservice.WithTokenIssuer(tokenIssuer),
+		authservice.WithOAuthRepo(storage.OAuth()),
+		authservice.WithUserOAuthTxRunner(storage),
+		authservice.WithLogger(logger),
+		authservice.WithCodePrefix(cfg.RedisKeyPrefix),
+		authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
+		authservice.WithCodeSender(codeSender),
+		authservice.WithCodeChannels(codeChannels),
+		authservice.WithCodeQuota(cfg.AuthCodeDailyLimitPerTarget, cfg.AuthCodeDailyLimitPerIP),
+		authservice.WithCodeSendObserver(codeObserver),
+		authservice.WithOAuthDevMode(cfg.OAuthDevMode),
+		authservice.WithOAuthProviders(cfg.OAuthProviders),
+		authservice.WithOAuthVerifier(buildOAuthVerifier(cfg, logger)),
+		authservice.WithSessionStore(sessionStore),
+		authservice.WithRedisFailOpen(cfg.AuthRedisFailOpen),
+		authservice.WithRequireCodeForPasswordRegister(cfg.AuthRequireCodeForPasswordRegister),
+	)
+	userSvc := userservice.New(storage.Users(),
+		userservice.WithLogger(logger),
+		userservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
+		userservice.WithSessionStore(sessionStore),
+	)
+	adminSvc := adminservice.New(storage.Users(),
+		adminservice.WithLogger(logger),
+		adminservice.WithAuditRepo(storage.Audit()),
+		adminservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
+		adminservice.WithSessionStore(sessionStore),
+	)
+	todoSvc := todoservice.New(storage.Todos(), todoservice.WithLogger(logger))
+
+	authMiddleware := middleware.Auth(tokenIssuer, sessionStore, cfg.AuthRedisFailOpen, logger)
+	userRateLimit := middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix, rateLimitOpts...)
+
 	deps := &internalhttp.Deps{
-		Cfg:    cfg,
-		Logger: logger,
-
-		AuthService: authservice.New(storage.Users(), authservice.NewRedisCacheStore(rdb),
-			authservice.WithTokenIssuer(tokenIssuer),
-			authservice.WithOAuthRepo(storage.OAuth()),
-			authservice.WithUserOAuthTxRunner(storage),
-			authservice.WithLogger(logger),
-			authservice.WithCodePrefix(cfg.RedisKeyPrefix),
-			authservice.WithMockCodeFallback(cfg.AuthMockCodeEnabled),
-			authservice.WithCodeSender(codeSender),
-			authservice.WithCodeChannels(codeChannels),
-			authservice.WithCodeQuota(cfg.AuthCodeDailyLimitPerTarget, cfg.AuthCodeDailyLimitPerIP),
-			authservice.WithCodeSendObserver(codeObserver),
-			authservice.WithOAuthDevMode(cfg.OAuthDevMode),
-			authservice.WithOAuthProviders(cfg.OAuthProviders),
-			authservice.WithOAuthVerifier(buildOAuthVerifier(cfg, logger)),
-			authservice.WithSessionStore(sessionStore),
-			authservice.WithRedisFailOpen(cfg.AuthRedisFailOpen),
-			authservice.WithRequireCodeForPasswordRegister(cfg.AuthRequireCodeForPasswordRegister),
-		),
-		UserService: userservice.New(storage.Users(),
-			userservice.WithLogger(logger),
-			userservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
-			userservice.WithSessionStore(sessionStore),
-		),
-		AdminService: adminservice.New(storage.Users(),
-			adminservice.WithLogger(logger),
-			adminservice.WithAuditRepo(storage.Audit()),
-			adminservice.WithRevokeSupport(rdb, cfg.RedisKeyPrefix, tokenIssuer.AccessTokenTTL()),
-			adminservice.WithSessionStore(sessionStore),
-		),
-		TodoService: todoservice.New(storage.Todos(), todoservice.WithLogger(logger)),
-
-		AuthMiddleware:          middleware.Auth(tokenIssuer, sessionStore, rdb, cfg.RedisKeyPrefix, cfg.AuthRedisFailOpen, logger),
-		RateLimitMiddleware:     middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix, rateLimitOpts...),
-		UserRateLimitMiddleware: middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix, rateLimitOpts...),
-		MetricsMiddleware:       metricsMiddleware,
-		MetricsHandler:          metricsHandler,
+		Cfg:                 cfg,
+		Logger:              logger,
+		RateLimitMiddleware: middleware.RateLimit(cfg.RateLimitPerMinute, rdb, cfg.RedisKeyPrefix, rateLimitOpts...),
+		MetricsMiddleware:   metricsMiddleware,
+		MetricsHandler:      metricsHandler,
 		ReadyChecks: []internalhttp.ReadyCheck{
 			{Name: cfg.DBDriver, Check: databaseReadyCheck(storage)},
 			{Name: "Redis", Check: redisReadyCheck(rdb)},
+		},
+		// 每新增一个业务模块，只需在此追加一项，router 与 Deps 无需改动。
+		Modules: []internalhttp.Module{
+			internalhttp.AuthModule{Svc: authSvc},
+			internalhttp.UserModule{Svc: userSvc, Auth: authMiddleware, RateLimit: userRateLimit},
+			internalhttp.TodoModule{Svc: todoSvc, Auth: authMiddleware, RateLimit: userRateLimit},
+			internalhttp.AdminModule{Svc: adminSvc, Auth: authMiddleware, RateLimit: userRateLimit},
 		},
 	}
 

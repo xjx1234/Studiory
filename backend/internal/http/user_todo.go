@@ -10,18 +10,11 @@ import (
 )
 
 type UserTodoHandler struct {
-	deps *Deps
+	svc todoservice.Service
 }
 
-func registerUserTodoRoutes(rg *gin.RouterGroup, deps *Deps) {
-	h := &UserTodoHandler{deps: deps}
-	g := rg.Group("/todos")
-
-	g.GET("", h.List)
-	g.POST("", h.Create)
-	g.GET("/:id", h.Get)
-	g.PATCH("/:id", h.Update)
-	g.DELETE("/:id", h.Delete)
+func NewUserTodoHandler(svc todoservice.Service) *UserTodoHandler {
+	return &UserTodoHandler{svc: svc}
 }
 
 type createTodoReq struct {
@@ -45,7 +38,7 @@ func (h *UserTodoHandler) List(c *gin.Context) {
 	}
 
 	page := pagination.ParseQuery(c)
-	list, e := h.deps.TodoService.List(c.Request.Context(), userID, page)
+	list, e := h.svc.List(c.Request.Context(), userID, page)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -65,7 +58,7 @@ func (h *UserTodoHandler) Create(c *gin.Context) {
 		return
 	}
 
-	item, e := h.deps.TodoService.Create(c.Request.Context(), userID, &todoservice.CreateInput{
+	item, e := h.svc.Create(c.Request.Context(), userID, &todoservice.CreateInput{
 		Title: req.Title,
 	})
 	if e != nil {
@@ -87,7 +80,7 @@ func (h *UserTodoHandler) Get(c *gin.Context) {
 		return
 	}
 
-	item, e := h.deps.TodoService.Get(c.Request.Context(), userID, param.ID)
+	item, e := h.svc.Get(c.Request.Context(), userID, param.ID)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -112,7 +105,7 @@ func (h *UserTodoHandler) Update(c *gin.Context) {
 		return
 	}
 
-	item, e := h.deps.TodoService.Update(c.Request.Context(), userID, param.ID, &todoservice.UpdateInput{
+	item, e := h.svc.Update(c.Request.Context(), userID, param.ID, &todoservice.UpdateInput{
 		Title: req.Title,
 		Done:  req.Done,
 	})
@@ -135,7 +128,7 @@ func (h *UserTodoHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if e := h.deps.TodoService.Delete(c.Request.Context(), userID, param.ID); e != nil {
+	if e := h.svc.Delete(c.Request.Context(), userID, param.ID); e != nil {
 		resp.Fail(c, e)
 		return
 	}

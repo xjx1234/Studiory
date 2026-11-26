@@ -1,19 +1,15 @@
 package middleware
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"strings"
+	"time"
 
 	"backend/internal/auth"
-	baseservice "backend/internal/service"
 	"backend/internal/session"
 	"backend/pkg/errcode"
 	"backend/pkg/resp"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -22,8 +18,11 @@ const ContextKeyUserRole = "userRole"
 
 // Auth 验证请求头中的 JWT Access Token，将用户信息注入 Gin Context。
 // 验证失败时直接返回 401，不继续执行后续 Handler。
-// failOpen 控制 Redis 故障时的吊销检查降级策略：true=放行（可用性优先）；false=拒绝（安全性优先）。
-func Auth(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.UniversalClient, keyPrefix string, failOpen bool, logger *zap.Logger) gin.HandlerFunc {
+//
+// 吊销检查与 session 校验合并为一次 Redis MGET（session.Store.CheckAccess），
+// 每个已鉴权请求只需一次往返。sessions 为 nil 时跳过这两项检查（仅用于单测）。
+// failOpen 控制 Redis 故障时的降级策略：true=放行（可用性优先）；false=拒绝（安全性优先）。
+func Auth(issuer *auth.TokenIssuer, sessions *session.Store, failOpen bool, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("Authorization")
 		if raw == "" {
@@ -43,52 +42,38 @@ func Auth(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.Universal
 			return
 		}
 
-		if isAccessTokenRevoked(c.Request.Context(), rdb, keyPrefix, claims, failOpen, logger) {
-			resp.Fail(c, errcode.ErrInvalidToken)
-			return
-		}
-
-		if claims.SessionID != "" && sessions != nil && !sessions.Validate(c.Request.Context(), claims.UserID, claims.SessionID) {
-			resp.Fail(c, errcode.ErrInvalidToken)
-			return
+		if sessions != nil {
+			var issuedAt *time.Time
+			if claims.IssuedAt != nil {
+				iat := claims.IssuedAt.Time
+				issuedAt = &iat
+			}
+			valid, stateErr := sessions.CheckAccess(c.Request.Context(), claims.UserID, claims.SessionID, issuedAt)
+			if stateErr != nil {
+				strategy := "fail-open"
+				if !failOpen {
+					strategy = "fail-closed"
+				}
+				if logger != nil {
+					logger.Warn("access token state check unavailable, "+strategy,
+						zap.Error(stateErr),
+						zap.String("user_id", claims.UserID),
+					)
+				}
+				if !failOpen {
+					resp.Fail(c, errcode.ErrInvalidToken)
+					return
+				}
+			} else if !valid {
+				resp.Fail(c, errcode.ErrInvalidToken)
+				return
+			}
 		}
 
 		c.Set(ContextKeyUserID, claims.UserID)
 		c.Set(ContextKeyUserRole, claims.Role)
 		c.Next()
 	}
-}
-
-func isAccessTokenRevoked(ctx context.Context, rdb redis.UniversalClient, keyPrefix string, claims *auth.Claims, failOpen bool, logger *zap.Logger) bool {
-	if rdb == nil || claims == nil || claims.IssuedAt == nil {
-		return false
-	}
-
-	// 读取的键名必须与写入方（admin/user service 的吊销路径）完全一致：
-	// claims.UserID 是历史 token 里的裸字符串，签发方未必规范化过形式，
-	// 统一按 canonical UUID 读取，才不会因为大小写差异把「已吊销」读成「未吊销」。
-	revokeKey := fmt.Sprintf("%s:revoke:uid:%s", keyPrefix, baseservice.CanonicalUserID(claims.UserID))
-	revokeAt, err := rdb.Get(ctx, revokeKey).Int64()
-	if err != nil {
-		if !errors.Is(err, redis.Nil) {
-			// Redis 连接故障，按策略降级
-			strategy := "fail-open"
-			if !failOpen {
-				strategy = "fail-closed"
-			}
-			if logger != nil {
-				logger.Warn("access token revoke check unavailable, "+strategy,
-					zap.Error(err),
-					zap.String("user_id", claims.UserID),
-				)
-			}
-			// failOpen=true → 视为未吊销（放行）；failOpen=false → 视为已吊销（拒绝）
-			return !failOpen
-		}
-		// key 不存在 → 未吊销
-		return false
-	}
-	return claims.IssuedAt.Unix() <= revokeAt
 }
 
 // RequireRole 要求当前用户具备指定角色之一。

@@ -15,19 +15,11 @@ type changePasswordReq struct {
 }
 
 type UserProfileHandler struct {
-	deps *Deps
+	svc userservice.Service
 }
 
-func NewUserProfileHandler(deps *Deps) *UserProfileHandler {
-	return &UserProfileHandler{deps: deps}
-}
-
-func registerUserProfileRoutes(rg *gin.RouterGroup, deps *Deps) {
-	h := NewUserProfileHandler(deps)
-
-	rg.GET("/profile", h.GetProfile)
-	rg.PATCH("/profile", h.UpdateProfile)
-	rg.PATCH("/password", h.ChangePassword)
+func NewUserProfileHandler(svc userservice.Service) *UserProfileHandler {
+	return &UserProfileHandler{svc: svc}
 }
 
 type updateProfileReq struct {
@@ -42,7 +34,7 @@ func (h *UserProfileHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	profile, e := h.deps.UserService.GetProfile(c.Request.Context(), userID)
+	profile, e := h.svc.GetProfile(c.Request.Context(), userID)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -67,7 +59,7 @@ func (h *UserProfileHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	profile, e := h.deps.UserService.UpdateProfile(c.Request.Context(), userID, &userservice.UpdateProfileInput{
+	profile, e := h.svc.UpdateProfile(c.Request.Context(), userID, &userservice.UpdateProfileInput{
 		Nickname: req.Nickname,
 		Avatar:   req.Avatar,
 	})
@@ -91,7 +83,7 @@ func (h *UserProfileHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	revoked, e := h.deps.UserService.ChangePassword(c.Request.Context(), userID, &userservice.ChangePasswordInput{
+	revoked, e := h.svc.ChangePassword(c.Request.Context(), userID, &userservice.ChangePasswordInput{
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
 	})

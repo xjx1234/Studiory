@@ -91,13 +91,11 @@ func newTrustedProxiesDeps(proxies []string) *Deps {
 			ServerTrustedProxies: proxies,
 			RedisKeyPrefix:       "tp-test",
 		},
-		AuthService:             &fakeAuthService{},
-		UserService:             &fakeUserService{},
-		TodoService:             &fakeTodoService{},
-		AdminService:            &fakeAdminService{},
-		AuthMiddleware:          fakeAuthMiddleware,
-		RateLimitMiddleware:     middleware.RateLimit(1, nil, "tp-test"),
-		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		RateLimitMiddleware: middleware.RateLimit(1, nil, "tp-test"),
+		Modules: newTestModules(
+			&fakeAuthService{}, &fakeUserService{}, &fakeTodoService{}, &fakeAdminService{},
+			fakeAuthMiddleware, func(c *gin.Context) { c.Next() },
+		),
 		ReadyChecks: []ReadyCheck{
 			{Name: "noop", Check: func(context.Context) error { return nil }},
 		},

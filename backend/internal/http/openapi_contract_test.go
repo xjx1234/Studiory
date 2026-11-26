@@ -49,15 +49,10 @@ func newContractRouter(t *testing.T) *gin.Engine {
 	}
 
 	deps := &Deps{
-		Cfg:                     &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}},
-		AuthService:             ts.auth,
-		UserService:             ts.user,
-		TodoService:             ts.todo,
-		AdminService:            ts.admin,
-		AuthMiddleware:          fakeAuthMiddleware,
-		RateLimitMiddleware:     func(c *gin.Context) { c.Next() },
-		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
-		MetricsHandler:          http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+		Cfg:                 &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}},
+		RateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		Modules:             newTestModules(ts.auth, ts.user, ts.todo, ts.admin, fakeAuthMiddleware, func(c *gin.Context) { c.Next() }),
+		MetricsHandler:      http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
 		ReadyChecks: []ReadyCheck{
 			{Name: "noop", Check: func(context.Context) error { return nil }},
 		},

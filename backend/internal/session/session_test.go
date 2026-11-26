@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -170,6 +171,136 @@ func TestStore_SessionExpiresAbsolutely(t *testing.T) {
 	if store.Validate(ctx, "user-2", sid2) {
 		t.Error("session 键的 userID 不匹配时必须拒绝")
 	}
+}
+
+// TestStore_CheckAccess_MergesRevokeAndSessionInOneRoundTrip 固定 P2-11：
+// 吊销检查与 session 校验必须合并为一次 MGET，而不是两次独立查询。
+func TestStore_CheckAccess_MergesRevokeAndSessionInOneRoundTrip(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store := NewStore(rdb, "test", true, time.Hour, true)
+	ctx := context.Background()
+
+	sid := NewSessionID()
+	if err := store.Register(ctx, "user-1", sid); err != nil {
+		t.Fatal(err)
+	}
+
+	counter := &commandCounter{}
+	rdb.AddHook(counter)
+
+	now := time.Now()
+	valid, err := store.CheckAccess(ctx, "user-1", sid, &now)
+	if err != nil || !valid {
+		t.Fatalf("CheckAccess() = (%v, %v), want (true, nil)", valid, err)
+	}
+	if counter.total != 1 || counter.last != "mget" {
+		t.Fatalf("redis commands = %d (last %q), want exactly 1 mget", counter.total, counter.last)
+	}
+}
+
+// TestStore_CheckAccess_Scenarios 覆盖吊销、签发时间、session 失效与 userID 形式。
+func TestStore_CheckAccess_Scenarios(t *testing.T) {
+	uid := uuid.New()
+	canonical := uid.String()
+	issuedAt := time.Now()
+
+	newStore := func(t *testing.T) (*Store, *miniredis.Miniredis) {
+		t.Helper()
+		mr := miniredis.RunT(t)
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		return NewStore(rdb, "test", true, time.Hour, true), mr
+	}
+
+	t.Run("revoke timestamp after issue", func(t *testing.T) {
+		store, mr := newStore(t)
+		sid := NewSessionID()
+		if err := store.Register(context.Background(), canonical, sid); err != nil {
+			t.Fatal(err)
+		}
+		if err := mr.Set("test:revoke:uid:"+canonical, strconv.FormatInt(issuedAt.Add(time.Minute).Unix(), 10)); err != nil {
+			t.Fatal(err)
+		}
+		if valid, _ := store.CheckAccess(context.Background(), canonical, sid, &issuedAt); valid {
+			t.Error("token issued before revoke must be rejected")
+		}
+	})
+
+	t.Run("token issued after revoke", func(t *testing.T) {
+		store, mr := newStore(t)
+		sid := NewSessionID()
+		if err := store.Register(context.Background(), canonical, sid); err != nil {
+			t.Fatal(err)
+		}
+		if err := mr.Set("test:revoke:uid:"+canonical, strconv.FormatInt(issuedAt.Add(-time.Minute).Unix(), 10)); err != nil {
+			t.Fatal(err)
+		}
+		if valid, _ := store.CheckAccess(context.Background(), canonical, sid, &issuedAt); !valid {
+			t.Error("token issued after revoke should stay valid")
+		}
+	})
+
+	t.Run("claim uid forms hit canonical revoke key", func(t *testing.T) {
+		store, mr := newStore(t)
+		sid := NewSessionID()
+		if err := store.Register(context.Background(), canonical, sid); err != nil {
+			t.Fatal(err)
+		}
+		if err := mr.Set("test:revoke:uid:"+canonical, strconv.FormatInt(issuedAt.Unix(), 10)); err != nil {
+			t.Fatal(err)
+		}
+		for _, form := range []string{canonical, strings.ToUpper(canonical), "{" + canonical + "}"} {
+			if valid, _ := store.CheckAccess(context.Background(), form, sid, &issuedAt); valid {
+				t.Errorf("claim uid %q 没有命中 canonical 吊销键", form)
+			}
+		}
+	})
+
+	t.Run("missing session", func(t *testing.T) {
+		store, _ := newStore(t)
+		if valid, _ := store.CheckAccess(context.Background(), canonical, NewSessionID(), &issuedAt); valid {
+			t.Error("unknown session must be rejected")
+		}
+	})
+
+	t.Run("session bound to another user", func(t *testing.T) {
+		store, _ := newStore(t)
+		sid := NewSessionID()
+		if err := store.Register(context.Background(), canonical, sid); err != nil {
+			t.Fatal(err)
+		}
+		if valid, _ := store.CheckAccess(context.Background(), uuid.New().String(), sid, &issuedAt); valid {
+			t.Error("session of another user must be rejected")
+		}
+	})
+
+	t.Run("redis unavailable returns error", func(t *testing.T) {
+		store, mr := newStore(t)
+		mr.Close()
+		if _, err := store.CheckAccess(context.Background(), canonical, NewSessionID(), &issuedAt); err == nil {
+			t.Error("expected error when redis is unavailable so caller can apply failOpen")
+		}
+	})
+}
+
+// commandCounter 统计经 go-redis 发出的命令数，用来断言往返次数。
+type commandCounter struct {
+	total int
+	last  string
+}
+
+func (h *commandCounter) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *commandCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.total++
+		h.last = cmd.Name()
+		return next(ctx, cmd)
+	}
+}
+
+func (h *commandCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
 }
 
 func TestValidate_FailOpenOnRedisError(t *testing.T) {

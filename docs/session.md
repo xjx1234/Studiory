@@ -40,6 +40,7 @@ Session 采用**绝对过期**，不是滑动过期：
 1. 每次登录生成 `session_id`（UUID），写入 JWT 的 `sid` 声明（access + refresh 均携带）。
 2. Redis 记录会话状态，详见 [redis-keys.md](redis-keys.md) 第 7 节。
 3. `Auth` 中间件校验：`sid` 在 Redis 中仍有效 **且** 未命中用户级 `revoke:uid`。
+   两项检查合并为一次 MGET（`session.Store.CheckAccess`），每个已鉴权请求只需 1 次 Redis 往返。
 4. Redis 故障时按 `auth.redis_fail_open` 策略降级（默认开发 `true`=放行，生产 `false`=拒绝）。
 5. `Refresh` 保持同一 `sid` 轮换 token，不新建 session，也不续期 session（绝对过期，见上节）。
 6. `Logout` 仅吊销当前 `sid` 对应 session（多设备下不影响其他设备）。

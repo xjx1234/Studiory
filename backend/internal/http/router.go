@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"backend/internal/http/middleware"
-	"backend/internal/repo"
 
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
@@ -16,13 +15,13 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// NewRouter 构建 Gin 路由，挂载全局中间件与所有路由分组。
+// NewRouter 构建 Gin 路由：先挂全局中间件，再逐个注册 deps.Modules。
 //
-// 中间件顺序：RequestID → … → Safe → CORS → RateLimit(IP)
+// 中间件顺序：RequestID → … → Safe → Timeout → CORS → RateLimit(IP)
 // CORS 必须在限流之前：429/503 也是浏览器要读的响应，缺了 Access-Control-Allow-Origin
 // 前端只会看到 CORS 报错，看不到「请求过于频繁」或「服务不可用」。
 // 预检 OPTIONS 由 CORS 直接 204 结束，不会被计入 IP 限流。
-// 已鉴权分组额外挂载 UserRateLimit(user_id)，在 Auth 之后执行。
+// 已鉴权路由由各模块自行挂载 Auth / UserRateLimit，见 module.go。
 func NewRouter(deps *Deps) (*gin.Engine, error) {
 	if err := validateDeps(deps); err != nil {
 		return nil, err
@@ -76,47 +75,32 @@ func NewRouter(deps *Deps) (*gin.Engine, error) {
 	}
 
 	v1 := r.Group("/api/v1")
-	{
-		registerAuthRoutes(v1, deps)
-
-		user := v1.Group("/user", deps.AuthMiddleware, deps.UserRateLimitMiddleware)
-		registerUserProfileRoutes(user, deps)
-		registerUserTodoRoutes(user, deps)
-
-		admin := v1.Group("/admin", deps.AuthMiddleware, deps.UserRateLimitMiddleware, middleware.RequireRole(repo.RoleAdmin))
-		registerAdminRoutes(admin, deps)
+	for _, module := range deps.Modules {
+		if err := module.Register(v1); err != nil {
+			return nil, fmt.Errorf("%s module: %w", module.Name(), err)
+		}
 	}
 
 	return r, nil
 }
 
+// validateDeps 只校验路由器自身依赖；各模块的 service / 中间件由 Module.Register 自行校验，
+// 缺依赖时同样在启动阶段返回错误。
 func validateDeps(deps *Deps) error {
 	if deps == nil {
 		return errors.New("http deps is nil")
 	}
-	if deps.AuthService == nil {
-		return errors.New("AuthService is required")
-	}
-	if deps.UserService == nil {
-		return errors.New("UserService is required")
-	}
-	if deps.TodoService == nil {
-		return errors.New("TodoService is required")
-	}
-	if deps.AdminService == nil {
-		return errors.New("AdminService is required")
-	}
-	if deps.AuthMiddleware == nil {
-		return errors.New("AuthMiddleware is required")
+	if deps.Cfg == nil {
+		return errors.New("cfg is required")
 	}
 	if deps.RateLimitMiddleware == nil {
 		return errors.New("RateLimitMiddleware is required")
 	}
-	if deps.UserRateLimitMiddleware == nil {
-		return errors.New("UserRateLimitMiddleware is required")
-	}
 	if len(deps.ReadyChecks) == 0 {
 		return errors.New("ReadyChecks is required")
+	}
+	if len(deps.Modules) == 0 {
+		return errors.New("modules is required")
 	}
 	return nil
 }

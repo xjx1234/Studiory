@@ -1,7 +1,6 @@
 package http
 
 import (
-	"backend/internal/repo"
 	adminservice "backend/internal/service/admin"
 	"backend/pkg/pagination"
 	"backend/pkg/request"
@@ -11,20 +10,12 @@ import (
 )
 
 type AdminUserHandler struct {
-	deps *Deps
+	svc adminservice.Service
 }
 
-func registerAdminRoutes(rg *gin.RouterGroup, deps *Deps) {
-	rg.GET("/ping", func(c *gin.Context) {
-		resp.OK(c, gin.H{"status": "ok", "scope": repo.RoleAdmin})
-	})
-
-	h := &AdminUserHandler{deps: deps}
-	users := rg.Group("/users")
-	users.GET("", h.List)
-	users.GET("/:id", h.Get)
-	users.PATCH("/:id/role", h.UpdateRole)
-	users.PATCH("/:id/status", h.SetStatus)
+// NewAdminUserHandler 构造后台用户管理 handler；路由在 AdminModule 中注册。
+func NewAdminUserHandler(svc adminservice.Service) *AdminUserHandler {
+	return &AdminUserHandler{svc: svc}
 }
 
 type adminUserIDParam struct {
@@ -47,7 +38,7 @@ func (h *AdminUserHandler) List(c *gin.Context) {
 		Status:  c.Query("status"),
 	}
 
-	list, e := h.deps.AdminService.ListUsers(c.Request.Context(), in, page)
+	list, e := h.svc.ListUsers(c.Request.Context(), in, page)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -62,7 +53,7 @@ func (h *AdminUserHandler) Get(c *gin.Context) {
 		return
 	}
 
-	item, e := h.deps.AdminService.GetUser(c.Request.Context(), param.ID)
+	item, e := h.svc.GetUser(c.Request.Context(), param.ID)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -87,7 +78,7 @@ func (h *AdminUserHandler) UpdateRole(c *gin.Context) {
 		return
 	}
 
-	item, e := h.deps.AdminService.UpdateRole(c.Request.Context(), actingUserID, param.ID, req.Role)
+	item, e := h.svc.UpdateRole(c.Request.Context(), actingUserID, param.ID, req.Role)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -112,7 +103,7 @@ func (h *AdminUserHandler) SetStatus(c *gin.Context) {
 		return
 	}
 
-	item, e := h.deps.AdminService.SetStatus(c.Request.Context(), actingUserID, param.ID, req.Status)
+	item, e := h.svc.SetStatus(c.Request.Context(), actingUserID, param.ID, req.Status)
 	if e != nil {
 		resp.Fail(c, e)
 		return

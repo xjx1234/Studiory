@@ -31,14 +31,12 @@ func newReadyRouter(t *testing.T, checks []ReadyCheck) *gin.Engine {
 			CORSAllowOrigins:   []string{"*"},
 			RateLimitPerMinute: 1000,
 		},
-		AuthService:             &fakeAuthService{},
-		UserService:             &fakeUserService{},
-		TodoService:             &fakeTodoService{},
-		AdminService:            &fakeAdminService{},
-		AuthMiddleware:          fakeAuthMiddleware,
-		RateLimitMiddleware:     func(c *gin.Context) { c.Next() },
-		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
-		ReadyChecks:             checks,
+		RateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		Modules: newTestModules(
+			&fakeAuthService{}, &fakeUserService{}, &fakeTodoService{}, &fakeAdminService{},
+			fakeAuthMiddleware, func(c *gin.Context) { c.Next() },
+		),
+		ReadyChecks: checks,
 	}
 
 	r, err := NewRouter(deps)

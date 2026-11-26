@@ -14,22 +14,11 @@ import (
 )
 
 type AuthHandler struct {
-	deps *Deps
+	svc authservice.Service
 }
 
-func NewAuthHandler(deps *Deps) *AuthHandler {
-	return &AuthHandler{deps: deps}
-}
-
-func registerAuthRoutes(rg *gin.RouterGroup, deps *Deps) {
-	g := rg.Group("/auth")
-	h := NewAuthHandler(deps)
-
-	g.POST("/register", h.Register)
-	g.POST("/login", h.Login)
-	g.POST("/send-code", h.SendCode)
-	g.POST("/refresh", h.Refresh)
-	g.POST("/logout", h.Logout)
+func NewAuthHandler(svc authservice.Service) *AuthHandler {
+	return &AuthHandler{svc: svc}
 }
 
 // ── 请求/响应 DTO ─────────────────────────────────────────────────────────────
@@ -151,7 +140,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	result, e := h.deps.AuthService.Register(c.Request.Context(), &authservice.RegisterInput{
+	result, e := h.svc.Register(c.Request.Context(), &authservice.RegisterInput{
 		GrantType: req.GrantType,
 		CodeType:  req.CodeType,
 		Phone:     req.Phone,
@@ -175,7 +164,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	result, e := h.deps.AuthService.Login(c.Request.Context(), &auth.LoginRequest{
+	result, e := h.svc.Login(c.Request.Context(), &auth.LoginRequest{
 		GrantType:   req.GrantType,
 		Account:     req.Account,
 		Phone:       req.Phone,
@@ -209,7 +198,7 @@ func (h *AuthHandler) SendCode(c *gin.Context) {
 	}
 
 	// c.ClientIP() 已按 trusted_proxies 还原，作为按 IP 日配额的维度。
-	e := h.deps.AuthService.SendCode(c.Request.Context(), req.Type, req.Target, c.ClientIP())
+	e := h.svc.SendCode(c.Request.Context(), req.Type, req.Target, c.ClientIP())
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -225,7 +214,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	pair, e := h.deps.AuthService.Refresh(c.Request.Context(), req.RefreshToken)
+	pair, e := h.svc.Refresh(c.Request.Context(), req.RefreshToken)
 	if e != nil {
 		resp.Fail(c, e)
 		return
@@ -241,7 +230,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	if e := h.deps.AuthService.Logout(c.Request.Context(), req.RefreshToken); e != nil {
+	if e := h.svc.Logout(c.Request.Context(), req.RefreshToken); e != nil {
 		resp.Fail(c, e)
 		return
 	}

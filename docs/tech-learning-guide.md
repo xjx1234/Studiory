@@ -37,30 +37,32 @@ main.go
 
 ### 1.2 依赖注入：Deps 聚合
 
-`internal/http/deps.go` 定义了 Handler 层所需的全部依赖：
+`internal/http/deps.go` 定义路由器自身需要的**全局共享**依赖，业务 service 由各模块自己持有：
 
 ```go
 type Deps struct {
     Cfg    *config.Config
     Logger *zap.Logger
 
-    AuthService  authservice.Service    // 接口，不是具体类型
-    UserService  userservice.Service
-    AdminService adminservice.Service
-    TodoService  todoservice.Service
+    RateLimitMiddleware gin.HandlerFunc  // 全局 IP 限流
+    MetricsMiddleware   gin.HandlerFunc  // 可选
+    MetricsHandler      http.Handler     // 可选
+    ReadyChecks         []ReadyCheck
 
-    AuthMiddleware          gin.HandlerFunc
-    RateLimitMiddleware     gin.HandlerFunc
-    UserRateLimitMiddleware gin.HandlerFunc
-    MetricsMiddleware       gin.HandlerFunc
-    MetricsHandler          http.Handler
-    ReadyChecks             []ReadyCheck
+    Modules []Module  // /api/v1 下的业务路由模块
+}
+
+// internal/http/module.go
+type Module interface {
+    Name() string
+    Register(v1 *gin.RouterGroup) error
 }
 ```
 
 **关键设计**：
-- `AuthService` 是**接口类型**而非 `*AuthServiceImpl`，Handler 层完全不知道实现细节
-- 中间件也是注入的，测试时可以替换成 fake
+- Handler 依赖的是 **service 接口**而非具体实现（`NewOrderHandler(orderservice.Service)`），完全不知道实现细节
+- 新增业务模块只需实现 `Module` 并在 `app.New` 的 `Modules` 列表追加一项，`Deps` / `router.go` / `validateDeps` 都不用改
+- 模块缺依赖时 `Register` 返回错误，启动阶段即失败；测试可用 fake service 组装模块
 
 ### 1.3 应用容器：app.go 的装配流程
 
@@ -84,10 +86,15 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
         // ... 更多 Option
     )
 
-    // 4. 组装 Deps
+    // 4. 组装 Deps（全局依赖 + 模块列表）
     deps := &internalhttp.Deps{
-        AuthService: authSvc,
-        // ...
+        Cfg:                 cfg,
+        Logger:              logger,
+        RateLimitMiddleware: middleware.RateLimit(...),
+        Modules: []internalhttp.Module{
+            internalhttp.AuthModule{Svc: authSvc},
+            // ... 其余模块
+        },
     }
 
     // 5. 构建路由
@@ -1166,34 +1173,44 @@ func (h *OrderHandler) Create(c *gin.Context) {
 }
 ```
 
-### 步骤 5：注入到 Deps 和路由
+### 步骤 5：实现 Module 并注册路由
 
 ```go
-// internal/http/deps.go — 新增字段
-type Deps struct {
-    // ...
-    OrderService orderservice.Service
+// internal/http/module.go — 追加一个模块
+type OrderModule struct {
+    Svc       orderservice.Service
+    Auth      gin.HandlerFunc
+    RateLimit gin.HandlerFunc
 }
 
-// internal/http/router.go — 注册路由
-user := v1.Group("/user", deps.AuthMiddleware, deps.UserRateLimitMiddleware)
-// ...
-orderHandler := NewOrderHandler(deps.OrderService)
-user.POST("/orders", orderHandler.Create)
-user.GET("/orders", orderHandler.List)
-user.GET("/orders/:id", orderHandler.Get)
+func (m OrderModule) Name() string { return "order" }
+
+func (m OrderModule) Register(v1 *gin.RouterGroup) error {
+    if m.Svc == nil {
+        return errors.New("order module: OrderService is required")
+    }
+    h := NewOrderHandler(m.Svc)
+    g := v1.Group("/user/orders", m.Auth, m.RateLimit)
+    g.POST("", h.Create)
+    g.GET("", h.List)
+    g.GET("/:id", h.Get)
+    return nil
+}
 ```
 
 ### 步骤 6：app.go 装配
 
 ```go
 // internal/app/app.go
-deps := &internalhttp.Deps{
-    // ...
-    OrderService: orderservice.New(pgStore.Orders(),
-        orderservice.WithLogger(logger),
-    ),
-}
+orderSvc := orderservice.New(pgStore.Orders(),
+    orderservice.WithLogger(logger),
+)
+
+// 在 deps.Modules 列表里追加一项即可（router 无需改动）
+Modules: []internalhttp.Module{
+    // ...其余模块
+    internalhttp.OrderModule{Svc: orderSvc, Auth: authMiddleware, RateLimit: userRateLimit},
+},
 ```
 
 ### 步骤 7：测试

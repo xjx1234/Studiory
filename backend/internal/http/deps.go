@@ -5,10 +5,6 @@ import (
 	"net/http"
 
 	"backend/internal/config"
-	adminservice "backend/internal/service/admin"
-	authservice "backend/internal/service/auth"
-	todoservice "backend/internal/service/todo"
-	userservice "backend/internal/service/user"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -21,31 +17,25 @@ type ReadyCheck struct {
 	Check func(ctx context.Context) error
 }
 
-// Deps 是 http 层所需依赖的集合（由 internal/app 负责装配注入）。
+// Deps 只保留「全局共享」的依赖：
+//   - 配置、日志、健康检查、指标等路由器自身需要的东西；
+//   - Modules：各业务模块自己持有 service 与路由中间件，集中在这里按顺序注册。
 //
-// 约束：
-// - handler 只通过 Deps 访问 service，不直接持有 Store/Redis 等基础设施。
-// - 新增业务模块时：在 service 层实现逻辑，在此追加 Service 字段，并在 app.New() 中注入。
+// 新增业务模块不需要再改本结构体或 validateDeps，只需实现 Module 并在 app.New 的
+// Modules 列表里追加一项，详见 module.go。
 type Deps struct {
 	Cfg    *config.Config
 	Logger *zap.Logger
 
-	AuthService authservice.Service
-	UserService userservice.Service
-
-	// AdminService 后台用户管理示例模块
-	AdminService adminservice.Service
-
-	// TodoService 示例模块（可复制此模式添加真实业务）
-	TodoService todoservice.Service
-
-	AuthMiddleware          gin.HandlerFunc
-	RateLimitMiddleware     gin.HandlerFunc
-	UserRateLimitMiddleware gin.HandlerFunc
-	ReadyChecks             []ReadyCheck
+	// RateLimitMiddleware 是全局 IP 限流，挂在所有路由上（含未鉴权的 /auth）。
+	RateLimitMiddleware gin.HandlerFunc
+	ReadyChecks         []ReadyCheck
 
 	// MetricsMiddleware / MetricsHandler 为可选项（metrics.enabled=false 时为 nil）。
 	// 由 app 层装配：handler 不直接持有基础设施，仅挂载 Prometheus 暴露端点。
 	MetricsMiddleware gin.HandlerFunc
 	MetricsHandler    http.Handler
+
+	// Modules 是 /api/v1 下的业务路由模块，按声明顺序注册。
+	Modules []Module
 }

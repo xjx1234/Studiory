@@ -26,13 +26,11 @@ func newRedisBackedTestRouter(t *testing.T, rdb *redis.Client) *gin.Engine {
 			CORSAllowOrigins:   []string{"*"},
 			RateLimitPerMinute: 1000,
 		},
-		AuthService:             &fakeAuthService{},
-		UserService:             &fakeUserService{},
-		TodoService:             &fakeTodoService{},
-		AdminService:            &fakeAdminService{},
-		AuthMiddleware:          fakeAuthMiddleware,
-		RateLimitMiddleware:     middleware.RateLimit(1000, rdb, "test"),
-		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		RateLimitMiddleware: middleware.RateLimit(1000, rdb, "test"),
+		Modules: newTestModules(
+			&fakeAuthService{}, &fakeUserService{}, &fakeTodoService{}, &fakeAdminService{},
+			fakeAuthMiddleware, func(c *gin.Context) { c.Next() },
+		),
 		ReadyChecks: []ReadyCheck{
 			{Name: "PostgreSQL", Check: func(context.Context) error { return nil }},
 			{Name: "Redis", Check: func(ctx context.Context) error { return rdb.Ping(ctx).Err() }},

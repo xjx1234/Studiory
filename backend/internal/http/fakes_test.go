@@ -10,7 +10,26 @@ import (
 	userservice "backend/internal/service/user"
 	"backend/pkg/errcode"
 	"backend/pkg/pagination"
+
+	"github.com/gin-gonic/gin"
 )
+
+// newTestModules 用假 service 组装与生产一致的路由模块列表。
+// 新增模块时这里同步追加一项，避免每个路由用例都重复拼装。
+func newTestModules(
+	authSvc authservice.Service,
+	userSvc userservice.Service,
+	todoSvc todoservice.Service,
+	adminSvc adminservice.Service,
+	auth, rateLimit gin.HandlerFunc,
+) []Module {
+	return []Module{
+		AuthModule{Svc: authSvc},
+		UserModule{Svc: userSvc, Auth: auth, RateLimit: rateLimit},
+		TodoModule{Svc: todoSvc, Auth: auth, RateLimit: rateLimit},
+		AdminModule{Svc: adminSvc, Auth: auth, RateLimit: rateLimit},
+	}
+}
 
 // 以下 fake service 实现各自的 Service 接口，供 handler 集成测试使用。
 // 每个方法用可选的函数字段覆写行为；未设置时返回一个合理的默认成功值。

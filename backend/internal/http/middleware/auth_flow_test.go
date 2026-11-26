@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,8 +12,6 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -23,10 +20,12 @@ func newAuthTestIssuer() *auth.TokenIssuer {
 	return auth.NewTokenIssuer("auth-middleware-test-secret", time.Hour, 24*time.Hour)
 }
 
-func newAuthRouter(issuer *auth.TokenIssuer, sessions *session.Store, rdb redis.UniversalClient, keyPrefix string, failOpen bool) *gin.Engine {
+// newAuthRouter 组装仅含受保护路由的测试引擎。
+// sessions 为 nil 时跳过吊销/session 检查（用于验证 token 解析分支）。
+func newAuthRouter(issuer *auth.TokenIssuer, sessions *session.Store, failOpen bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/protected", Auth(issuer, sessions, rdb, keyPrefix, failOpen, zap.NewNop()), func(c *gin.Context) {
+	r.GET("/protected", Auth(issuer, sessions, failOpen, zap.NewNop()), func(c *gin.Context) {
 		uid, _ := c.Get(ContextKeyUserID)
 		role, _ := c.Get(ContextKeyUserRole)
 		c.JSON(http.StatusOK, gin.H{"user_id": uid, "role": role})
@@ -45,7 +44,7 @@ func doAuthRequest(r *gin.Engine, authHeader string) *httptest.ResponseRecorder 
 }
 
 func TestAuth_MissingHeaderReturnsUnauthorized(t *testing.T) {
-	r := newAuthRouter(newAuthTestIssuer(), nil, nil, "test", true)
+	r := newAuthRouter(newAuthTestIssuer(), nil, true)
 
 	w := doAuthRequest(r, "")
 	if w.Code != http.StatusUnauthorized {
@@ -54,7 +53,7 @@ func TestAuth_MissingHeaderReturnsUnauthorized(t *testing.T) {
 }
 
 func TestAuth_MalformedHeaderReturnsInvalidToken(t *testing.T) {
-	r := newAuthRouter(newAuthTestIssuer(), nil, nil, "test", true)
+	r := newAuthRouter(newAuthTestIssuer(), nil, true)
 
 	cases := []string{"Bearer", "Basic abc123", "abc123", "Bearer  "}
 	for _, h := range cases {
@@ -66,7 +65,7 @@ func TestAuth_MalformedHeaderReturnsInvalidToken(t *testing.T) {
 }
 
 func TestAuth_InvalidTokenReturnsUnauthorized(t *testing.T) {
-	r := newAuthRouter(newAuthTestIssuer(), nil, nil, "test", true)
+	r := newAuthRouter(newAuthTestIssuer(), nil, true)
 
 	w := doAuthRequest(r, "Bearer not-a-real-token")
 	if w.Code != http.StatusUnauthorized {
@@ -81,7 +80,7 @@ func TestAuth_ValidTokenWithoutRedisOrSessionSucceeds(t *testing.T) {
 		t.Fatalf("IssueTokenPair: %v", err)
 	}
 
-	r := newAuthRouter(issuer, nil, nil, "test", true)
+	r := newAuthRouter(issuer, nil, true)
 	w := doAuthRequest(r, "Bearer "+pair.AccessToken)
 
 	if w.Code != http.StatusOK {
@@ -98,6 +97,10 @@ func TestAuth_RevokedAccessTokenReturnsUnauthorized(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	sessions := session.NewStore(rdb, "test", true, time.Hour, true)
+	if err := sessions.Register(context.Background(), "user-1", "session-1"); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
 
 	// 全量吊销：把 revoke 时间戳设为未来，任何早于该时刻签发的 token 都视为已吊销。
 	future := time.Now().Add(time.Hour).Unix()
@@ -105,7 +108,7 @@ func TestAuth_RevokedAccessTokenReturnsUnauthorized(t *testing.T) {
 		t.Fatalf("seed revoke key: %v", err)
 	}
 
-	r := newAuthRouter(issuer, nil, rdb, "test", true)
+	r := newAuthRouter(issuer, sessions, true)
 	w := doAuthRequest(r, "Bearer "+pair.AccessToken)
 
 	if w.Code != http.StatusUnauthorized {
@@ -122,9 +125,13 @@ func TestAuth_UnsetRevokeKeyDoesNotBlock(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	// 没有设置任何 revoke key（redis.Nil）：不应阻断请求。
+	sessions := session.NewStore(rdb, "test", true, time.Hour, true)
+	if err := sessions.Register(context.Background(), "user-1", "session-1"); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// 没有设置任何 revoke key（MGET 返回 nil）：不应阻断请求。
 
-	r := newAuthRouter(issuer, nil, rdb, "test", true)
+	r := newAuthRouter(issuer, sessions, true)
 	w := doAuthRequest(r, "Bearer "+pair.AccessToken)
 
 	if w.Code != http.StatusOK {
@@ -141,9 +148,10 @@ func TestAuth_RedisErrorFailsOpen(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	sessions := session.NewStore(rdb, "test", true, time.Hour, true)
 	mr.Close() // 让后续 Redis 操作报错（非 redis.Nil）
 
-	r := newAuthRouter(issuer, nil, rdb, "test", true)
+	r := newAuthRouter(issuer, sessions, true)
 	w := doAuthRequest(r, "Bearer "+pair.AccessToken)
 
 	if w.Code != http.StatusOK {
@@ -160,9 +168,10 @@ func TestAuth_RedisErrorFailsClosed(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	sessions := session.NewStore(rdb, "test", true, time.Hour, true)
 	mr.Close() // 让后续 Redis 操作报错（非 redis.Nil）
 
-	r := newAuthRouter(issuer, nil, rdb, "test", false) // fail-closed
+	r := newAuthRouter(issuer, sessions, false) // fail-closed
 	w := doAuthRequest(r, "Bearer "+pair.AccessToken)
 
 	if w.Code != http.StatusUnauthorized {
@@ -186,7 +195,7 @@ func TestAuth_InvalidatedSessionReturnsUnauthorized(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	r := newAuthRouter(issuer, sessions, rdb, "test", true)
+	r := newAuthRouter(issuer, sessions, true)
 	w := doAuthRequest(r, "Bearer "+pair.AccessToken)
 
 	if w.Code != http.StatusUnauthorized {
@@ -209,137 +218,10 @@ func TestAuth_ValidSessionSucceeds(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	r := newAuthRouter(issuer, sessions, rdb, "test", true)
+	r := newAuthRouter(issuer, sessions, true)
 	w := doAuthRequest(r, "Bearer "+pair.AccessToken)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 for valid session, body=%s", w.Code, w.Body.String())
-	}
-}
-
-// ── isAccessTokenRevoked 直接单测 ──────────────────────────────────────────────
-
-func TestIsAccessTokenRevoked_NilInputsReturnFalse(t *testing.T) {
-	ctx := context.Background()
-	if isAccessTokenRevoked(ctx, nil, "test", &auth.Claims{}, true, nil) {
-		t.Error("nil rdb should return false")
-	}
-
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	if isAccessTokenRevoked(ctx, rdb, "test", nil, true, nil) {
-		t.Error("nil claims should return false")
-	}
-	if isAccessTokenRevoked(ctx, rdb, "test", &auth.Claims{}, true, nil) {
-		t.Error("claims without IssuedAt should return false")
-	}
-}
-
-func TestIsAccessTokenRevoked_IssuedBeforeRevokeIsRevoked(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	ctx := context.Background()
-
-	issuedAt := time.Now().Add(-time.Hour)
-	claims := &auth.Claims{
-		UserID: "user-1",
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt: jwt.NewNumericDate(issuedAt),
-		},
-	}
-
-	revokeAt := time.Now()
-	if err := rdb.Set(ctx, "test:revoke:uid:user-1", revokeAt.Unix(), 0).Err(); err != nil {
-		t.Fatalf("seed revoke key: %v", err)
-	}
-
-	if !isAccessTokenRevoked(ctx, rdb, "test", claims, true, zap.NewNop()) {
-		t.Error("expected token issued before revoke timestamp to be revoked")
-	}
-}
-
-func TestIsAccessTokenRevoked_IssuedAfterRevokeIsNotRevoked(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	ctx := context.Background()
-
-	revokeAt := time.Now().Add(-time.Hour)
-	if err := rdb.Set(ctx, "test:revoke:uid:user-1", revokeAt.Unix(), 0).Err(); err != nil {
-		t.Fatalf("seed revoke key: %v", err)
-	}
-
-	// 用户在吊销之后重新登录拿到的新 token，签发时间晚于 revoke 时间戳，不应被判定为吊销。
-	claims := &auth.Claims{
-		UserID: "user-1",
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt: jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	if isAccessTokenRevoked(ctx, rdb, "test", claims, true, zap.NewNop()) {
-		t.Error("expected token issued after revoke timestamp to not be revoked")
-	}
-}
-
-func TestIsAccessTokenRevoked_RedisErrorFailsOpen(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	mr.Close()
-
-	claims := &auth.Claims{
-		UserID: "user-1",
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt: jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	if isAccessTokenRevoked(context.Background(), rdb, "test", claims, true, zap.NewNop()) {
-		t.Error("expected fail-open (not revoked) when redis is unavailable")
-	}
-}
-
-func TestIsAccessTokenRevoked_RedisErrorFailsClosed(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	mr.Close()
-
-	claims := &auth.Claims{
-		UserID: "user-1",
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt: jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	if !isAccessTokenRevoked(context.Background(), rdb, "test", claims, false, zap.NewNop()) {
-		t.Error("expected fail-closed (revoked) when redis is unavailable")
-	}
-}
-
-// TestIsAccessTokenRevoked_NormalizesClaimUserID 验证吊销键的读取形式与写入形式一致：
-// 写入方（admin 禁用 / 用户改密）把键写在 canonical UUID 上，而 claim 里的 uid 是历史 token
-// 的裸字符串，形式可能不同。不一致时「已吊销」会被读成「未吊销」，被禁用的用户仍能继续打接口。
-func TestIsAccessTokenRevoked_NormalizesClaimUserID(t *testing.T) {
-	uid := uuid.New()
-	canonical := uid.String()
-
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	ctx := context.Background()
-
-	revokeAt := time.Now().Add(-time.Minute)
-	if err := rdb.Set(ctx, "test:revoke:uid:"+canonical, revokeAt.Unix(), time.Hour).Err(); err != nil {
-		t.Fatalf("seed revoke key: %v", err)
-	}
-
-	for _, form := range []string{canonical, strings.ToUpper(canonical), "{" + canonical + "}"} {
-		claims := &auth.Claims{
-			UserID: form,
-			RegisteredClaims: jwt.RegisteredClaims{
-				IssuedAt: jwt.NewNumericDate(revokeAt.Add(-time.Hour)),
-			},
-		}
-		if !isAccessTokenRevoked(ctx, rdb, "test", claims, true, zap.NewNop()) {
-			t.Errorf("claim uid %q 没有命中 canonical 吊销键", form)
-		}
 	}
 }

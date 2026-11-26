@@ -75,14 +75,9 @@ func newTestServer(t *testing.T) (*gin.Engine, *testServer) {
 	}
 
 	deps := &Deps{
-		Cfg:                     &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}},
-		AuthService:             ts.auth,
-		UserService:             ts.user,
-		TodoService:             ts.todo,
-		AdminService:            ts.admin,
-		AuthMiddleware:          fakeAuthMiddleware,
-		RateLimitMiddleware:     func(c *gin.Context) { c.Next() },
-		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		Cfg:                 &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}},
+		RateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		Modules:             newTestModules(ts.auth, ts.user, ts.todo, ts.admin, fakeAuthMiddleware, func(c *gin.Context) { c.Next() }),
 		ReadyChecks: []ReadyCheck{
 			{Name: "noop", Check: func(context.Context) error { return nil }},
 		},
@@ -517,14 +512,9 @@ func newMetricsTestServer(t *testing.T, token string) *gin.Engine {
 		admin: &fakeAdminService{},
 	}
 	deps := &Deps{
-		Cfg:                     &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}, MetricsToken: token},
-		AuthService:             ts.auth,
-		UserService:             ts.user,
-		TodoService:             ts.todo,
-		AdminService:            ts.admin,
-		AuthMiddleware:          fakeAuthMiddleware,
-		RateLimitMiddleware:     func(c *gin.Context) { c.Next() },
-		UserRateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		Cfg:                 &config.Config{AppEnv: "test", CORSAllowOrigins: []string{"*"}, MetricsToken: token},
+		RateLimitMiddleware: func(c *gin.Context) { c.Next() },
+		Modules:             newTestModules(ts.auth, ts.user, ts.todo, ts.admin, fakeAuthMiddleware, func(c *gin.Context) { c.Next() }),
 		MetricsHandler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("# metrics ok\n"))

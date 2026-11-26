@@ -33,8 +33,8 @@
 | P2-7 | **已修复** | 死代码 `postgresReadyCheck` 及其单测已删除，`/ready` 只用 `databaseReadyCheck`（[app.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/app/app.go#L219-L227)） |
 | P2-8 | **已修复** | `/ready` 并发执行所有探针（共享 2s 预算），逐项返回 `name`/`ok`/`latency_ms`，任一失败 503，具体错误只写日志（[health.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/health.go#L44-L80)） |
 | P2-9 | **已修复** | [architecture.md](file:///Users/pxiong/Code/personal/Studiory/docs/architecture.md#L222-L231) 已注明 `frontend/`、`apps/node/`、`apps/python/` 当前不存在；示例迁移编号改为 `000006_orders`（L64-L68） |
-| P2-10 | **未动** | [deps.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/deps.go#L26-L52) `Deps` 字段未变 |
-| P2-11 | **未动** | [middleware/auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/auth.go#L54-L92) 仍是 `GET revoke` + `session.Validate`（`SIsMember` + 兜底 `GET`），最坏 3 次往返 |
+| P2-10 | **已修复** | `[]Module` 模块化注册：`AuthModule` / `UserModule` / `TodoModule` / `AdminModule` 各自持有 service 与路由中间件，`Deps` 只留全局依赖，新增模块只改「实现 Module + app.Modules 追加一项」（[module.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/module.go)、[deps.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/deps.go)） |
+| P2-11 | **已修复** | 吊销检查 + session 校验合并为一次 MGET（`session.Store.CheckAccess`），`Auth` 每请求 1 次 Redis 往返；`Auth` 签名随之简化为 `(issuer, sessions, failOpen, logger)`（[session.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/session/session.go#L123-L194)、[auth.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/auth.go#L23-L71)） |
 | P2-12 | **未动** | PG [users.sql](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/sqlc/query/users.sql#L57-L70) 仍 `ILIKE '%kw%'`，MySQL [store.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go#L114-L131) 仍 `LIKE '%kw%'`；两边都是 `LIMIT/OFFSET` 深翻页 |
 | P2-13 | **未动** | `oauth.wechat.app_secret` 仍只被读取映射（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L180)），[env-vars.md](file:///Users/pxiong/Code/personal/Studiory/docs/env-vars.md#L116) 标注“预留”，无代码消费 |
 
@@ -89,6 +89,13 @@
 - **P2-2 日志串联**：新增 `pkg/reqid`；`middleware.RequestID` 在链执行前把 id 注入 request context；`LogSupport.LogInternal(ctx, …)` 自动带 `request_id`，全部 service 调用点已迁移。
 - 测试：CORS 兜底移除/暴露头、配置校验新增用例、/ready 逐项结果与并发断言、reqid 与日志字段断言。
 - `make lint` 与 `go test ./...` 全绿（本机已具备 Go 工具链）。
+
+### 0.9 第七批改动（P2-10、P2-11）
+
+- **P2-11 鉴权往返合并**：新增 `session.Store.CheckAccess`，用一次 `MGET` 同时读取 `revoke:uid` 与 `session:{sid}`；`Auth` 中间件删除独立的 `GET revoke` 与 `Validate` 调用，签名简化为 `(issuer, sessions, failOpen, logger)`。故障降级日志仍由中间件负责。
+- **P2-10 模块化注册**：新增 `Module` 接口与 4 个模块（Auth/User/Todo/Admin），模块自持 service 与路由中间件；`Deps` 只保留 Cfg/Logger/全局限流/健康检查/指标/Modules；`router.go` 循环注册，`validateDeps` 只校验全局依赖。
+- 测试：session 包新增 MGET 单次往返断言（go-redis Hook 计数）与吊销/签发时间/session 失效/uid 形式/降级错误用例；鉴权流程测试改为通过真实 `session.Store` 驱动；路由用例统一用 `newTestModules` 组装模块。
+- 文档：architecture.md 增加「路由模块化注册」，session.md / redis-keys.md 标注一次往返。
 
 ---
 
