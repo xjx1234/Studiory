@@ -94,6 +94,7 @@ make run
 | `REDIS_READ_TIMEOUT` / `REDIS_WRITE_TIMEOUT` | 必须大于 0（不再依赖 go-redis 默认值） |
 | `RATE_LIMIT_PER_MINUTE` | 必须大于 0（公开路由按 IP） |
 | `RATE_LIMIT_USER_PER_MINUTE` | 可选；未配置时默认与 `RATE_LIMIT_PER_MINUTE` 相同（已鉴权路由按 user_id） |
+| `RATE_LIMIT_AUTH_PER_MINUTE` | 登录/注册按 IP 的独立配额，默认 20；每次请求含一次 bcrypt（cost 12），**不要**调到普通接口的量级。与公共桶解耦，登录与注册共用这一个桶 |
 | `DATABASE_URL` / `REDIS_URL` | 不能为空；`DATABASE_URL` 必须显式携带 `sslmode=require/verify-ca/verify-full`（防止 TLS 被静默绕过） |
 | `AUTH_MULTI_DEVICE_ENABLED` | 按需设置（见下方「多/单设备 Session」） |
 | HTTP 超时 | `read_timeout` ≥ `read_header_timeout`，四项均须 > 0（见下方） |

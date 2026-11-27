@@ -38,6 +38,8 @@ data:
   # 限流
   RATE_LIMIT_PER_MINUTE: "60"
   RATE_LIMIT_USER_PER_MINUTE: "120"
+  # 登录/注册按 IP 的独立配额（登录与注册共用）：每次请求含一次 bcrypt，别按普通接口设
+  RATE_LIMIT_AUTH_PER_MINUTE: "20"
 
   # 可信反向代理网段（Ingress/nginx 的 Pod 或 Node CIDR）。
   #

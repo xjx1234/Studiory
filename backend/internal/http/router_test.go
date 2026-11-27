@@ -587,3 +587,37 @@ func TestMetrics_NoTokenConfigured(t *testing.T) {
 		t.Fatalf("no token configured: status = %d, want 200", w.Code)
 	}
 }
+
+// TestAuthModule_AppliesAuthRateLimit 登录/注册必须挂专用限流（缺失直接报错），
+// 而 send-code 不应占用这个更严的桶。
+func TestAuthModule_AppliesAuthRateLimit(t *testing.T) {
+	svc := &fakeAuthService{}
+
+	if err := (AuthModule{Svc: svc}).Register(gin.New().Group("/api/v1")); err == nil {
+		t.Fatal("expected Register to fail when AuthRateLimit is nil")
+	}
+
+	blocked := func(c *gin.Context) { c.AbortWithStatus(http.StatusTooManyRequests) }
+	r := gin.New()
+	if err := (AuthModule{Svc: svc, AuthRateLimit: blocked}).Register(r.Group("/api/v1")); err != nil {
+		t.Fatalf("register module: %v", err)
+	}
+
+	do := func(path string) int {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	if code := do("/api/v1/auth/login"); code != http.StatusTooManyRequests {
+		t.Fatalf("login must be blocked by auth limiter, got %d", code)
+	}
+	if code := do("/api/v1/auth/register"); code != http.StatusTooManyRequests {
+		t.Fatalf("register must be blocked by auth limiter, got %d", code)
+	}
+	if code := do("/api/v1/auth/send-code"); code == http.StatusTooManyRequests {
+		t.Fatal("send-code must not use the auth bucket")
+	}
+}

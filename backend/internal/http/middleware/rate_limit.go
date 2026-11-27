@@ -89,6 +89,19 @@ func RateLimitByUser(perMinute int, rdb redis.UniversalClient, redisKeyPrefix st
 	}, opts...)
 }
 
+// AuthRateLimit 对登录/注册按客户端 IP 限流，配额独立于公开路由的公共桶（scope=auth）。
+//
+// 为什么要单独一层：这两个端点每次请求都要做一次 bcrypt（cost 12 约 200–400ms），
+// 而公共桶按 60–120/min/IP 放行，等于允许单 IP 每分钟打满数秒 CPU——撞库和资源放大
+// 都卡不住。这里用更小的额度单独计数，且登录与注册共用一个桶，
+// 避免在两端的之间交替请求把额度翻倍。
+// 客户端 IP 取值沿用全局配置的 trusted_proxies：未配置时只认 TCP 对端，XFF 一律忽略。
+func AuthRateLimit(perMinute int, rdb redis.UniversalClient, redisKeyPrefix string, opts ...RateLimitOption) gin.HandlerFunc {
+	return newRateLimiter(perMinute, rdb, redisKeyPrefix, "auth", func(c *gin.Context) string {
+		return c.ClientIP()
+	}, opts...)
+}
+
 func isUserScopedAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/user") || strings.HasPrefix(path, "/api/v1/admin")
 }

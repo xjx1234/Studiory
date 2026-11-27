@@ -111,8 +111,10 @@
 |------|------------|----------|--------|
 | 客户端 IP | `${REDIS_KEY_PREFIX}:limiter:ip*` | `/api/v1/auth/*` 等公开业务路由（**不含** `/user`、`/admin`，也不含 `/health`、`/ready`、`/metrics`） | `rate_limit.per_minute` / `RATE_LIMIT_PER_MINUTE` |
 | 用户 ID | `${REDIS_KEY_PREFIX}:limiter:uid*` | `/api/v1/user/*`、`/api/v1/admin/*`（Auth 之后按 JWT `uid`） | `rate_limit.user_per_minute` / `RATE_LIMIT_USER_PER_MINUTE` |
+| 登录/注册 | `${REDIS_KEY_PREFIX}:limiter:auth*` | `/api/v1/auth/login`、`/api/v1/auth/register`（按 IP，独立于上面的公开桶；两者共用一个桶） | `rate_limit.auth_per_minute` / `RATE_LIMIT_AUTH_PER_MINUTE`（默认 20） |
 
 - 已鉴权路由跳过 IP 限流，避免同 NAT 下多用户共享配额；未配置 `user_per_minute` 时默认与 `per_minute` 相同。
+- 登录/注册仍会命中公共 IP 桶，但真正生效的是更严的 `auth` 桶；这样即使公共桶被调大，撞库的 CPU 放大也受独立额度约束。
 - 库内部会在上述前缀下生成计数与时间窗口相关键（具体后缀随实现变化）。
 - Redis 不可用时回退到进程内 memory store（多实例限流不一致）。
 - store 在运行期报错（如 Redis 中途断连）时返回 `503` + `code 50002` 的统一 JSON 信封，而不是 panic 后被 Recovery 兜成"500 + 空 body"；`/health`、`/ready`、`/metrics` 不参与限流，探针始终反映真实依赖状态。

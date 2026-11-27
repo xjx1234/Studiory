@@ -48,9 +48,11 @@ func integrationTestConfig(databaseURL, redisURL string) *config.Config {
 		LogFormat:               "json",
 		RateLimitPerMinute:      1000,
 		RateLimitUserPerMinute:  1000,
-		MetricsEnabled:          false,
-		CORSAllowOrigins:        []string{"http://localhost:5173"},
-		CORSAllowCredentials:    true,
+		// 登录/注册专用桶也放开：同一测试进程会反复打 /auth/login 与 /auth/register。
+		RateLimitAuthPerMinute: 1000,
+		MetricsEnabled:         false,
+		CORSAllowOrigins:       []string{"http://localhost:5173"},
+		CORSAllowCredentials:   true,
 	}
 }
 

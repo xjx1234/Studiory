@@ -175,6 +175,9 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 
 	authMiddleware := middleware.Auth(tokenIssuer, sessionStore, cfg.AuthRedisFailOpen, logger)
 	userRateLimit := middleware.RateLimitByUser(cfg.RateLimitUserPerMinute, rdb, cfg.RedisKeyPrefix, rateLimitOpts...)
+	// 登录/注册单独限流：这两个端点每次请求都要做一次 bcrypt（cost 12），
+	// 公共桶的 60–120/min/IP 挡不住撞库与 CPU 放大，因此设更小的独立配额。
+	authRateLimit := middleware.AuthRateLimit(cfg.AuthRateLimitPerMinuteOrDefault(), rdb, cfg.RedisKeyPrefix, rateLimitOpts...)
 
 	deps := &internalhttp.Deps{
 		Cfg:                 cfg,
@@ -188,7 +191,7 @@ func New(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*App, err
 		},
 		// 每新增一个业务模块，只需在此追加一项，router 与 Deps 无需改动。
 		Modules: []internalhttp.Module{
-			internalhttp.AuthModule{Svc: authSvc},
+			internalhttp.AuthModule{Svc: authSvc, AuthRateLimit: authRateLimit},
 			internalhttp.UserModule{Svc: userSvc, Auth: authMiddleware, RateLimit: userRateLimit},
 			internalhttp.TodoModule{Svc: todoSvc, Auth: authMiddleware, RateLimit: userRateLimit},
 			internalhttp.AdminModule{Svc: adminSvc, Auth: authMiddleware, RateLimit: userRateLimit},

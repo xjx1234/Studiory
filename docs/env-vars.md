@@ -141,6 +141,7 @@
 |------|--------|------|------|
 | `RATE_LIMIT_PER_MINUTE` | `120` | 否 | 未登录/公开路由：每 IP 每分钟最大请求数 |
 | `RATE_LIMIT_USER_PER_MINUTE` | `120` | 否 | 已鉴权 `/user`、`/admin`：每 user_id 每分钟最大请求数 |
+| `RATE_LIMIT_AUTH_PER_MINUTE` | `20` | 否 | `/auth/login`、`/auth/register`：每 IP 每分钟最大请求数，**独立于公共桶**（两者共用一个桶）。每次请求都要做一次 bcrypt（cost 12，约 200–400ms），因此额度远低于普通接口；`<=0` 时也用默认 20。客户端 IP 取值遵循 `SERVER_TRUSTED_PROXIES` |
 
 ---
 

@@ -129,6 +129,7 @@ type Config struct {
 	// ── 限流 ──────────────────────────────────────────────────────────────
 	RateLimitPerMinute     int // 未登录/公开路由：按 IP
 	RateLimitUserPerMinute int // 已鉴权路由：按 user_id
+	RateLimitAuthPerMinute int // 登录/注册：按 IP，独立于公共桶（bcrypt 成本高，需更严）
 
 	// ── 可观测 ────────────────────────────────────────────────────────────
 	MetricsEnabled bool
@@ -217,6 +218,7 @@ func Load() (*Config, error) {
 
 		RateLimitPerMinute:     v.GetInt("rate_limit.per_minute"),
 		RateLimitUserPerMinute: v.GetInt("rate_limit.user_per_minute"),
+		RateLimitAuthPerMinute: v.GetInt("rate_limit.auth_per_minute"),
 
 		MetricsEnabled: v.GetBool("metrics.enabled"),
 		MetricsToken:   v.GetString("metrics.token"),
@@ -245,6 +247,18 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// AuthRateLimitPerMinuteOrDefault 返回登录/注册专用限流额度。
+//
+// 未配置（<=0）时取 20：bcrypt cost 12 下一次校验约 200–400ms，20/min/IP 足够真人
+// 使用（含办公 NAT），同时把单 IP 每分钟能触发的 CPU 放大压到可接受范围。
+// 登录与注册共用同一个桶，避免在两个端点之间交替请求把额度翻倍。
+func (c *Config) AuthRateLimitPerMinuteOrDefault() int {
+	if c.RateLimitAuthPerMinute > 0 {
+		return c.RateLimitAuthPerMinute
+	}
+	return 20
 }
 
 // Validate 检查启动所需的关键配置，避免生产环境带着不安全默认值运行。
@@ -642,6 +656,7 @@ func bindEnvs(v *viper.Viper) {
 		"log.format":                              "LOG_FORMAT",
 		"rate_limit.per_minute":                   "RATE_LIMIT_PER_MINUTE",
 		"rate_limit.user_per_minute":              "RATE_LIMIT_USER_PER_MINUTE",
+		"rate_limit.auth_per_minute":              "RATE_LIMIT_AUTH_PER_MINUTE",
 		"metrics.enabled":                         "METRICS_ENABLED",
 		"metrics.token":                           "METRICS_TOKEN",
 		"cors.allow_origins":                      "CORS_ALLOW_ORIGINS",

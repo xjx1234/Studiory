@@ -91,9 +91,11 @@ func testConfig(databaseURL, redisURL string) *config.Config {
 		LogFormat:                          "json",
 		RateLimitPerMinute:                 1000,
 		RateLimitUserPerMinute:             1000,
-		MetricsEnabled:                     false,
-		CORSAllowOrigins:                   []string{"http://localhost:5173"},
-		CORSAllowCredentials:               true,
+		// 登录/注册专用桶也放开：e2e 全程从 127.0.0.1 发请求，生产默认的 20/min 会误伤用例。
+		RateLimitAuthPerMinute: 1000,
+		MetricsEnabled:         false,
+		CORSAllowOrigins:       []string{"http://localhost:5173"},
+		CORSAllowCredentials:   true,
 	}
 }
 

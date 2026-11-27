@@ -148,6 +148,30 @@ func TestLoad_RedisURLFallsBackToComponents(t *testing.T) {
 	}
 }
 
+func TestLoad_AuthRateLimitEnvBinding(t *testing.T) {
+	t.Setenv("CONFIG_PATH", t.TempDir())
+	t.Setenv("RATE_LIMIT_AUTH_PER_MINUTE", "7")
+
+	cfg := mustLoad(t)
+
+	if cfg.RateLimitAuthPerMinute != 7 {
+		t.Errorf("RateLimitAuthPerMinute = %d, want 7 (env binding)", cfg.RateLimitAuthPerMinute)
+	}
+	if got := cfg.AuthRateLimitPerMinuteOrDefault(); got != 7 {
+		t.Errorf("AuthRateLimitPerMinuteOrDefault() = %d, want 7", got)
+	}
+}
+
+func TestAuthRateLimitPerMinuteOrDefault(t *testing.T) {
+	// 未配置时必须有严格默认值，不能退回公共桶的 120。
+	if got := (&Config{}).AuthRateLimitPerMinuteOrDefault(); got != 20 {
+		t.Errorf("default auth rate limit = %d, want 20", got)
+	}
+	if got := (&Config{RateLimitAuthPerMinute: 5}).AuthRateLimitPerMinuteOrDefault(); got != 5 {
+		t.Errorf("configured auth rate limit = %d, want 5", got)
+	}
+}
+
 func TestLoad_RateLimitUserPerMinuteFallsBackWhenUnset(t *testing.T) {
 	t.Setenv("CONFIG_PATH", t.TempDir())
 	t.Setenv("RATE_LIMIT_PER_MINUTE", "90")

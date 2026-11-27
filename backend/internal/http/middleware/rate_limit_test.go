@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -53,6 +55,79 @@ func TestRateLimitByIP_SkipsUserScopedPaths(t *testing.T) {
 		if i == 2 && w.Code != http.StatusTooManyRequests {
 			t.Fatalf("auth request 3: expected 429, got %d", w.Code)
 		}
+	}
+}
+
+// TestAuthRateLimit_StricterAndSeparateBucket 登录/注册专用限流：
+// 额度比公共桶小、键空间独立（scope=auth），登录与注册共用一个桶。
+func TestAuthRateLimit_StricterAndSeparateBucket(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	var hits int
+	r := gin.New()
+	// 只挂专用桶：确认它使用自己的 scope（auth），不写公共桶（ip）的键。
+	r.Use(AuthRateLimit(2, rdb, "test"))
+	for _, path := range []string{"/api/v1/auth/login", "/api/v1/auth/register"} {
+		p := path
+		r.POST(p, func(c *gin.Context) {
+			hits++
+			c.Status(http.StatusOK)
+		})
+	}
+
+	do := func(path string) int {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.RemoteAddr = "1.2.3.4:1234"
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// 两个端点共用额度：第 1、2 次通过（分别打 login / register），第 3 次必须 429。
+	if code := do("/api/v1/auth/login"); code != http.StatusOK {
+		t.Fatalf("login #1: expected 200, got %d", code)
+	}
+	if code := do("/api/v1/auth/register"); code != http.StatusOK {
+		t.Fatalf("register #2: expected 200, got %d", code)
+	}
+	if code := do("/api/v1/auth/login"); code != http.StatusTooManyRequests {
+		t.Fatalf("login #3: expected 429 (shared auth bucket), got %d", code)
+	}
+	if hits != 2 {
+		t.Fatalf("expected 2 handler hits, got %d", hits)
+	}
+
+	// 换一个 IP 应该重新计数。
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	req.RemoteAddr = "5.6.7.8:1234"
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("different IP should have its own bucket, got %d", w.Code)
+	}
+
+	// 键空间必须与公共桶（scope=ip）分开。
+	keys, err := rdb.Keys(context.Background(), "test:limiter:*").Result()
+	if err != nil {
+		t.Fatalf("read redis keys: %v", err)
+	}
+	var sawAuth, sawIP bool
+	for _, k := range keys {
+		if strings.Contains(k, "limiter:auth") {
+			sawAuth = true
+		}
+		if strings.Contains(k, "limiter:ip") {
+			sawIP = true
+		}
+	}
+	if !sawAuth {
+		t.Fatalf("expected keys under limiter:auth, got %v", keys)
+	}
+	if sawIP {
+		t.Fatalf("auth limiter must not write the public ip bucket, got keys %v", keys)
 	}
 }
 

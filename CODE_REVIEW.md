@@ -134,7 +134,7 @@
 | 分层 | handler 只做绑定/调用/返回；service 编排 repo；repo 接口与 `sqlcgen` 解耦；未发现 handler 直连 SQL |
 | 安全 | 可信代理收紧（[router.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/router.go#L31-L41)）、生产 fail-closed（[config.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L265-L320)）、canonical UUID 吊销键、refresh 黑名单 TTL 跟随票据寿命、验证码配额/冷却用 Lua 原子化 |
 | 契约 | OpenAPI 与路由**双向**比对（[contract.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/openapi/contract.go#L74-L92)），CI 强制生成物 drift 检查 |
-| 测试 | 非测试代码 9,032 行 / 测试 10,803 行；单测 + testcontainers 集成 + HTTP E2E 三层，CI 覆盖率门槛 50% |
+| 测试 | 非测试代码 9,032 行 / 测试 10,803 行；单测 + testcontainers 集成 + HTTP E2E 三层，CI 覆盖率门槛 55% |
 | 可观测 | 自建 Registry（不污染全局）、路由模板做 label 防基数爆炸、method 收敛为 OTHER |
 | 交付 | 多阶段构建 + 非 root + 只读根文件系统、K8s 探针/PDB/preStop/优雅停机对齐、Docker 镜像冒烟 job |
 
@@ -412,7 +412,7 @@
 | P2-12 `LIKE '%kw%'` + `OFFSET` | PG [users.sql#L77-L90](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/sqlc/query/users.sql#L77-L90)；MySQL [store.go#L149](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go#L149)、[#L166](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go#L166) | 前后通配无法走 B-tree，数据量上来列表页变全表扫；列表与 COUNT 各扫一次；深分页线性变慢，且 `page` 只校验 > 0（[pagination.go#L81-L85](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/pagination/pagination.go#L81-L85)） | 改 keyset/cursor 分页；或 PG 上 `pg_trgm` + 前缀化搜索；给 `page` 上限并在 OpenAPI 写明 |
 | P2-13 `oauth.wechat.app_secret` 未使用 | 只出现在配置映射与 yaml 注释（[base.yaml#L100](file:///Users/pxiong/Code/personal/Studiory/backend/config/base.yaml#L100)「预留」），代码零消费；微信登录实际走 `access_token + open_id` | 配置项暗示「已支持 code 换 token」，生产填了也不生效 | 要么实现 code→token（含 unionid 处理），要么从配置与文档移除该键 |
 
-其余未动的工程化项（首轮 G 节，简述）：OpenAPI 契约测试只比对路径/方法、不校验 schema；CI 覆盖率门槛固定 50%；`make new-module` 脚手架未做。
+其余未动的工程化项（首轮 G 节，简述）：OpenAPI 契约测试只比对路径/方法、不校验 schema；CI 覆盖率门槛已从 50% 提到 55%（见 N-12）；`make new-module` 脚手架未做。
 
 ### 7.5 本轮新增发现（P2）
 
@@ -420,10 +420,10 @@
 |------|------|------|------|
 | N-7 **已修复** | `verifyCode` 把 Redis 故障伪装成「验证码错误」 | 已改三态 `(bool, *errcode.Error)`：[sendcode.go#L298-L341](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L298-L341) 中 `cache == nil`、`Eval` 失败、Lua 返回值类型异常都返回 `ErrInternal` 并 `LogInternal`（带 `code_type` 与脱敏 target）；[SendCode#L136-L147](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L136-L147) 补 nil cache 守卫（记 `storage_error` 指标，此前会 panic） | 登录/注册在 [login.go#L86-L93](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/login.go#L86-L93)、[register.go#L166-L173](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/register.go#L166-L173) 直接上抛 500，不再记登录失败；测试 `TestVerifyCodeWithoutCacheReturnsInternal` / `TestLoginWithCodeRedisFailureIsInternal` / `TestRegisterRedisFailureIsInternal` / `TestSendCodeWithoutCacheReturnsInternal` |
 | N-8 | 审计写入非事务且失败静默 | [admin/service.go#L205-L208](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L205-L208) 变更提交后才 `recordAudit`；[#L308-L332](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L308-L332) 失败只 `LogInternal` | 变更 + 审计同事务（repo 暴露 tx），或至少 `admin_audit_write_failed_total` + 告警 |
-| N-9 | 登录/注册缺专用限流 | 与 send-code 共用 60–120 次/分钟/IP 的公共桶（[rate_limit.go#L58-L65](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/rate_limit.go#L58-L65)、[production.yaml#L16](file:///Users/pxiong/Code/personal/Studiory/backend/config/production.yaml#L16)）；账号级锁定按账号计，挡不住「每账号 1 次」 | `/auth/login`、`/auth/register` 单独 10–20 次/分钟/IP，并按账号哈希再加一层滑动窗口 |
-| N-10 | bcrypt 成本固定 10 且无登录时 rehash | [register.go#L17](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/register.go#L17) `bcryptCost = bcrypt.DefaultCost` | 配置化目标 cost；登录成功后 `bcrypt.Cost(hash)` 低于目标就重新生成并 `UpdatePassword` 静默升级（dummy 成本测试已能兜底） |
+| N-9 **已修复** | 登录/注册缺专用限流 | 已新增 `middleware.AuthRateLimit`（scope=auth，独立键空间，登录与注册共用额度）：[rate_limit.go#L92-L105](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/rate_limit.go#L92-L105)、[module.go#L32-L53](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/module.go#L32-L53)（缺中间件直接报错）。额度 `rate_limit.auth_per_minute` 默认 20，见 [config.go#L252-L264](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L252-L264)、`base.yaml`/`production.yaml`；`RATE_LIMIT_AUTH_PER_MINUTE` 已进 `env-vars.md`/`.env.example`/k8s 清单 | 测试：`TestAuthRateLimit_StricterAndSeparateBucket`（共用桶、换 IP 重算、不写 ip 桶键）、`TestAuthModule_AppliesAuthRateLimit`（缺失报错、send-code 不占桶）、`TestLoad_AuthRateLimitEnvBinding`。账号哈希滑动窗口仍未做（本轮未纳入） |
+| N-10 **已修复** | bcrypt 成本固定 10 且无登录时 rehash | 目标 cost 提到 12 并集中为 `auth.PasswordHashCost`（[types.go#L33-L47](file:///Users/pxiong/Code/personal/Studiory/backend/internal/auth/types.go#L33-L47)）；登录成功后 `bcrypt.Cost(hash) < 目标` 才重新生成，经新增 CAS 查询 `UpdateUserPasswordIfUnchanged` 写库（[users.sql#L31-L38](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/sqlc/query/users.sql#L31-L38)），失败只记日志 | 测试：`TestLoginUpgradesLowCostHash`、`TestLoginSkipsUpgradeWhenCostIsCurrent`、`TestLoginSurvivesUpgradeFailure`、`TestUpgradePasswordHashSkipsWhenHashChanged`（并发改密不被回写）。注：改密与注册同样用 12，避免降级抖动 |
 | N-11 | 配置项与文档无自动比对 | 实例：`DB_DRIVER` 至今未进 `env-vars.md`/`.env.example`；上一批三个 SMTP/发码超时键靠人工同步 | 用 `config.go` 的 env 映射生成文档表格，或加一条测试比对「代码里的环境变量集合」与文档 |
-| N-12 | 覆盖率门槛偏低 | CI `backend` job 固定 ≥50% | auth/http 等关键包单独设 ≥70%，或全局提到 65% |
+| N-12 **已修复** | 覆盖率门槛偏低 | 门槛 50% → 55%（[ci.yml#L176-L184](file:///Users/pxiong/Code/personal/Studiory/.github/workflows/ci.yml#L176-L184)）：按 CI 同款命令（`-race -covermode=atomic ./...`）实测 62.4%，且本机集成/e2e 会 skip，属保守下界；留约 7 个点余量避免轻微改动即红 | 暂不拆模块基线（关键包与整体水位接近，拆分会增加维护成本） |
 
 ### 7.6 建议处理顺序
 
@@ -432,7 +432,7 @@
 3. **N-7 已完成**（故障语义与可观测性，改动局部）。
 4. **N-8 审计事务化/指标**，同时决定是否把审计失败暴露给调用方。
 5. **P2-1 错误模型**（分模块）、**P2-3 OTel**、**P2-12 分页**按排期推进。
-6. N-9 / N-10 / N-11 / N-12 视规模择机实施。
+6. N-11 视规模择机实施（N-9 / N-10 / N-12 已完成）。
 
 > 本节只做评估，未改动任何代码。
 

@@ -133,7 +133,7 @@ cd backend && sqlc generate
 - Redis pool：`redis.pool_size`
 - Redis key 前缀：`redis.key_prefix`
 - 日志：`log.level`、`log.format`（字段规范见 [logging.md](logging.md)）
-- 限流：`rate_limit.per_minute`（IP）、`rate_limit.user_per_minute`（已鉴权 user_id）
+- 限流：`rate_limit.per_minute`（IP）、`rate_limit.user_per_minute`（已鉴权 user_id）、`rate_limit.auth_per_minute`（登录/注册按 IP，独立桶）
 - CORS：`cors.allow_origins`、`cors.allow_credentials`
 - Auth 固定验证码：`auth.mock_code_enabled`
 - 多/单设备 Session：`auth.multi_device_enabled`（详见 [session.md](session.md)）

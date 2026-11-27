@@ -110,6 +110,7 @@ log:
 rate_limit:
   per_minute: 120              # 未登录/公开路由：按客户端 IP
   user_per_minute: 120         # 已鉴权 /user、/admin：按 user_id（同 NAT 互不干扰）
+  auth_per_minute: 20          # 登录/注册：按 IP 单独计数（独立桶，两者共用）；每次请求含一次 bcrypt
 
 metrics:
   enabled: true              # 暴露 Prometheus /metrics 端点（生产可按需关闭）

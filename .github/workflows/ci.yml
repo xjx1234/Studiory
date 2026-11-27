@@ -173,11 +173,15 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
-      - name: Coverage threshold (>= 50%)
+      - name: Coverage threshold (>= 55%)
+        # 门槛依据（2026-11-27）：按本 job 的命令（-race -covermode=atomic ./...）实测
+        # 总覆盖率为 62.4%，且这是保守下界——本机没有 PG/Redis，repo 集成与 e2e 会 skip，
+        # CI 上这些用例跑起来只会更高。取 55% 留约 7 个点余量：正常重构（挪代码、
+        # 新增少量分支）不会立刻变红，同时不再像 50% 那样只防「覆盖率归零」。
         run: |
           total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${total}%"
-          awk -v t="$total" 'BEGIN { if (t < 50.0) { printf "::error::Coverage %.1f%% is below 50%% threshold\n", t; exit 1 } }'
+          awk -v t="$total" 'BEGIN { if (t < 55.0) { printf "::error::Coverage %.1f%% is below 55%% threshold\n", t; exit 1 } }'
 
       - name: Build
         run: go build -o /tmp/app-api .

@@ -24,7 +24,7 @@ func newTestModules(
 	auth, rateLimit gin.HandlerFunc,
 ) []Module {
 	return []Module{
-		AuthModule{Svc: authSvc},
+		AuthModule{Svc: authSvc, AuthRateLimit: rateLimit},
 		UserModule{Svc: userSvc, Auth: auth, RateLimit: rateLimit},
 		TodoModule{Svc: todoSvc, Auth: auth, RateLimit: rateLimit},
 		AdminModule{Svc: adminSvc, Auth: auth, RateLimit: rateLimit},

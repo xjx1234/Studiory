@@ -31,6 +31,10 @@ type Module interface {
 // AuthModule 注册 /auth（注册、登录、刷新、登出），无需鉴权。
 type AuthModule struct {
 	Svc authservice.Service
+	// AuthRateLimit 是登录/注册专用限流（按 IP，独立于公开桶，登录与注册共用额度）。
+	// 这两个端点每次请求都要做一次 bcrypt，必须比公共限流更严；为 nil 时直接报错，
+	// 避免忘记接线后悄悄退化成公共桶。
+	AuthRateLimit gin.HandlerFunc
 }
 
 func (m AuthModule) Name() string { return "auth" }
@@ -39,10 +43,13 @@ func (m AuthModule) Register(v1 *gin.RouterGroup) error {
 	if m.Svc == nil {
 		return errors.New("AuthService is required")
 	}
+	if m.AuthRateLimit == nil {
+		return errors.New("AuthModule: AuthRateLimit middleware is required")
+	}
 	h := NewAuthHandler(m.Svc)
 	g := v1.Group("/auth")
-	g.POST("/register", h.Register)
-	g.POST("/login", h.Login)
+	g.POST("/register", m.AuthRateLimit, h.Register)
+	g.POST("/login", m.AuthRateLimit, h.Login)
 	g.POST("/send-code", h.SendCode)
 	g.POST("/refresh", h.Refresh)
 	g.POST("/logout", h.Logout)
