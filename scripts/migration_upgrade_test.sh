@@ -134,8 +134,9 @@ decode_golden() {
 }
 
 GOLDEN_ID='99999999-9999-9999-9999-999999999999'
-cat >"$TMP_BASE/insert_golden.sql" <<SQL
-INSERT INTO users (id, phone) VALUES ('$GOLDEN_ID', :'in');
+GOLDEN_ID_ALT='99999999-9999-9999-9999-999999999998'
+cat >"$TMP_BASE/insert_golden.sql" <<'SQL'
+INSERT INTO users (id, phone) VALUES (:'id', :'in');
 SQL
 
 GOLDEN_CASES=0
@@ -156,7 +157,7 @@ while IFS=$'\t' read -r raw_in raw_want; do
   # 插入值经 psql -v 变量传入 :'in'，引号/换行由 psql 负责转义，不拼 SQL 字面量。
   "${PSQL[@]}" -d "$DB_UPGRADE" -c "TRUNCATE users CASCADE" >/dev/null
   migrate -path "$HEAD_MIGRATIONS" -database "$(url "$DB_UPGRADE")" force "$FORCE_VERSION" >/dev/null
-  "${PSQL[@]}" -d "$DB_UPGRADE" -v in="$in" -f "$TMP_BASE/insert_golden.sql" >/dev/null
+  "${PSQL[@]}" -d "$DB_UPGRADE" -v id="$GOLDEN_ID" -v in="$in" -f "$TMP_BASE/insert_golden.sql" >/dev/null
   migrate -path "$HEAD_MIGRATIONS" -database "$(url "$DB_UPGRADE")" up >/dev/null
 
   got=$("${PSQL[@]}" -d "$DB_UPGRADE" -c "SELECT phone FROM users WHERE id = '$GOLDEN_ID'")
@@ -181,10 +182,27 @@ while IFS=$'\t' read -r raw_in raw_want; do
   [ "$in" = "(empty)" ] && in=""
   [ "$want" = "(empty)" ] && want=""
 
+  # 脚本只输出「归一化后撞号」的组（HAVING count(*) > 1），单行样例不会有输出。
+  # 因此每条样例插两行：第二行是另一种写法、但按正确口径应归一化成同一个值的号码。
+  #   - 期望非空：第二行 = 期望值 + 空格（去空白后仍是期望值）
+  #   - 期望为空：第二行 = "-"（非数字，正确口径下同样归一化为空串）
+  if [ -n "$want" ]; then
+    second="${want} "
+  else
+    second="-"
+  fi
+  # UNIQUE(phone) 不允许两行完全相同；极端情况下补一个空格保证两个原始值不同。
+  [ "$second" = "$in" ] && second="${second} "
+
   "${PSQL[@]}" -d "$DB_UPGRADE" -c "TRUNCATE users CASCADE" >/dev/null
-  "${PSQL[@]}" -d "$DB_UPGRADE" -v in="$in" -f "$TMP_BASE/insert_golden.sql" >/dev/null
+  "${PSQL[@]}" -d "$DB_UPGRADE" -v id="$GOLDEN_ID" -v in="$in" -f "$TMP_BASE/insert_golden.sql" >/dev/null
+  "${PSQL[@]}" -d "$DB_UPGRADE" -v id="$GOLDEN_ID_ALT" -v in="$second" -f "$TMP_BASE/insert_golden.sql" >/dev/null
+
+  out=$("${PSQL[@]}" -d "$DB_UPGRADE" -F '|' -f scripts/check_phone_collisions.sql)
+  [ -n "$out" ] \
+    || fail "撞号预检脚本没有把 $(printf '%q' "$in") 与 $(printf '%q' "$second") 判为同一号：归一化结果不是期望的 $(printf '%q' "$want")"
   # 脚本输出三列（normalized|rows|ids），取第一列与黄金表期望比对。
-  got=$("${PSQL[@]}" -d "$DB_UPGRADE" -F '|' -f scripts/check_phone_collisions.sql | cut -d'|' -f1)
+  got=$(printf '%s\n' "$out" | head -1 | cut -d'|' -f1)
   [ "$got" = "$want" ] \
     || fail "撞号预检脚本对 $(printf '%q' "$in") 归一化为 $(printf '%q' "$got")，期望 $(printf '%q' "$want")：脚本与黄金表口径已漂移"
 done <"$GOLDEN_TABLE"
