@@ -3,6 +3,7 @@ package authservice
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -94,6 +95,9 @@ const (
 	codeOutcomeDispatchError      = "dispatch_error"
 )
 
+// errCacheUnavailable 表示没有注入缓存实现：属于装配/部署错误，不是用户输入的问题。
+var errCacheUnavailable = errors.New("auth: cache store is nil")
+
 // SendCode 生成验证码、写入 Redis，并通过下发器（多服务商路由）发送。
 //
 // 流程：目标/IP 日配额 → 冷却限频 → 生成验证码 → 写 Redis → 经 codeSender 下发。
@@ -127,6 +131,17 @@ func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, client
 	ipLimit := int64(s.codeDailyLimitPerIP)
 	if ipLimit <= 0 || clientIP == "" {
 		ipLimit = -1
+	}
+
+	if s.cache == nil {
+		// 没有缓存实现就无法做配额、冷却与验证码落库；按基础设施故障返回 500 并留日志，
+		// 而不是像 brute_force 那样静默降级（那里降级只影响限速强度，这里会直接丢失验证码）。
+		s.observeCodeSend(codeType, codeOutcomeStorageError)
+		s.LogInternal(ctx, "SendCode cache unavailable", errCacheUnavailable,
+			zap.String("code_type", codeType),
+			baseservice.TargetField(target),
+		)
+		return errcode.ErrInternal
 	}
 
 	result, err := s.cache.Eval(ctx, sendCodeQuotaLua,
@@ -283,25 +298,45 @@ func (s *AuthServiceImpl) generateCode(ctx context.Context) (string, *errcode.Er
 // verifyCode 校验验证码。
 // 策略：先查 Redis，key 不存在时在开发阶段允许 MockVerificationCode 通过（便于本地无 Redis 调试）。
 // 验证成功后删除 key，确保一次有效。
-func (s *AuthServiceImpl) verifyCode(ctx context.Context, codeType, target, code string) bool {
+//
+// 返回值区分三种情况：(true, nil) 通过；(false, nil) 验证码错误；
+// (false, ErrInternal) 缓存缺失/Redis 故障——后者是基础设施问题，不能伪装成 401/400，
+// 否则一次 Redis 抖动会表现为「所有人的验证码都错了」，且监控上看不到任何异常。
+func (s *AuthServiceImpl) verifyCode(ctx context.Context, codeType, target, code string) (bool, *errcode.Error) {
+	if s.cache == nil {
+		s.LogInternal(ctx, "verifyCode cache unavailable", errCacheUnavailable,
+			zap.String("code_type", codeType),
+			baseservice.TargetField(target),
+		)
+		return false, errcode.ErrInternal
+	}
 	key := s.codeRedisKey(codeType, target)
 	result, err := s.cache.Eval(ctx, verifyCodeLua, []string{key}, code)
 	if err != nil {
-		return false
+		s.LogInternal(ctx, "verifyCode redis eval", err,
+			zap.String("code_type", codeType),
+			baseservice.TargetField(target),
+		)
+		return false, errcode.ErrInternal
 	}
 
 	count, ok := result.(int64)
 	if !ok {
-		return false
+		s.LogInternal(ctx, "verifyCode unexpected lua result",
+			fmt.Errorf("lua 返回值类型 %T，期望 int64", result),
+			zap.String("code_type", codeType),
+			baseservice.TargetField(target),
+		)
+		return false, errcode.ErrInternal
 	}
 
 	switch count {
 	case 1:
-		return true
+		return true, nil
 	case -1:
-		return s.allowMockCodeFallback && code == MockVerificationCode
+		return s.allowMockCodeFallback && code == MockVerificationCode, nil
 	default:
-		return false
+		return false, nil
 	}
 }
 

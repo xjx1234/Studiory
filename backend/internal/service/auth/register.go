@@ -163,7 +163,11 @@ func (s *AuthServiceImpl) verifyRegistrationOwnership(ctx context.Context, input
 		if s.isLoginLocked(ctx, account) {
 			return "", errcode.ErrAccountLocked
 		}
-		if !s.verifyCode(ctx, codeType, target, input.Code) {
+		valid, codeErr := s.verifyCode(ctx, codeType, target, input.Code)
+		if codeErr != nil {
+			return "", codeErr
+		}
+		if !valid {
 			s.recordLoginFail(ctx, account)
 			return "", errcode.ErrInvalidCode
 		}

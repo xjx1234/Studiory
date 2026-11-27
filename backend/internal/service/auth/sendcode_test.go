@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/auth"
 	"backend/internal/sender"
 	"backend/internal/testutil"
 	"backend/pkg/errcode"
@@ -38,6 +39,54 @@ func sendCodeSvc(t *testing.T, rdb redis.UniversalClient, snd sender.Sender, moc
 		t.Fatal("expected *AuthServiceImpl")
 	}
 	return svc
+}
+
+// 没有 cache 实现时必须报内部错误：既不能 panic（此前 SendCode / verifyCode 会空指针），
+// 也不能把「验不了」伪装成「验证码错误」。
+func TestSendCodeWithoutCacheReturnsInternal(t *testing.T) {
+	svc, ok := New(testutil.NewFakeUserRepo(), nil,
+		WithTokenIssuer(testTokenIssuer()),
+		WithCodeSender(&captureSender{}),
+	).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+
+	if e := svc.SendCode(context.Background(), "sms", "13800138000", "1.1.1.1"); e != errcode.ErrInternal {
+		t.Fatalf("SendCode without cache = %v, want ErrInternal", e)
+	}
+}
+
+func TestVerifyCodeWithoutCacheReturnsInternal(t *testing.T) {
+	svc, ok := New(testutil.NewFakeUserRepo(), nil,
+		WithTokenIssuer(testTokenIssuer()),
+		WithCodeSender(&captureSender{}),
+	).(*AuthServiceImpl)
+	if !ok {
+		t.Fatal("expected *AuthServiceImpl")
+	}
+
+	valid, e := svc.verifyCode(context.Background(), "sms", "13800138000", MockVerificationCode)
+	if valid || e != errcode.ErrInternal {
+		t.Fatalf("verifyCode without cache = (%v, %v), want (false, ErrInternal)", valid, e)
+	}
+}
+
+// Redis 故障时验证码校验必须是 500，而不是 401：旧实现把 Eval 错误吞成 false，
+// 一次 Redis 抖动会表现为「所有人的验证码都错了」，监控上也看不到任何异常。
+func TestLoginWithCodeRedisFailureIsInternal(t *testing.T) {
+	mr, rdb := newTestRDB(t)
+	svc := sendCodeSvc(t, rdb, &captureSender{}, true)
+	mr.Close()
+
+	_, e := svc.Login(context.Background(), &auth.LoginRequest{
+		GrantType: auth.GrantTypeSMSCode,
+		Phone:     "13800138000",
+		Code:      MockVerificationCode,
+	})
+	if e != errcode.ErrInternal {
+		t.Fatalf("login with code while redis is down = %v, want ErrInternal", e)
+	}
 }
 
 func TestSendCode_StoresAndDispatches(t *testing.T) {

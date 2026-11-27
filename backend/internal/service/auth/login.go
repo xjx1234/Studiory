@@ -83,7 +83,11 @@ func (s *AuthServiceImpl) loginWithCode(ctx context.Context, codeType, target, c
 		return nil, errcode.ErrAccountLocked
 	}
 
-	if !s.verifyCode(ctx, codeType, target, code) {
+	valid, codeErr := s.verifyCode(ctx, codeType, target, code)
+	if codeErr != nil {
+		return nil, codeErr
+	}
+	if !valid {
 		s.recordLoginFail(ctx, account)
 		return nil, errcode.ErrInvalidCode
 	}

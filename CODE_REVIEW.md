@@ -418,7 +418,7 @@
 
 | 编号 | 问题 | 证据 | 建议 |
 |------|------|------|------|
-| N-7 | `verifyCode` 把 Redis 故障伪装成「验证码错误」 | [sendcode.go#L279-L299](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L279-L299)：`Eval` 出错直接 `return false`，登录/注册分别映射成 401/400 `ErrInvalidCode` | 改成三态（通过 / 不匹配 / 基础设施错误），infra → 503 并计数；顺带补 `cache == nil` 守卫——`New` 不校验 cache，`brute_force.go` 有 nil 判断而 `verifyCode`/`SendCode` 没有，nil 会 panic |
+| N-7 **已修复** | `verifyCode` 把 Redis 故障伪装成「验证码错误」 | 已改三态 `(bool, *errcode.Error)`：[sendcode.go#L298-L341](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L298-L341) 中 `cache == nil`、`Eval` 失败、Lua 返回值类型异常都返回 `ErrInternal` 并 `LogInternal`（带 `code_type` 与脱敏 target）；[SendCode#L136-L147](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L136-L147) 补 nil cache 守卫（记 `storage_error` 指标，此前会 panic） | 登录/注册在 [login.go#L86-L93](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/login.go#L86-L93)、[register.go#L166-L173](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/register.go#L166-L173) 直接上抛 500，不再记登录失败；测试 `TestVerifyCodeWithoutCacheReturnsInternal` / `TestLoginWithCodeRedisFailureIsInternal` / `TestRegisterRedisFailureIsInternal` / `TestSendCodeWithoutCacheReturnsInternal` |
 | N-8 | 审计写入非事务且失败静默 | [admin/service.go#L205-L208](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L205-L208) 变更提交后才 `recordAudit`；[#L308-L332](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L308-L332) 失败只 `LogInternal` | 变更 + 审计同事务（repo 暴露 tx），或至少 `admin_audit_write_failed_total` + 告警 |
 | N-9 | 登录/注册缺专用限流 | 与 send-code 共用 60–120 次/分钟/IP 的公共桶（[rate_limit.go#L58-L65](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/rate_limit.go#L58-L65)、[production.yaml#L16](file:///Users/pxiong/Code/personal/Studiory/backend/config/production.yaml#L16)）；账号级锁定按账号计，挡不住「每账号 1 次」 | `/auth/login`、`/auth/register` 单独 10–20 次/分钟/IP，并按账号哈希再加一层滑动窗口 |
 | N-10 | bcrypt 成本固定 10 且无登录时 rehash | [register.go#L17](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/register.go#L17) `bcryptCost = bcrypt.DefaultCost` | 配置化目标 cost；登录成功后 `bcrypt.Cost(hash)` 低于目标就重新生成并 `UpdatePassword` 静默升级（dummy 成本测试已能兜底） |
@@ -429,7 +429,7 @@
 
 1. **P1-1 先决策**（删 MySQL 还是收口）；选保留就先补 MySQL 迁移与预检，否则后续每次迁移都会加深漂移。
 2. **P1-2 口径黄金表 + 合并预检脚本**（改动小、防回归收益高）。
-3. **N-7 三态 `verifyCode`**（故障语义与可观测性，改动局部）。
+3. **N-7 已完成**（故障语义与可观测性，改动局部）。
 4. **N-8 审计事务化/指标**，同时决定是否把审计失败暴露给调用方。
 5. **P2-1 错误模型**（分模块）、**P2-3 OTel**、**P2-12 分页**按排期推进。
 6. N-9 / N-10 / N-11 / N-12 视规模择机实施。

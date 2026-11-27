@@ -23,6 +23,23 @@ func registerSvc(t *testing.T, rdb redis.UniversalClient) *AuthServiceImpl {
 	return svc
 }
 
+// TestRegisterRedisFailureIsInternal 注册路径同样不能把 Redis 故障伪装成「验证码错误」。
+func TestRegisterRedisFailureIsInternal(t *testing.T) {
+	mr, rdb := newTestRDB(t)
+	svc := registerSvc(t, rdb)
+	mr.Close()
+
+	_, e := svc.Register(context.Background(), &RegisterInput{
+		GrantType: "password",
+		Phone:     "13900000009",
+		Code:      MockVerificationCode,
+		Password:  "P@ssw0rd!",
+	})
+	if e != errcode.ErrInternal {
+		t.Fatalf("register while redis is down = %v, want ErrInternal", e)
+	}
+}
+
 // TestRegisterWithPassword_Success 验证密码注册成功并返回 Token。
 // 密码注册也必须先通过一次性验证码（证明持有该手机号），这里走 mock fallback 固定码。
 func TestRegisterWithPassword_Success(t *testing.T) {
