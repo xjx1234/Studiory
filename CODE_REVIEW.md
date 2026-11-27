@@ -299,10 +299,10 @@
 ### F. 安全加固（在现有良好基础上补口）
 1. 邮箱/手机号 canonical 化 + PG `lower(email)` 唯一索引（P1-2）；
 2. 管理员"最后一人"保护 + 审计表（P2-4）；
-3. 登录响应时间恒定化：现在"用户不存在"走 `recordLoginFail` 后立即返回，密码校验分支多一次 bcrypt（~60ms），存在**时序侧信道**可用于枚举账号；建议不存在时也执行一次 dummy bcrypt；
+3. **已修复（2026-11-27）** 登录响应时间恒定化：原先"用户不存在"走 `recordLoginFail` 后立即返回，比密码校验分支少一次 bcrypt（实测 cost 10 约 45–100ms），存在**时序侧信道**可用于枚举账号；现在三条失败分支（账号不存在 / 账号无密码 / 密码错误）都经 `verifyPassword` 比较一次，无 hash 的两支用与 `bcryptCost` 同 cost 的 `dummyPasswordHash` 补齐计算量（[login.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/login.go#L35-L67)、[register.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/register.go#L17-L50)、[login_timing_test.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/login_timing_test.go)）。
 4. 验证码尝试次数：当前只有账号级锁定（5 次/10 分钟），建议再按 `code_key` 维度限制（同一验证码最多错 3 次即作废）。
 
-> 第 3 点值得单独说明：代码注释里写了"防止通过响应时间枚举账号"，但实际只做了"失败也计数"，没有做等时处理——这是**注释与实现不一致**，属于会误导后续维护者的隐患。
+> 第 3 点曾值得单独说明：代码注释里写了"防止通过响应时间枚举账号"，但实际只做了"失败也计数"，没有做等时处理——这是**注释与实现不一致**，属于会误导后续维护者的隐患。现已用 dummy bcrypt 兑现该注释，误导性注释也一并改写。
 
 ### G. 工程化
 - CI 增加：`go vet` 全量、每包覆盖率报告、`gofumpt`（可选）、`openapi` 客户端生成漂移检查。
@@ -319,7 +319,7 @@
 3. `Config.Validate` 补 TTL/Redis/`key_prefix`/CORS `*` 校验。
 4. 请求超时中间件 + DSN `statement_timeout` + Redis 读写超时。
 5. 限流内存回退加日志/指标；删除 `postgresReadyCheck`、CORS 死分支。
-6. 修正"防响应时间枚举"的实现（dummy bcrypt）或删掉该注释。
+6. **已修复**：修正"防响应时间枚举"的实现——`verifyPassword` 对无 hash 的分支也执行一次 dummy bcrypt（见 F.3），不再只是删注释。
 
 ### 阶段 1：2–4 周，语义与可观测性
 1. 会话模型定稿（绝对/滑动）+ refresh rotation 家族检测 + 测试矩阵。
@@ -358,7 +358,7 @@
 | 4 | access TTL 30min + 校验规则 | base.yaml、config.go | 缩短权限回收窗口 |
 | 5 | 限流回退日志/指标 | rate_limit.go | 让隐性失效可见 |
 | 6 | service 日志带 request_id | logging.go、middleware/request_id.go | 排障效率翻倍 |
-| 7 | dummy bcrypt 修时序侧信道 | login.go | 兑现注释承诺 |
+| 7 | dummy bcrypt 修时序侧信道（**已修复**） | login.go、register.go | 兑现注释承诺 |
 | 8 | 删除死代码与 CORS 死分支 | app.go、cors.go | 减少误导 |
 | 9 | 文档纠正 frontend/apps 与 migration 编号 | architecture.md | 新人少踩坑 |
 | 10 | `make new-module` 脚本 | Makefile、scripts/ | 把分层约定变成约束 |

@@ -14,7 +14,6 @@ import (
 	"backend/pkg/strutil"
 
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *AuthServiceImpl) Login(ctx context.Context, req *auth.LoginRequest) (*auth.LoginResult, *errcode.Error) {
@@ -41,21 +40,23 @@ func (s *AuthServiceImpl) loginWithPassword(ctx context.Context, req *auth.Login
 	}
 
 	user, svcErr := s.findUserByAccount(ctx, req.Phone, req.Email, req.Account)
-	if svcErr != nil {
-		// 用户不存在也记为失败，防止通过响应时间枚举账号
-		if svcErr.Code == errcode.ErrInvalidCredentials.Code {
-			s.recordLoginFail(ctx, account)
-		}
+	if svcErr != nil && svcErr.Code != errcode.ErrInvalidCredentials.Code {
 		return nil, svcErr
 	}
 
-	if user.PasswordHash == nil || *user.PasswordHash == "" {
-		s.recordLoginFail(ctx, account)
-		return nil, errcode.ErrInvalidCredentials
+	// 账号不存在时也完整跑一次 bcrypt（dummy hash）：否则「查不到」比「密码错」少一次
+	// cost 10 的比较（约 45–100ms），单次请求就能用来枚举账号。
+	// 用户存在但没有密码（纯 OAuth 账号）同样走 dummy，三种失败分支计算量一致。
+	var hash string
+	if user != nil && user.PasswordHash != nil {
+		hash = *user.PasswordHash
 	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.Password)); err != nil {
+	if !verifyPassword(hash, req.Password) {
+		// 查不到账号同样记失败：不存在的账号也会触发锁定，429 因此不泄露存在性。
 		s.recordLoginFail(ctx, account)
+		if svcErr != nil {
+			return nil, svcErr
+		}
 		return nil, errcode.ErrInvalidCredentials
 	}
 

@@ -16,6 +16,39 @@ import (
 
 const bcryptCost = bcrypt.DefaultCost
 
+// dummyPasswordHash 是 cost 与线上 hash 完全一致的占位 hash。
+//
+// 它唯一的作用是让「账号不存在 / 账号没有密码」与「密码错误」付出同一次 bcrypt 计算：
+// cost 10 的一次比较约 45–100ms，跳过它会让响应耗时直接变成账号存在性的判据。
+// 用 bcryptCost 生成而非写死字面量，避免有人调整 cost 后 dummy 悄悄漂移
+// （TestDummyPasswordHashCostMatchesBcryptCost 会盯住这一点）。
+var dummyPasswordHash = mustBcryptHash("auth-timing-equalizer")
+
+func mustBcryptHash(password string) []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		// 只有 cost 越界才会失败，属编程错误：启动即崩比线上静默退化成不等时安全
+		panic("auth: init dummy bcrypt hash: " + err.Error())
+	}
+	return h
+}
+
+// bcryptCompare 是包内可替换的 bcrypt 比较接缝：测试替换它即可确定性地断言
+// 「每条失败分支恰好比较一次、且用的是 dummy」，不依赖时间断言（CI 上必然 flaky）。
+var bcryptCompare = bcrypt.CompareHashAndPassword
+
+// verifyPassword 始终执行一次 bcrypt 比较，返回密码是否正确。
+//
+// hash 为空（用户不存在，或账号只有 OAuth 身份、没有密码）时用 dummyPasswordHash
+// 消耗同样的时间，并恒返回 false——dummy 的明文即使被猜到也不会成为登录凭据。
+func verifyPassword(hash, password string) bool {
+	if hash == "" {
+		_ = bcryptCompare(dummyPasswordHash, []byte(password))
+		return false
+	}
+	return bcryptCompare([]byte(hash), []byte(password)) == nil
+}
+
 func (s *AuthServiceImpl) Register(ctx context.Context, input *RegisterInput) (*auth.LoginResult, *errcode.Error) {
 	// 就地归一化标识：后续 registrationTarget/verifyCode/checkAccountExists 与写库
 	// 用的必须是同一个形式，input 由 handler 每请求新建，不会跨请求复用。
