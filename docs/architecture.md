@@ -47,6 +47,15 @@ Client
 - 定义 `Service` 接口与实现。
 - 依赖 `repo` 接口，不依赖 `sqlcgen` 包名（通过 `pg` 仓库实现转换）。
 - 返回领域错误或 `pkg/errcode.Error`。
+- **领域错误（新代码）**：用 `internal/service/domainerr`（`Code` + 仅供日志的 `Msg`/cause），
+  Service 接口返回 `error`；Code → HTTP 状态码与 i18n 文案的映射只在
+  `internal/http/errors.go` 的 `failDomain` 一处，5xx 会额外记一条带 `request_id` 的错误日志。
+  新增 Code 必须同时加入 `domainerr.AllCodes`，漏配会被 `errors_test.go` 的映射遍历挡住。
+- **双轨完成定义**：单个模块算「迁移完成」当且仅当 ① 其 Service 接口不再出现 `*errcode.Error`；
+  ② handler 不再用 `resp.Fail(c, e)` 直接透传 service 错误，而是统一走 `failDomain`；
+  ③ 该模块测试改用 `domainerr.IsCode` 断言。全部业务模块完成后删除
+  `baseservice.ParseUUID` / `ParseUUIDPair`（只保留 `ParseUUIDError` / `ParseUUIDPairError`），
+  `pkg/errcode` 仅保留 handler 层仍在使用的条目。
 
 ### `internal/repo`
 

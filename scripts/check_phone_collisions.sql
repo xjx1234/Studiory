@@ -5,6 +5,9 @@
 --   2) 剩余部分匹配 ^0086(1[3-9][0-9]{9})$ 时剥掉 0086；
 --   3) 剩余部分匹配 ^86(1[3-9][0-9]{9})$ 时剥掉 86。
 --
+-- 口径由 backend/pkg/strutil/testdata/phone_normalization_golden.tsv 锁定：
+-- migration_upgrade_test.sh 的 5b 会用同一批样例断言本脚本与 Go / 000007 结果一致。
+--
 -- 用法（存在存量库时必须先跑）：
 --   psql "$DATABASE_URL" -f scripts/check_phone_collisions.sql
 --

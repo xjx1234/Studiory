@@ -148,6 +148,8 @@ while IFS=$'\t' read -r raw_in raw_want; do
 
   in=$(decode_golden "$raw_in")
   want=$(decode_golden "$raw_want")
+  # 空串在 TSV 里用 (empty) 占位（空行会被忽略），两列规则一致。
+  [ "$in" = "(empty)" ] && in=""
   [ "$want" = "(empty)" ] && want=""
 
   # 每轮先清空、退回 000007 前一版，保证一次只有一条样例，不会触发撞号预检。
@@ -162,6 +164,31 @@ while IFS=$'\t' read -r raw_in raw_want; do
     || fail "黄金样例 $(printf '%q' "$in") 清洗后 = $(printf '%q' "$got")，期望 $(printf '%q' "$want")"
 done <"$GOLDEN_TABLE"
 [ "$GOLDEN_CASES" -gt 0 ] || fail "黄金样例表为空：$GOLDEN_TABLE"
+
+echo "== 5b. 撞号预检脚本与黄金表同口径"
+# 000007 不可改，它的防撞号逻辑与 scripts/check_phone_collisions.sql 是两份 SQL 拷贝；
+# 用同一张黄金表跑一遍脚本，任何一侧单独改动都会在这里变红。
+SCRIPT_CASES=0
+while IFS=$'\t' read -r raw_in raw_want; do
+  case "$raw_in" in
+    ''|'#'*) continue ;;
+  esac
+  [ -n "${raw_want:-}" ] || fail "黄金样例缺少 expected 列：$raw_in"
+  SCRIPT_CASES=$((SCRIPT_CASES + 1))
+
+  in=$(decode_golden "$raw_in")
+  want=$(decode_golden "$raw_want")
+  [ "$in" = "(empty)" ] && in=""
+  [ "$want" = "(empty)" ] && want=""
+
+  "${PSQL[@]}" -d "$DB_UPGRADE" -c "TRUNCATE users CASCADE" >/dev/null
+  "${PSQL[@]}" -d "$DB_UPGRADE" -v in="$in" -f "$TMP_BASE/insert_golden.sql" >/dev/null
+  # 脚本输出三列（normalized|rows|ids），取第一列与黄金表期望比对。
+  got=$("${PSQL[@]}" -d "$DB_UPGRADE" -F '|' -f scripts/check_phone_collisions.sql | cut -d'|' -f1)
+  [ "$got" = "$want" ] \
+    || fail "撞号预检脚本对 $(printf '%q' "$in") 归一化为 $(printf '%q' "$got")，期望 $(printf '%q' "$want")：脚本与黄金表口径已漂移"
+done <"$GOLDEN_TABLE"
+[ "$SCRIPT_CASES" -gt 0 ] || fail "撞号预检脚本一致性检查没有样例"
 
 echo "== 6. 撞号预检：脚本能报出冲突组，000007 会中止"
 migrate -path "$HEAD_MIGRATIONS" -database "$(url "$DB_COLLISION")" up >/dev/null

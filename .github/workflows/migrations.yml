@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - 'backend/migrations/**'
+      # 归一化规则与黄金样例表：改 Go 侧或样例表同样必须重跑 SQL 侧一致性断言
+      - 'backend/pkg/strutil/**'
       - 'scripts/check_phone_collisions.sql'
       - 'scripts/check_email_collisions.sql'
       - 'scripts/check_migrations_immutable.sh'
@@ -13,6 +15,7 @@ on:
   pull_request:
     paths:
       - 'backend/migrations/**'
+      - 'backend/pkg/strutil/**'
       - 'scripts/check_phone_collisions.sql'
       - 'scripts/check_email_collisions.sql'
       - 'scripts/check_migrations_immutable.sh'

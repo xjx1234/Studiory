@@ -151,6 +151,10 @@ func TestNormalizePhoneGoldenTable(t *testing.T) {
 		}
 		in := unescapeGoldenField(cols[0])
 		want := unescapeGoldenField(cols[1])
+		// 空串在 TSV 里无法用空行表达，两列都用 (empty) 占位。
+		if in == "(empty)" {
+			in = ""
+		}
 		if want == "(empty)" {
 			want = ""
 		}

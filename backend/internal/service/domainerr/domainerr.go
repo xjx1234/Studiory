@@ -29,6 +29,22 @@ const (
 	CodeInternal        Code = "internal"
 )
 
+// AllCodes 列出全部领域错误码，供 HTTP 映射测试遍历。
+//
+// 新增 Code 时必须同时追加到这里。否则映射测试不会覆盖它，而 internal/http/errors.go
+// 里漏配的分支会静默退化成 500——只有遍历清单才能把「漏配」变成红测试。
+var AllCodes = []Code{
+	CodeInvalidArgument,
+	CodeValidation,
+	CodeUnauthenticated,
+	CodeForbidden,
+	CodeNotFound,
+	CodeAlreadyExists,
+	CodeTooManyRequests,
+	CodeUnavailable,
+	CodeInternal,
+}
+
 // Error 是领域错误。Msg 与 Err 只用于日志/调试；
 // HTTP 适配层只读取 Code，不会把 Msg 或 cause 写进响应。
 type Error struct {
@@ -38,6 +54,11 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	if e == nil {
+		// typed-nil（var e *Error; var err error = e）在日志里很常见：
+		// 直接解引用会 panic，把一次可解释的 500 变成进程级事故。
+		return "<nil>"
+	}
 	switch {
 	case e.Msg != "" && e.Err != nil:
 		return fmt.Sprintf("%s: %s: %v", e.Code, e.Msg, e.Err)
@@ -63,9 +84,12 @@ func Wrap(code Code, msg string, err error) *Error {
 }
 
 // CodeOf 沿 %w 链查找领域错误码；非领域错误返回 false。
+//
+// de != nil 的判断不能省：接口里装着 typed-nil（var e *Error; err = e）时 err != nil
+// 成立、errors.As 也返回 true，但 de 是 nil；不判空就会 nil pointer dereference。
 func CodeOf(err error) (Code, bool) {
 	var de *Error
-	if errors.As(err, &de) {
+	if errors.As(err, &de) && de != nil {
 		return de.Code, true
 	}
 	return "", false
