@@ -32,3 +32,7 @@ func (p *MockProvider) Send(_ context.Context, msg Message) error {
 	)
 	return nil
 }
+
+// BudgetNeutral 告诉 Router：mock 不真实外呼，不要占用故障转移的时间预算。
+// 没有这一条时，「SMTP + mock」会把真实 SMTP 的预算对半切掉。
+func (p *MockProvider) BudgetNeutral() bool { return true }

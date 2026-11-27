@@ -15,7 +15,8 @@
 # 钉扎只从 backend/go.mod 的 toolchain 行推导（本地/镜像/CI 共用同一份声明）。
 #
 # 做四件事：
-#   1. 拒绝 ci.yml 重新声明 GOTOOLCHAIN——单一来源被破坏时直接失败，而不是静默漂移；
+#   1. 拒绝任何 workflow 重新声明 GOTOOLCHAIN（并检查用 setup-go 的 workflow 都跑了本脚本）
+#      ——单一来源被破坏时直接失败，而不是静默漂移；
 #   2. 把推导出的钉扎写进 $GITHUB_ENV（同名变量后写覆盖先写），抵消 setup-go 的 local，
 #      恢复升级 action 之前的语义；
 #   3. 按钉扎量一次 `go env GOVERSION`——+auto 需要时会切换/下载，
@@ -42,16 +43,28 @@ if [ -z "$gomod" ]; then
   exit 2
 fi
 
-# ── 单一来源守卫：ci.yml 不允许再声明 GOTOOLCHAIN ────────────────────────────────
+# ── 单一来源守卫：任何 workflow 都不允许再声明 GOTOOLCHAIN ───────────────────────
 # 同名时 GITHUB_ENV 的写入会覆盖 workflow 级 env，两处声明只会漂移且很难察觉。
 # 只匹配 2-10 空格缩进的 YAML 键，覆盖 workflow(2) / job(6) / step(10) 三级 env；
 # 注释以 # 开头不会命中；run: | 的内容通常更深，且只有整行恰好形如 `GOTOOLCHAIN: 值`
 # 才会误报——真误报也是显式失败，改一下注释措辞即可，不会静默放过。
-if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -f "$GITHUB_WORKSPACE/.github/workflows/ci.yml" ]; then
-  if grep -Eq '^ {2,10}GOTOOLCHAIN:[[:space:]]*[^[:space:]]' "$GITHUB_WORKSPACE/.github/workflows/ci.yml"; then
-    echo "::error title=go-toolchain-pin::ci.yml 又声明了 GOTOOLCHAIN；工具链版本只允许在 backend/go.mod 的 toolchain 行声明，避免 GITHUB_ENV 与 workflow env 两处漂移"
-    exit 2
-  fi
+#
+# 同时要求：用了 actions/setup-go 的 workflow 必须执行本脚本。setup-go 默认导出的
+# GOTOOLCHAIN=local 会绕过 backend/go.mod 的补丁版钉扎，不校验就等于没有钉扎——
+# 新加的 workflow（如 migrations.yml）漏掉这一步，在这里直接变红。
+if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE/.github/workflows" ]; then
+  for wf in "$GITHUB_WORKSPACE"/.github/workflows/*.yml; do
+    [ -f "$wf" ] || continue
+    name="$(basename "$wf")"
+    if grep -Eq '^ {2,10}GOTOOLCHAIN:[[:space:]]*[^[:space:]]' "$wf"; then
+      echo "::error title=go-toolchain-pin::${name} 又声明了 GOTOOLCHAIN；工具链版本只允许在 backend/go.mod 的 toolchain 行声明，避免 GITHUB_ENV 与 workflow env 两处漂移"
+      exit 2
+    fi
+    if grep -q 'uses: actions/setup-go' "$wf" && ! grep -q 'check-go-toolchain.sh' "$wf"; then
+      echo "::error title=go-toolchain-pin::${name} 使用了 actions/setup-go 却没有执行 .github/scripts/check-go-toolchain.sh；setup-go 会导出 GOTOOLCHAIN=local，不校验则 backend/go.mod 的补丁版钉扎形同虚设"
+      exit 2
+    fi
+  done
 fi
 
 # ── 钉扎：argv 优先，其次 go.mod 的 toolchain 行，最后退化为 go 行 ────────────────────

@@ -21,6 +21,7 @@
 | `SERVER_WRITE_TIMEOUT` | `30s` | 否 | 写入响应超时 |
 | `SERVER_IDLE_TIMEOUT` | `120s` | 否 | keep-alive 空闲连接超时 |
 | `SERVER_REQUEST_TIMEOUT` | `5s` | 否 | 单请求 context 超时（DB/Redis 调用共享该 ctx）。必须小于 `SERVER_WRITE_TIMEOUT`，超时后统一返回 503 |
+| `SERVER_SEND_CODE_REQUEST_TIMEOUT` | `20s` | 否 | 仅 `/api/v1/auth/send-code` 的请求预算（同步外呼短信/邮件网关）。`0` 或留空 = 沿用 `SERVER_REQUEST_TIMEOUT`。约束：`SERVER_REQUEST_TIMEOUT` ≤ 该值 ≤ `SERVER_WRITE_TIMEOUT`，且 > `SMTP_DIAL_TIMEOUT + SMTP_SEND_TIMEOUT`；不满足则**启动直接失败** |
 | `SERVER_TRUSTED_PROXIES` | 空 | **反代部署必填** | 可信反向代理/LB 的来源 IP 或 CIDR，逗号分隔（如 `10.0.0.0/8,192.168.1.10`）。为空时不信任任何代理：`X-Forwarded-For` 一律忽略，IP 限流与访问日志只认 TCP 对端地址。Gin 出厂默认信任所有代理，客户端因此可伪造 XFF 随意换限流桶，本项目启动时按本配置收紧 |
 
 ---
@@ -107,6 +108,8 @@
 | `SMTP_USERNAME` | — | 否 | 用户名 |
 | `SMTP_PASSWORD` | — | 否 | 密码 |
 | `SMTP_FROM` | `no-reply@example.com` | 否 | 发件人地址 |
+| `SMTP_DIAL_TIMEOUT` | `5s` | 否 | 建立 TCP + TLS 连接的预算。配置了 `SMTP_HOST` 时必须 > 0，且与 `SMTP_SEND_TIMEOUT` 之和小于 `SERVER_SEND_CODE_REQUEST_TIMEOUT` |
+| `SMTP_SEND_TIMEOUT` | `10s` | 否 | 从 EHLO 到 `QUIT` 的预算。配置了 `SMTP_HOST` 时必须 > 0；实际取 `min(该值, 发码请求剩余预算)`，与请求预算**共享而非相加** |
 
 ---
 

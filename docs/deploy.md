@@ -137,6 +137,12 @@ app.send_code_request_timeout ≥ app.request_timeout
 
 未配置 `smtp.host` 的部署不受该链约束（不启用 SMTP 时这些键不参与校验），升级不会让原本正常的部署凭空启动失败。
 
+> **升级提示：预算不自洽会拒绝启动。** 存量部署若自定义过 `SERVER_REQUEST_TIMEOUT` /
+> `SERVER_WRITE_TIMEOUT`，升级后可能直接启动失败（日志会写明是哪条不等式不成立），例如把
+> `request_timeout` 调到 `30s` 而 `send_code_request_timeout` 仍是默认 `20s`。处理方式是显式设置
+> `SERVER_SEND_CODE_REQUEST_TIMEOUT` 让三者重新自洽，**不需要回滚版本**——启动期就拦下来，
+> 正是为了避免线上 `/send-code` 恒 503 且难定位。
+
 连接池与依赖超时：
 
 | 配置项 | 环境变量 | 默认 | 作用 |
@@ -262,6 +268,18 @@ CI 的 `Migrations` workflow 会以**最早可达**的 `migrations-baseline-*` t
 
 注意：`git push origin <tag>` 默认不受分支保护限制，没有这条规则时任何有写权限的账号都能推送 tag。
 设置后，正常发版打基线需要管理员操作，绕过闸门也就无法做到“无痕”。
+
+**覆盖范围**：基线 tag `migrations-baseline-20261126` 打在恢复提交 `54038cd` 上，闸门只覆盖它
+**之后**的提交。`2540e9b` 曾原地修改 `000005`，到 `54038cd` 才恢复为已发布内容，这段窗口不在闸门
+可审计范围内（`schema_migrations` 也不记录 checksum，无从事后核对）。恢复靠的是人工比对，存量数据里
+已存在的重复邮箱/手机号由 `000007` 的清洗兜底——**升级经过该窗口的环境仍须按上一节先跑前置检查**。
+人工核对锚点：`backend/migrations/000005_identity_canonical.up.sql` 的 sha256 应为
+`770848a8069b50ee81549791b79e73bc2ee8b028b3b394a6e540c3c3c1a2dc9d`。
+
+**禁止按旧 commit sha 回滚**：回滚部署只允许退到 tag 或 `main` 上的提交。`2540e9b..54038cd` 窗口内的
+旧 sha 带着已被修改又被还原的迁移文件，而闸门不覆盖该窗口、数据库也不记录 checksum——按这类 sha
+回滚/重放迁移无法被任何检查发现，等于绕过本闸门。确需回滚时先确认目标提交是已发布的 tag 或当前
+`main` 的祖先。
 
 ## 四、Kubernetes 部署示例
 

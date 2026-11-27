@@ -99,6 +99,8 @@ func (r *Router) Channels() []Channel {
 // 否则主通道把时间耗光后，备用通道拿到的是已过期的 ctx，故障转移形同虚设
 // （线上表现为「配了备用 SMTP 却从来没救回来过」）。主通道快速失败时，
 // 省下的时间会自动让给后面的通道。
+// 不真实外呼的 Provider（如开发用 mock）通过 BudgetNeutral 声明不参与切分，
+// 否则「SMTP + mock」的组合会让真实 SMTP 只能拿到一半预算。
 func (r *Router) Send(ctx context.Context, msg Message) error {
 	providers := r.byChannel[msg.Channel]
 	if len(providers) == 0 {
@@ -107,12 +109,12 @@ func (r *Router) Send(ctx context.Context, msg Message) error {
 
 	var lastErr error
 	for i, p := range providers {
-		attemptCtx, cancel := attemptBudget(ctx, len(providers)-i)
+		attemptCtx, cancel := attemptBudget(ctx, budgetedAttempts(providers[i:]))
 		if attemptCtx == nil {
-			// 上下文已结束（请求超时或客户端断开）：剩下的 provider 一个都不会被尝试。
+			// 上下文已结束（请求超时/客户端断开）或剩余预算已耗尽：剩下的 provider 一个都不会被尝试。
 			// 不能静默当作「和上次一样失败」，否则排查时会以为备用通道也试过。
-			return fmt.Errorf("sender: send context already done, %d of %d provider(s) for channel %s not attempted (last error: %v)",
-				len(providers)-i, len(providers), msg.Channel, lastErr)
+			return fmt.Errorf("sender: no time budget left for channel %s, %d of %d provider(s) not attempted (request context done or deadline exhausted; last error: %v)",
+				msg.Channel, len(providers)-i, len(providers), lastErr)
 		}
 
 		err := p.Send(attemptCtx, msg)
@@ -128,6 +130,27 @@ func (r *Router) Send(ctx context.Context, msg Message) error {
 		)
 	}
 	return fmt.Errorf("all providers failed for channel %s: %w", msg.Channel, lastErr)
+}
+
+// budgetNeutral 由「不真实外呼、不需要时间预算」的 Provider 实现（如开发用 mock）。
+type budgetNeutral interface {
+	BudgetNeutral() bool
+}
+
+// budgetedAttempts 统计还需要真实占用预算的尝试数（调用方传入的是「当前及之后的 Provider」）。
+// 只剩 mock 时返回 1，避免除零，也让它沿用剩余预算即可。
+func budgetedAttempts(rest []Provider) int {
+	n := 0
+	for _, p := range rest {
+		if bn, ok := p.(budgetNeutral); ok && bn.BudgetNeutral() {
+			continue
+		}
+		n++
+	}
+	if n == 0 {
+		return 1
+	}
+	return n
 }
 
 // attemptBudget 为单次尝试派生上下文：调用方没有 deadline 时原样透传（不在这里发明超时），

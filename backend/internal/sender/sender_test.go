@@ -205,6 +205,28 @@ func TestRouter_NoDeadlineContextPassesThrough(t *testing.T) {
 	}
 }
 
+// TestRouter_MockDoesNotShrinkRealProviderBudget 开发环境常把 mock 追加为兜底：
+// 它不真实外呼，不应参与「剩余预算 ÷ 剩余尝试数」的切分，否则真实 SMTP 只能拿到一半时间。
+func TestRouter_MockDoesNotShrinkRealProviderBudget(t *testing.T) {
+	const total = 600 * time.Millisecond
+
+	real := smsSpy("smtp", nil, false)
+	r := NewRouter(nil, real, NewMockProvider(nil))
+
+	ctx, cancel := context.WithTimeout(context.Background(), total)
+	defer cancel()
+
+	if err := r.Send(ctx, Message{Channel: ChannelSMS, Target: "138", Code: "1"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if len(real.budgets) != 1 {
+		t.Fatalf("real provider budgets = %v, want one entry", real.budgets)
+	}
+	if real.budgets[0] <= total*3/4 {
+		t.Errorf("real provider budget = %s, want nearly the whole %s (budget-neutral mock must not take a share)", real.budgets[0], total)
+	}
+}
+
 // TestRouter_SingleProviderKeepsWholeBudget 只有一个通道时不能把它切成两半。
 func TestRouter_SingleProviderKeepsWholeBudget(t *testing.T) {
 	const total = 800 * time.Millisecond

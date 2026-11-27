@@ -65,7 +65,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
+          # 只作引导；精确钉扎由下一步从 backend/go.mod 推导（与 ci.yml 同一份单一来源）
           go-version: '1.26.x'
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify Go toolchain pin
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/check-go-toolchain.sh"
 
       - name: Install golang-migrate
         # 与 docker-compose 的 migrate 服务保持同一版本
