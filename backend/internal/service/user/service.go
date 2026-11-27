@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"backend/internal/auth"
 	"backend/internal/repo"
 	baseservice "backend/internal/service"
 	"backend/internal/session"
@@ -176,7 +177,7 @@ func (s *userServiceImpl) ChangePassword(ctx context.Context, userID string, in 
 		return false, errcode.ErrSamePassword
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), auth.PasswordHashCost)
 	if err != nil {
 		s.LogInternal(ctx, "ChangePassword hash new password", err, baseservice.UserIDField(userID))
 		return false, errcode.ErrInternal

@@ -92,6 +92,19 @@ func (r *userRepo) Create(ctx context.Context, in *repo.CreateUserParams) (*repo
 func (r *userRepo) UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) (*repo.User, error) {
 	return r.update(ctx, id, `UPDATE users SET password_hash=?, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?`, passwordHash, id.String())
 }
+func (r *userRepo) UpdatePasswordIfUnchanged(ctx context.Context, id uuid.UUID, expectedHash, newHash string) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE users SET password_hash=?, updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND password_hash=?`,
+		newHash, id.String(), expectedHash)
+	if err != nil {
+		return false, wrapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
 func (r *userRepo) UpdateProfile(ctx context.Context, id uuid.UUID, nickname, avatar string) (*repo.User, error) {
 	return r.update(ctx, id, `UPDATE users SET nickname=?, avatar=?, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?`, nickname, avatar, id.String())
 }

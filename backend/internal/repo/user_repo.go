@@ -32,6 +32,10 @@ type UserRepo interface {
 
 	Create(ctx context.Context, params *CreateUserParams) (*User, error)
 	UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) (*User, error)
+	// UpdatePasswordIfUnchanged 只在库内 hash 仍等于 expectedHash 时写入 newHash，返回是否更新。
+	// 用于登录成功后的 bcrypt 升级（CAS）：并发的改密若已换掉 hash，这里必须放弃，
+	// 否则会把旧密码的 hash 写回去，等于撤销用户刚做的改密。
+	UpdatePasswordIfUnchanged(ctx context.Context, id uuid.UUID, expectedHash, newHash string) (bool, error)
 	UpdateProfile(ctx context.Context, id uuid.UUID, nickname, avatar string) (*User, error)
 
 	// 后台管理

@@ -23,6 +23,10 @@ type FakeUserRepo struct {
 	GetByIDErr        error
 	UpdateProfileErr  error
 	UpdatePasswordErr error
+
+	// PasswordCASUpdates 记录 UpdatePasswordIfUnchanged 实际写入的次数，
+	// 用于断言「cost 已达标时不重复 rehash」。
+	PasswordCASUpdates int
 }
 
 func NewFakeUserRepo() *FakeUserRepo {
@@ -86,6 +90,23 @@ func (r *FakeUserRepo) UpdatePassword(_ context.Context, id uuid.UUID, hash stri
 	}
 	u.PasswordHash = &hash
 	return u, nil
+}
+
+func (r *FakeUserRepo) UpdatePasswordIfUnchanged(_ context.Context, id uuid.UUID, expectedHash, newHash string) (bool, error) {
+	if r.UpdatePasswordErr != nil {
+		return false, r.UpdatePasswordErr
+	}
+	u, ok := r.Users[id]
+	if !ok {
+		return false, repo.ErrNotFound
+	}
+	if u.PasswordHash == nil || *u.PasswordHash != expectedHash {
+		// 并发改密已换掉 hash：模拟 CAS 失败，调用方必须放弃本次升级。
+		return false, nil
+	}
+	u.PasswordHash = &newHash
+	r.PasswordCASUpdates++
+	return true, nil
 }
 
 func (r *FakeUserRepo) UpdateProfile(_ context.Context, id uuid.UUID, nickname, avatar string) (*repo.User, error) {

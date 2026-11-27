@@ -14,12 +14,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const bcryptCost = bcrypt.DefaultCost
+// bcryptCost 是当前目标 cost：新密码、dummy hash 与登录时的升级都以它为准。
+// 具体取值与理由见 auth.PasswordHashCost。
+const bcryptCost = auth.PasswordHashCost
 
 // dummyPasswordHash 是 cost 与线上 hash 完全一致的占位 hash。
 //
 // 它唯一的作用是让「账号不存在 / 账号没有密码」与「密码错误」付出同一次 bcrypt 计算：
-// cost 10 的一次比较约 45–100ms，跳过它会让响应耗时直接变成账号存在性的判据。
+// cost 12 的一次比较约 200–400ms，跳过它会让响应耗时直接变成账号存在性的判据。
 // 用 bcryptCost 生成而非写死字面量，避免有人调整 cost 后 dummy 悄悄漂移
 // （TestDummyPasswordHashCostMatchesBcryptCost 会盯住这一点）。
 var dummyPasswordHash = mustBcryptHash("auth-timing-equalizer")
@@ -47,6 +49,46 @@ func verifyPassword(hash, password string) bool {
 		return false
 	}
 	return bcryptCompare([]byte(hash), []byte(password)) == nil
+}
+
+// upgradePasswordHash 在登录成功后把低于目标 cost 的库内 hash 就地升级。
+//
+// 为什么放在登录：只有这一刻同时持有明文密码与已验证的 hash，不需要用户改密。
+// 为什么用 CAS：并发的改密若已经写入新 hash，这里必须放弃——否则会把旧密码的
+// hash 写回去，等于撤销用户刚做的改密（`UpdatePassword` 是无条件覆盖，不能用）。
+// 失败一律只记日志：升级是后台维护动作，不能影响一次已经成功的登录。
+func (s *AuthServiceImpl) upgradePasswordHash(ctx context.Context, user *repo.User, password string) {
+	if user == nil || user.PasswordHash == nil || *user.PasswordHash == "" {
+		return
+	}
+	oldHash := *user.PasswordHash
+	cost, err := bcrypt.Cost([]byte(oldHash))
+	if err != nil {
+		// 库里的 hash 不合 bcrypt 格式：登录校验已经通过是不可能的，这里只可能
+		// 出现在脏数据上；记日志但不阻断登录。
+		s.LogInternal(ctx, "upgradePasswordHash bcrypt.Cost", err)
+		return
+	}
+	if cost >= bcryptCost {
+		return
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		s.LogInternal(ctx, "upgradePasswordHash generate", err)
+		return
+	}
+	newHashStr := string(newHash)
+	updated, err := s.users.UpdatePasswordIfUnchanged(ctx, user.ID, oldHash, newHashStr)
+	if err != nil {
+		s.LogInternal(ctx, "upgradePasswordHash update", err)
+		return
+	}
+	if !updated {
+		// 并发改密已换掉 hash（或用户被删除）：保留库内现状。
+		return
+	}
+	user.PasswordHash = &newHashStr
 }
 
 func (s *AuthServiceImpl) Register(ctx context.Context, input *RegisterInput) (*auth.LoginResult, *errcode.Error) {

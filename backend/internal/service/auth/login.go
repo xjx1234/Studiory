@@ -60,8 +60,9 @@ func (s *AuthServiceImpl) loginWithPassword(ctx context.Context, req *auth.Login
 		return nil, errcode.ErrInvalidCredentials
 	}
 
-	// 登录成功，清除失败计数
+	// 登录成功，清除失败计数；顺手把低 cost 的旧 hash 升级（失败不影响本次登录）。
 	s.clearLoginFail(ctx, account)
+	s.upgradePasswordHash(ctx, user, req.Password)
 	return s.issueResult(ctx, user)
 }
 

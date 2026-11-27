@@ -234,6 +234,30 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg *UpdateUserPasswor
 	return &i, err
 }
 
+const updateUserPasswordIfUnchanged = `-- name: UpdateUserPasswordIfUnchanged :execrows
+UPDATE users
+SET password_hash = $2,
+    updated_at = now()
+WHERE id = $1
+  AND password_hash = $3
+`
+
+type UpdateUserPasswordIfUnchangedParams struct {
+	ID             pgtype.UUID `json:"id"`
+	PasswordHash   pgtype.Text `json:"password_hash"`
+	PasswordHash_2 pgtype.Text `json:"password_hash_2"`
+}
+
+// 仅当库内 hash 仍是 expected（$3）时才写入：登录时的 bcrypt 升级用它做 CAS，
+// 避免并发的改密被这次「旧密码的 rehash」覆盖回去。
+func (q *Queries) UpdateUserPasswordIfUnchanged(ctx context.Context, arg *UpdateUserPasswordIfUnchangedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateUserPasswordIfUnchanged, arg.ID, arg.PasswordHash, arg.PasswordHash_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateUserProfile = `-- name: UpdateUserProfile :one
 UPDATE users
 SET nickname = $2,

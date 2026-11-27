@@ -71,6 +71,18 @@ func (r *userRepo) UpdatePassword(ctx context.Context, id uuid.UUID, passwordHas
 	return userFromRow(row), nil
 }
 
+func (r *userRepo) UpdatePasswordIfUnchanged(ctx context.Context, id uuid.UUID, expectedHash, newHash string) (bool, error) {
+	n, err := r.q.UpdateUserPasswordIfUnchanged(ctx, &sqlcgen.UpdateUserPasswordIfUnchangedParams{
+		ID:             pgtype.UUID{Bytes: to16(id), Valid: true},
+		PasswordHash:   pgtype.Text{String: newHash, Valid: true},
+		PasswordHash_2: pgtype.Text{String: expectedHash, Valid: true},
+	})
+	if err != nil {
+		return false, wrapErr(err)
+	}
+	return n > 0, nil
+}
+
 func (r *userRepo) UpdateProfile(ctx context.Context, id uuid.UUID, nickname, avatar string) (*repo.User, error) {
 	row, err := r.q.UpdateUserProfile(ctx, &sqlcgen.UpdateUserProfileParams{
 		ID:       pgtype.UUID{Bytes: to16(id), Valid: true},
