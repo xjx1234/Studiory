@@ -94,7 +94,7 @@
   且去完分隔符后确实匹配 `1[3-9]\d{9}` 时再去掉 `0086`/`86` 前缀（`strutil.NormalizeEmail` / `NormalizePhone` / `NormalizeAccount`）。
   注册写库、登录查人、验证码键、锁定键必须由同一个函数产出，否则 `Alice@x.com` 与 `alice@x.com`
   会拆进不同桶——冷却/配额/锁定全部可被换写法绕过。
-- 作用于**密码登录、验证码登录与注册校验**三条路径：失败（含「用户不存在」，防止时序枚举账号）时原子递增 `fail` 计数；达到 **5 次/10 分钟** 阈值时写入 `lock` 键锁定 **15 分钟**。计数与锁定写入由同一段 Redis Lua 脚本原子完成。
+- 作用于**密码登录、验证码登录与注册校验**三条路径：失败（含「用户不存在」）时原子递增 `fail` 计数；达到 **5 次/10 分钟** 阈值时写入 `lock` 键锁定 **15 分钟**。计数与锁定写入由同一段 Redis Lua 脚本原子完成。不存在的账号同样计数并被锁定，429 因此不泄露账号是否存在；响应耗时的等时性由密码登录路径的 dummy bcrypt 保证，计数本身不改变单次耗时。
 - 登录或注册成功立即删除 `fail` 计数（`lock` 键自然过期）。
 - Redis 故障时按 `auth.redis_fail_open` 策略降级（默认开发 `true`=放行，生产 `false`=拒绝），打 Warn 日志。
 - 阈值/窗口/锁定时长为 `service/auth/service.go` 中常量（`loginMaxFailAttempts`、`loginFailWindow`、`loginLockDuration`），命中锁定返回错误码 `10010`（`err_account_locked`，HTTP 429）。
