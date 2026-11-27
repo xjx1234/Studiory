@@ -3,6 +3,7 @@
 > 评审时间：2026-11-25　范围：`backend/`、`docs/`、`deploy/k8s/`、`docker-compose.yml`、`Makefile`、`.github/workflows/`
 > 方法：通读全部手写代码（排除 `sqlc/gen`）与文档、CI、部署清单；**本机未安装 Go，未执行 `go build` / `go test` / `make lint`**，以下结论均来自静态阅读，涉及行为的部分已标注依据。
 > 复核（2026-11-25，第二批改动后）：见下方「零、复核结果」。结论先行——**19 条中仅 P1-2 已修复，P1-1/P1-3~P1-6 与 P2-1~P2-13 全部未动**；本批改动质量高，但引入了 1 处约定违反与 2 处低危口径偏差。
+> **全量复核（2026-11-27，HEAD `c287361`）：见「七、全量复核」——以该节为准**；历史批次里「未动」的判定只作过程记录，已修复条目统一在 7.1 汇总，不再重复展开。
 
 ---
 
@@ -362,6 +363,78 @@
 | 8 | 删除死代码与 CORS 死分支 | app.go、cors.go | 减少误导 |
 | 9 | 文档纠正 frontend/apps 与 migration 编号 | architecture.md | 新人少踩坑 |
 | 10 | `make new-module` 脚本 | Makefile、scripts/ | 把分层约定变成约束 |
+
+---
+
+## 七、全量复核（2026-11-27，HEAD `c287361`）
+
+### 7.1 范围、方法与「已修复」汇总
+
+- **基线**：`c287361`（工作区干净）；范围同首轮：`backend/`、`docs/`、`deploy/`、`docker-compose.yml`、`Makefile`、`.github/`。
+- **方法**：静态通读 + 本机 Go 1.26.11 实际执行 `gofmt -l .`、`go build ./...`、`go test ./...`、`golangci-lint run ./...`（0 issues）；远端 CI run `45939432157` 五个 job 全绿，Migrations 因无迁移路径改动未触发。**仍未做**：真实 PG/MySQL 行为对比、压测、生产级时序回归。
+- **已在此前批次修掉（不再重复结论）**：P1-2（PG 侧标识规范化 + `lower(email)` 唯一索引）、P1-3（session 绝对过期）、P1-4（access TTL 与校验）、P1-5（请求超时 + PG `statement_timeout`）、P1-6（限流降级可观测）、P2-2、P2-4（最后管理员 + 审计表）、P2-5、P2-6、P2-7、P2-8、P2-9、P2-10、P2-11、N-1~N-4、R-1（发码超时预算链 / Router 预算切分 / mock 不占预算 / 清理脱离取消）、迁移不可变闸门（最早可达基线 + 升级路径测试 + 前置检查接入）、Go 工具链单一来源守卫、登录时序等时化（dummy bcrypt）。
+- **结论**：P0 无；P1 两项（MySQL 双驱动、手机号归一化口径漂移）；P2 四项历史遗留未动 + 六项本轮新增。
+
+### 7.2 P0：无
+
+生产默认值有启动校验（`JWTSecret` 默认值、`AUTH_MOCK_CODE_ENABLED`、按目标/IP 配额、`METRICS_TOKEN`、`SERVER_TRUSTED_PROXIES` 告警，[config.go#L250-L400](file:///Users/pxiong/Code/personal/Studiory/backend/internal/config/config.go#L250-L400)），鉴权链路已合并为单次 MGET，发码预算链有 `Validate` 断言，迁移有不可变闸门与升级路径测试。本轮未发现会导致「凭据泄露 / 数据不可恢复损坏」的阻断项。唯一接近 P0 的是 P1-1 的 MySQL 存量库（该驱动在文档中从未承诺、默认不启用，故按 P1 计；**若决定正式支持 MySQL，应立刻升为 P0**）。
+
+### 7.3 P1（应尽快处理）
+
+#### P1-1 MySQL 双驱动治理：仍未动，缺口比首轮更大
+
+| 证据 | 说明 |
+|------|------|
+| `backend/migrations/mysql/` 只有 `000001_init_schema.up/down.sql` | PG 已到 `000007`。000001 里手工补了 `status` 与 `admin_audit_logs`（注释自称「与 PG 侧对齐」），但 `000004` 索引优化、`000005` 的 `lower(email)` 唯一索引与邮箱清洗、`000007` 的手机号清洗**都没有 MySQL 版本** |
+| [store.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go) 287 行 + [audit_repo.go](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/audit_repo.go) | MySQL 侧是手写 SQL，PG 侧是 sqlc 生成；`List`/`Count` 的 LIKE 条件、最后管理员守卫（`updateGuarded`）各写一遍，靠人肉同步 |
+| `scripts/check_phone_collisions.sql` | 只有 PG 版；MySQL 存量库没有等价的撞号预检 |
+| `DB_DRIVER` 使用处：`config.go`、`Makefile`、`docker-compose.yml` 三个 profile | `docs/env-vars.md` 与 `backend/.env.example` **仍无该条目** |
+
+**影响**：全新 MySQL 库能跑（CI 有 `mysql repo layer` 集成 job），但存量 MySQL 库升级后手机号仍是带分隔符写法，服务层按裸 11 位查不到 → 老用户登录失败；`database.statement_timeout` 在 MySQL 驱动下也不生效（`env-vars.md` 已注明，但没有任何替代手段）；`utf8mb4_unicode_ci` 的唯一键语义（大小写不敏感、重音不敏感、`ß`≈`ss`）与 PG `lower(email)` 不同，同一邮箱可能「一边能注册、一边报已存在」。
+
+**建议**：二选一，不要继续半套。A. 删（推荐）：移除 mysql store、`migrations/mysql`、compose 三个 profile、Makefile 分支、CI job 与 `database.driver`。B. 保留则收口：补 `000004~000007` 的 MySQL 等价 DDL（含清洗与唯一索引）、补 MySQL 撞号预检、把 MySQL 纳入迁移升级测试、文档补 `DB_DRIVER` 并明确「实验特性，不承诺存量升级」。
+
+#### P1-2 手机号归一化三份口径已实际漂移（上一轮只评估，本轮升级为待修）
+
+- **三处实现**：[strutil.NormalizePhone](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/strutil/strutil.go#L80-L104)、[000007 的预检 CTE + 三条 UPDATE](file:///Users/pxiong/Code/personal/Studiory/backend/migrations/000007_identity_canonical_phone.up.sql)、[scripts/check_phone_collisions.sql](file:///Users/pxiong/Code/personal/Studiory/scripts/check_phone_collisions.sql)；第四处是 `scripts/migration_upgrade_test.sh` 的种子与对旧 `000005` 的探测。
+- **漂移点（可复现）**：Go 只删固定字符集 `空格 \t - . / ( ) +`；SQL 用 `regexp_replace(phone,'[^0-9]','','g')` 删**所有**非数字。于是 `138_0013_8000`、`138,0013,8000`、含全角字符或换行的号码：Go 保留（随后被 `phone_cn` 拒绝），SQL 清洗成裸号。两份「预检」（000007 内的 DO 块与 scripts 脚本）也是同一段 CTE 的复制品。
+- **影响**：运行时入口校验把大部分异常写法挡在门外，短期不会造成线上登录失败；但**迁移结果与运行时口径不一致**。一旦放宽 `phone_cn`、导入外部数据，或只改其中一处，就会出现「清洗成功却查不到人」或「预检放过、UPDATE 撞号」。
+- **建议**：把 Go 规则定为唯一黄金口径（或反向统一成 `[^0-9]`），产出一张「输入 → 期望」黄金表，Go 单测与迁移测试共用同一批样例；SQL 侧改成同一字符集；`000007` 预检与 `scripts/check_phone_collisions.sql` 合并为一个 `psql -f` 可直接执行的文件，消灭两份 CTE。
+
+> 与旧的「P1-2 邮箱/手机号未规范化」不是同一件事：PG 侧的规范化与唯一索引已完成，这里剩的是**口径副本之间**的漂移。
+
+### 7.4 P2：历史遗留，仍未动
+
+| 编号 | 现状证据 | 影响 | 建议 |
+|------|----------|------|------|
+| P2-1 service 返回 `*errcode.Error` | [todo/service.go#L37-L41](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/todo/service.go#L37-L41)、[user/service.go#L43-L47](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/user/service.go#L43-L47)、[admin/service.go#L53-L56](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L53-L56)、[auth/sendcode.go#L102](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L102) | domain 层耦合 HTTP 语义与 i18n；错误只能靠全局 `errcode` 值比较，换协议（gRPC/CLI）要重写 | 引入 domain error（Kind + cause），handler 统一映射；按模块迁移，别一次改完 |
+| P2-3 无分布式追踪 | [go.mod#L116](file:///Users/pxiong/Code/personal/Studiory/backend/go.mod#L116) 仅 `go.opentelemetry.io/auto/sdk` indirect；代码中无 `TracerProvider`/`otelhttp`/pgx tracer | 跨 DB/Redis/SMTP 的耗时只能靠日志时间戳拼；`request_id` 已串单服务，但没有 trace 传播 | OTel SDK + gin/pgx/redis hook，采样率可配，日志注入 `trace_id` |
+| P2-12 `LIKE '%kw%'` + `OFFSET` | PG [users.sql#L77-L90](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/sqlc/query/users.sql#L77-L90)；MySQL [store.go#L149](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go#L149)、[#L166](file:///Users/pxiong/Code/personal/Studiory/backend/internal/repo/mysql/store.go#L166) | 前后通配无法走 B-tree，数据量上来列表页变全表扫；列表与 COUNT 各扫一次；深分页线性变慢，且 `page` 只校验 > 0（[pagination.go#L81-L85](file:///Users/pxiong/Code/personal/Studiory/backend/pkg/pagination/pagination.go#L81-L85)） | 改 keyset/cursor 分页；或 PG 上 `pg_trgm` + 前缀化搜索；给 `page` 上限并在 OpenAPI 写明 |
+| P2-13 `oauth.wechat.app_secret` 未使用 | 只出现在配置映射与 yaml 注释（[base.yaml#L100](file:///Users/pxiong/Code/personal/Studiory/backend/config/base.yaml#L100)「预留」），代码零消费；微信登录实际走 `access_token + open_id` | 配置项暗示「已支持 code 换 token」，生产填了也不生效 | 要么实现 code→token（含 unionid 处理），要么从配置与文档移除该键 |
+
+其余未动的工程化项（首轮 G 节，简述）：OpenAPI 契约测试只比对路径/方法、不校验 schema；CI 覆盖率门槛固定 50%；`make new-module` 脚手架未做。
+
+### 7.5 本轮新增发现（P2）
+
+| 编号 | 问题 | 证据 | 建议 |
+|------|------|------|------|
+| N-7 | `verifyCode` 把 Redis 故障伪装成「验证码错误」 | [sendcode.go#L279-L299](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/sendcode.go#L279-L299)：`Eval` 出错直接 `return false`，登录/注册分别映射成 401/400 `ErrInvalidCode` | 改成三态（通过 / 不匹配 / 基础设施错误），infra → 503 并计数；顺带补 `cache == nil` 守卫——`New` 不校验 cache，`brute_force.go` 有 nil 判断而 `verifyCode`/`SendCode` 没有，nil 会 panic |
+| N-8 | 审计写入非事务且失败静默 | [admin/service.go#L205-L208](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L205-L208) 变更提交后才 `recordAudit`；[#L308-L332](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/admin/service.go#L308-L332) 失败只 `LogInternal` | 变更 + 审计同事务（repo 暴露 tx），或至少 `admin_audit_write_failed_total` + 告警 |
+| N-9 | 登录/注册缺专用限流 | 与 send-code 共用 60–120 次/分钟/IP 的公共桶（[rate_limit.go#L58-L65](file:///Users/pxiong/Code/personal/Studiory/backend/internal/http/middleware/rate_limit.go#L58-L65)、[production.yaml#L16](file:///Users/pxiong/Code/personal/Studiory/backend/config/production.yaml#L16)）；账号级锁定按账号计，挡不住「每账号 1 次」 | `/auth/login`、`/auth/register` 单独 10–20 次/分钟/IP，并按账号哈希再加一层滑动窗口 |
+| N-10 | bcrypt 成本固定 10 且无登录时 rehash | [register.go#L17](file:///Users/pxiong/Code/personal/Studiory/backend/internal/service/auth/register.go#L17) `bcryptCost = bcrypt.DefaultCost` | 配置化目标 cost；登录成功后 `bcrypt.Cost(hash)` 低于目标就重新生成并 `UpdatePassword` 静默升级（dummy 成本测试已能兜底） |
+| N-11 | 配置项与文档无自动比对 | 实例：`DB_DRIVER` 至今未进 `env-vars.md`/`.env.example`；上一批三个 SMTP/发码超时键靠人工同步 | 用 `config.go` 的 env 映射生成文档表格，或加一条测试比对「代码里的环境变量集合」与文档 |
+| N-12 | 覆盖率门槛偏低 | CI `backend` job 固定 ≥50% | auth/http 等关键包单独设 ≥70%，或全局提到 65% |
+
+### 7.6 建议处理顺序
+
+1. **P1-1 先决策**（删 MySQL 还是收口）；选保留就先补 MySQL 迁移与预检，否则后续每次迁移都会加深漂移。
+2. **P1-2 口径黄金表 + 合并预检脚本**（改动小、防回归收益高）。
+3. **N-7 三态 `verifyCode`**（故障语义与可观测性，改动局部）。
+4. **N-8 审计事务化/指标**，同时决定是否把审计失败暴露给调用方。
+5. **P2-1 错误模型**（分模块）、**P2-3 OTel**、**P2-12 分页**按排期推进。
+6. N-9 / N-10 / N-11 / N-12 视规模择机实施。
+
+> 本节只做评估，未改动任何代码。
 
 ---
 
