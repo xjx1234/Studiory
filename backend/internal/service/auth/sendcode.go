@@ -101,16 +101,23 @@ const (
 // （配额已计入，避免用「失败重试」绕过上限）。
 func (s *AuthServiceImpl) SendCode(ctx context.Context, codeType, target, clientIP string) *errcode.Error {
 	codeType = strings.ToLower(strings.TrimSpace(codeType))
-	// 先归一化再判空与配额：键、下发、计数必须共用同一个标识形式。
-	target = canonicalTarget(codeType, target)
-
+	target = strings.TrimSpace(target)
 	if codeType == "" || target == "" {
 		s.observeCodeSend(codeType, codeOutcomeInvalidRequest)
 		return errcode.ErrBadRequest
 	}
+	// 渠道校验先于归一化：未知渠道的目标未必是号码/邮箱，若先按手机号清洗，
+	// "x" 会变成空串，把本应记为 unsupported_channel 的请求误记成 invalid_request。
 	if !s.codeChannelAllowed(codeType) {
 		s.observeCodeSend(codeType, codeOutcomeUnsupportedChannel)
 		return errcode.ErrBadRequest.WithMessage("err_code_channel_unavailable")
+	}
+	// 归一化后再判空：已知渠道里清洗后为空，说明目标不是有效号码/邮箱。
+	// 键、下发、计数必须共用同一个标识形式。
+	target = canonicalTarget(codeType, target)
+	if target == "" {
+		s.observeCodeSend(codeType, codeOutcomeInvalidRequest)
+		return errcode.ErrBadRequest
 	}
 
 	targetLimit := int64(s.codeDailyLimitPerTarget)

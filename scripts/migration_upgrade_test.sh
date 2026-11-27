@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # 迁移升级路径验证（需要可连接的 PostgreSQL，本地无 Docker 时也可直接跑）。
 #
-# 覆盖三件事：
+# 覆盖四件事：
 #   1. 存量库升级：用基线 tag 的 backend/migrations 建库 → 插入带分隔符/国家码的手机号
 #      → 用工作树的 backend/migrations up 到 HEAD → 断言号码已变成裸 11 位；
 #   2. 幂等：force 到 000007 的上一版本后再 up 一次，号码仍为裸号且行数不变；
-#   3. 撞号预检：往干净库里插入归一化后相同的两个号码，脚本能查出来，000007 会中止。
+#   3. 黄金样例：backend/pkg/strutil/testdata/phone_normalization_golden.tsv 的每条样例
+#      逐条写库并跑真实 000007，断言清洗结果与 Go 单测共用同一口径；
+#   4. 撞号预检：往干净库里插入归一化后相同的两个号码，脚本能查出来，000007 会中止。
 #
 # 环境变量：
 #   PGHOST / PGPORT / PGUSER / PGPASSWORD  数据库连接（默认 localhost:5432 postgres/postgres）
@@ -116,7 +118,52 @@ expect_phone "$U4" '13600136000'
 [ "$("${PSQL[@]}" -d "$DB_UPGRADE" -c "SELECT count(*) FROM users")" = "$COUNT_BEFORE" ] \
   || fail "重复执行后行数变化"
 
-echo "== 5. 撞号预检：脚本能报出冲突组，000007 会中止"
+echo "== 5. 黄金样例：逐条跑真实 000007，校验与 Go 单测同口径"
+GOLDEN_TABLE="backend/pkg/strutil/testdata/phone_normalization_golden.tsv"
+[ -f "$GOLDEN_TABLE" ] || fail "缺少黄金样例表 $GOLDEN_TABLE"
+if [ -n "$(tail -c 1 "$GOLDEN_TABLE")" ]; then
+  fail "黄金样例表末行缺少换行：bash 的 read 会静默跳过最后一条样例"
+fi
+
+# 样例表用 \t、\n 字面量表示控制字符，避免控制字符破坏 TSV 结构。
+decode_golden() {
+  local s=$1
+  s=${s//'\t'/$'\t'}
+  s=${s//'\n'/$'\n'}
+  printf '%s' "$s"
+}
+
+GOLDEN_ID='99999999-9999-9999-9999-999999999999'
+cat >"$TMP_BASE/insert_golden.sql" <<SQL
+INSERT INTO users (id, phone) VALUES ('$GOLDEN_ID', :'in');
+SQL
+
+GOLDEN_CASES=0
+while IFS=$'\t' read -r raw_in raw_want; do
+  case "$raw_in" in
+    ''|'#'*) continue ;;
+  esac
+  [ -n "${raw_want:-}" ] || fail "黄金样例缺少 expected 列：$raw_in"
+  GOLDEN_CASES=$((GOLDEN_CASES + 1))
+
+  in=$(decode_golden "$raw_in")
+  want=$(decode_golden "$raw_want")
+  [ "$want" = "(empty)" ] && want=""
+
+  # 每轮先清空、退回 000007 前一版，保证一次只有一条样例，不会触发撞号预检。
+  # 插入值经 psql -v 变量传入 :'in'，引号/换行由 psql 负责转义，不拼 SQL 字面量。
+  "${PSQL[@]}" -d "$DB_UPGRADE" -c "TRUNCATE users CASCADE" >/dev/null
+  migrate -path "$HEAD_MIGRATIONS" -database "$(url "$DB_UPGRADE")" force "$FORCE_VERSION" >/dev/null
+  "${PSQL[@]}" -d "$DB_UPGRADE" -v in="$in" -f "$TMP_BASE/insert_golden.sql" >/dev/null
+  migrate -path "$HEAD_MIGRATIONS" -database "$(url "$DB_UPGRADE")" up >/dev/null
+
+  got=$("${PSQL[@]}" -d "$DB_UPGRADE" -c "SELECT phone FROM users WHERE id = '$GOLDEN_ID'")
+  [ "$got" = "$want" ] \
+    || fail "黄金样例 $(printf '%q' "$in") 清洗后 = $(printf '%q' "$got")，期望 $(printf '%q' "$want")"
+done <"$GOLDEN_TABLE"
+[ "$GOLDEN_CASES" -gt 0 ] || fail "黄金样例表为空：$GOLDEN_TABLE"
+
+echo "== 6. 撞号预检：脚本能报出冲突组，000007 会中止"
 migrate -path "$HEAD_MIGRATIONS" -database "$(url "$DB_COLLISION")" up >/dev/null
 C1='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 C2='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'

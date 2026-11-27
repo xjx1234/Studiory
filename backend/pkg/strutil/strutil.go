@@ -9,6 +9,10 @@ import (
 // 这里单独声明而不是复用校验器，是为了让「归一化」不依赖 validator 包。
 var reChinaMobile = regexp.MustCompile(`^1[3-9]\d{9}$`)
 
+// reNonDigits 与 000007 迁移、scripts/check_phone_collisions.sql 的清洗口径一致：
+// 删除所有非 ASCII 数字字符。
+var reNonDigits = regexp.MustCompile(`[^0-9]`)
+
 // NullableStr 将非空（trim 后）字符串转为指针，空字符串返回 nil。
 func NullableStr(s string) *string {
 	s = strings.TrimSpace(s)
@@ -78,22 +82,19 @@ func NormalizeEmail(s string) string {
 }
 
 // NormalizePhone 归一化手机号，使同一个号码的不同书写形式落到同一个标识：
-//  1. 去掉首尾空白；
-//  2. 去掉书写分隔符（空格、-、.、/、括号）与国际前缀符 +；
-//  3. 中国大陆号码再去掉 0086 / +86 / 86 国家码前缀，得到与 phone_cn 校验一致的裸 11 位号码。
+//  1. 删除所有非 ASCII 数字字符（空格、标点、换行、全角数字等一并删除）；
+//  2. 剩余部分能明确判定为中国大陆手机号时，剥掉 0086 / 86 国家码，得到与
+//     phone_cn 校验一致的裸 11 位号码。
 //
-// 只对能明确判定为中国大陆手机号（去前缀后仍匹配 1[3-9]\d{9}）的号码剥国家码，
-// 其他国家号码无法可靠推断国家码，只做第 1、2 步。
+// 第 1 步必须与 000007 迁移、scripts/check_phone_collisions.sql 同口径（都删除所有
+// 非 ASCII 数字）：运行时拼出的查询值与存储键，要和迁移清洗后的 users.phone 对得上。
+// 不要收窄成固定分隔符集合——逗号、下划线、换行等写法会被漏掉，导致这部分存量账号查不到。
+// 两端共用的样例见 testdata/phone_normalization_golden.tsv。
 //
-// 幂等：归一化结果不含分隔符与国家码前缀，再次归一化不变。
+// 其他国家号码无法可靠推断国家码，只做第 1 步，不做前缀剥离。
+// 幂等：结果只含 ASCII 数字，且不再带可剥离的国家码。
 func NormalizePhone(s string) string {
-	s = strings.Map(func(r rune) rune {
-		switch r {
-		case ' ', '\t', '-', '.', '/', '(', ')', '+':
-			return -1
-		}
-		return r
-	}, s)
+	s = reNonDigits.ReplaceAllString(s, "")
 
 	for _, prefix := range []string{"0086", "86"} {
 		if strings.HasPrefix(s, prefix) {
@@ -105,16 +106,20 @@ func NormalizePhone(s string) string {
 	return s
 }
 
-// NormalizeAccount 归一化「账号」这种同时允许手机号与邮箱的字段。
+// NormalizeAccount 归一化「账号」这种同时允许手机号与邮箱（以及历史用户名）的字段。
 //
-// 以 @ 判定形态：邮箱必须含 @，手机号永远不含，因此不会误判。
-// 不用 LooksLikePhone 判别——"+86 138-0013-8000" 含分隔符，恰好会被它判成非手机号。
+// 以 @ 判定邮箱；不含 @ 时先按手机号规则清洗，只有清洗结果确实像号码（10-15 位数字）
+// 才采用——否则原样返回 trim 后的输入，避免把 "Admin"、"user_123" 这类用户名洗成空串/残片。
+// 不能直接用 LooksLikePhone 判原串："+86 138-0013-8000" 含分隔符，会被误判成非号码。
 func NormalizeAccount(s string) string {
 	s = strings.TrimSpace(s)
 	if strings.ContainsRune(s, '@') {
 		return NormalizeEmail(s)
 	}
-	return NormalizePhone(s)
+	if phone := NormalizePhone(s); LooksLikePhone(phone) {
+		return phone
+	}
+	return s
 }
 
 // MaskPII 对手机号/邮箱等 PII 进行脱敏，用于日志输出。

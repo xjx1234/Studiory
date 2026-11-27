@@ -90,8 +90,10 @@
 | `app:login:lock:{sha256_hex}` | string | 15 分钟 | 账号被锁定标记，存在即拒绝密码登录 |
 
 - 键后缀为「账号标识（手机号/邮箱/account，统一小写去空格）」的 SHA-256 十六进制摘要，不存明文账号。
-  这里的**归一化形式是唯一口径**：邮箱 = `lower(trim(x))`，手机号 = 去掉分隔符（空格、`-`、`.`、`/`、括号、`+`），
-  且去完分隔符后确实匹配 `1[3-9]\d{9}` 时再去掉 `0086`/`86` 前缀（`strutil.NormalizeEmail` / `NormalizePhone` / `NormalizeAccount`）。
+  这里的**归一化形式是唯一口径**：邮箱 = `lower(trim(x))`；手机号 = 删除所有非 ASCII 数字
+  （等价 `regexp_replace(phone, '[^0-9]', '', 'g')`，与 000007 迁移同口径），剩余部分匹配
+  `1[3-9]\d{9}` 时再去掉 `0086`/`86` 前缀（`strutil.NormalizeEmail` / `NormalizePhone` / `NormalizeAccount`）。
+  规则由 `backend/pkg/strutil/testdata/phone_normalization_golden.tsv` 的样例表锁定，Go 单测与迁移升级测试共用。
   注册写库、登录查人、验证码键、锁定键必须由同一个函数产出，否则 `Alice@x.com` 与 `alice@x.com`
   会拆进不同桶——冷却/配额/锁定全部可被换写法绕过。
 - 作用于**密码登录、验证码登录与注册校验**三条路径：失败（含「用户不存在」）时原子递增 `fail` 计数；达到 **5 次/10 分钟** 阈值时写入 `lock` 键锁定 **15 分钟**。计数与锁定写入由同一段 Redis Lua 脚本原子完成。不存在的账号同样计数并被锁定，429 因此不泄露账号是否存在；响应耗时的等时性由密码登录路径的 dummy bcrypt 保证，计数本身不改变单次耗时。
