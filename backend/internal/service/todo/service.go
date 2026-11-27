@@ -6,7 +6,7 @@ import (
 
 	"backend/internal/repo"
 	baseservice "backend/internal/service"
-	"backend/pkg/errcode"
+	"backend/internal/service/domainerr"
 	"backend/pkg/pagination"
 
 	"go.uber.org/zap"
@@ -33,12 +33,15 @@ type UpdateInput struct {
 }
 
 // Service 示例模块业务入口。
+//
+// 错误一律返回 domainerr（Code + cause），不感知 HTTP 状态码与 i18n；
+// 映射集中在 internal/http/errors.go。
 type Service interface {
-	List(ctx context.Context, userID string, page pagination.Query) (pagination.List[Item], *errcode.Error)
-	Get(ctx context.Context, userID, todoID string) (*Item, *errcode.Error)
-	Create(ctx context.Context, userID string, in *CreateInput) (*Item, *errcode.Error)
-	Update(ctx context.Context, userID, todoID string, in *UpdateInput) (*Item, *errcode.Error)
-	Delete(ctx context.Context, userID, todoID string) *errcode.Error
+	List(ctx context.Context, userID string, page pagination.Query) (pagination.List[Item], error)
+	Get(ctx context.Context, userID, todoID string) (*Item, error)
+	Create(ctx context.Context, userID string, in *CreateInput) (*Item, error)
+	Update(ctx context.Context, userID, todoID string, in *UpdateInput) (*Item, error)
+	Delete(ctx context.Context, userID, todoID string) error
 }
 
 type serviceImpl struct {
@@ -63,16 +66,16 @@ func WithLogger(logger *zap.Logger) Option {
 	}
 }
 
-func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Query) (pagination.List[Item], *errcode.Error) {
-	uid, e := baseservice.ParseUUID(userID)
-	if e != nil {
-		return pagination.List[Item]{}, e
+func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Query) (pagination.List[Item], error) {
+	uid, err := baseservice.ParseUUIDError(userID)
+	if err != nil {
+		return pagination.List[Item]{}, err
 	}
 
 	total, err := s.todos.CountByUserID(ctx, uid)
 	if err != nil {
 		s.LogInternal(ctx, "List count todos", err, baseservice.UserIDField(userID))
-		return pagination.List[Item]{}, errcode.ErrInternal
+		return pagination.List[Item]{}, domainerr.Wrap(domainerr.CodeInternal, "count todos", err)
 	}
 
 	limit := page.LimitInt32()
@@ -80,7 +83,7 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 	rows, err := s.todos.ListByUserIDPaginated(ctx, uid, limit, offset)
 	if err != nil {
 		s.LogInternal(ctx, "List todos", err, baseservice.UserIDField(userID))
-		return pagination.List[Item]{}, errcode.ErrInternal
+		return pagination.List[Item]{}, domainerr.Wrap(domainerr.CodeInternal, "list todos", err)
 	}
 
 	items := make([]Item, 0, len(rows))
@@ -91,76 +94,76 @@ func (s *serviceImpl) List(ctx context.Context, userID string, page pagination.Q
 	return pagination.NewList(items, page, total), nil
 }
 
-func (s *serviceImpl) Get(ctx context.Context, userID, todoID string) (*Item, *errcode.Error) {
-	uid, tid, e := baseservice.ParseUUIDPair(userID, todoID)
-	if e != nil {
-		return nil, e
+func (s *serviceImpl) Get(ctx context.Context, userID, todoID string) (*Item, error) {
+	uid, tid, err := baseservice.ParseUUIDPairError(userID, todoID)
+	if err != nil {
+		return nil, err
 	}
 
 	row, err := s.todos.GetByIDAndUserID(ctx, tid, uid)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
-			return nil, errcode.ErrNotFound
+			return nil, domainerr.Wrap(domainerr.CodeNotFound, "todo not found", err)
 		}
 		s.LogInternal(ctx, "Get todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
-		return nil, errcode.ErrInternal
+		return nil, domainerr.Wrap(domainerr.CodeInternal, "get todo", err)
 	}
 	item := toItem(row)
 	return &item, nil
 }
 
-func (s *serviceImpl) Create(ctx context.Context, userID string, in *CreateInput) (*Item, *errcode.Error) {
-	uid, e := baseservice.ParseUUID(userID)
-	if e != nil {
-		return nil, e
+func (s *serviceImpl) Create(ctx context.Context, userID string, in *CreateInput) (*Item, error) {
+	uid, err := baseservice.ParseUUIDError(userID)
+	if err != nil {
+		return nil, err
 	}
 	if in == nil || in.Title == "" {
-		return nil, errcode.ErrValidation
+		return nil, domainerr.New(domainerr.CodeValidation, "title is required")
 	}
 
 	row, err := s.todos.Create(ctx, uid, in.Title)
 	if err != nil {
 		s.LogInternal(ctx, "Create todo", err, baseservice.UserIDField(userID))
-		return nil, errcode.ErrInternal
+		return nil, domainerr.Wrap(domainerr.CodeInternal, "create todo", err)
 	}
 	item := toItem(row)
 	return &item, nil
 }
 
-func (s *serviceImpl) Update(ctx context.Context, userID, todoID string, in *UpdateInput) (*Item, *errcode.Error) {
-	uid, tid, e := baseservice.ParseUUIDPair(userID, todoID)
-	if e != nil {
-		return nil, e
+func (s *serviceImpl) Update(ctx context.Context, userID, todoID string, in *UpdateInput) (*Item, error) {
+	uid, tid, err := baseservice.ParseUUIDPairError(userID, todoID)
+	if err != nil {
+		return nil, err
 	}
 	if in == nil || in.Title == "" {
-		return nil, errcode.ErrValidation
+		return nil, domainerr.New(domainerr.CodeValidation, "title is required")
 	}
 
 	row, err := s.todos.Update(ctx, tid, uid, in.Title, in.Done)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
-			return nil, errcode.ErrNotFound
+			return nil, domainerr.Wrap(domainerr.CodeNotFound, "todo not found", err)
 		}
 		s.LogInternal(ctx, "Update todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
-		return nil, errcode.ErrInternal
+		return nil, domainerr.Wrap(domainerr.CodeInternal, "update todo", err)
 	}
 	item := toItem(row)
 	return &item, nil
 }
 
-func (s *serviceImpl) Delete(ctx context.Context, userID, todoID string) *errcode.Error {
-	uid, tid, e := baseservice.ParseUUIDPair(userID, todoID)
-	if e != nil {
-		return e
+func (s *serviceImpl) Delete(ctx context.Context, userID, todoID string) error {
+	uid, tid, err := baseservice.ParseUUIDPairError(userID, todoID)
+	if err != nil {
+		return err
 	}
 
-	err := s.todos.Delete(ctx, tid, uid)
+	err = s.todos.Delete(ctx, tid, uid)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
-			return errcode.ErrNotFound
+			return domainerr.Wrap(domainerr.CodeNotFound, "todo not found", err)
 		}
 		s.LogInternal(ctx, "Delete todo", err, baseservice.UserIDField(userID), zap.String("todo_id", todoID))
-		return errcode.ErrInternal
+		return domainerr.Wrap(domainerr.CodeInternal, "delete todo", err)
 	}
 	return nil
 }

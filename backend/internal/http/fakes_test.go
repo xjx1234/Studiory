@@ -172,44 +172,44 @@ func (f *fakeAdminService) SetStatus(ctx context.Context, actingUserID, targetUs
 // ── fakeTodoService ───────────────────────────────────────────────────────────
 
 type fakeTodoService struct {
-	listFn   func(ctx context.Context, userID string, page pagination.Query) (pagination.List[todoservice.Item], *errcode.Error)
-	getFn    func(ctx context.Context, userID, todoID string) (*todoservice.Item, *errcode.Error)
-	createFn func(ctx context.Context, userID string, in *todoservice.CreateInput) (*todoservice.Item, *errcode.Error)
-	updateFn func(ctx context.Context, userID, todoID string, in *todoservice.UpdateInput) (*todoservice.Item, *errcode.Error)
-	deleteFn func(ctx context.Context, userID, todoID string) *errcode.Error
+	listFn   func(ctx context.Context, userID string, page pagination.Query) (pagination.List[todoservice.Item], error)
+	getFn    func(ctx context.Context, userID, todoID string) (*todoservice.Item, error)
+	createFn func(ctx context.Context, userID string, in *todoservice.CreateInput) (*todoservice.Item, error)
+	updateFn func(ctx context.Context, userID, todoID string, in *todoservice.UpdateInput) (*todoservice.Item, error)
+	deleteFn func(ctx context.Context, userID, todoID string) error
 }
 
 var _ todoservice.Service = (*fakeTodoService)(nil)
 
-func (f *fakeTodoService) List(ctx context.Context, userID string, page pagination.Query) (pagination.List[todoservice.Item], *errcode.Error) {
+func (f *fakeTodoService) List(ctx context.Context, userID string, page pagination.Query) (pagination.List[todoservice.Item], error) {
 	if f.listFn != nil {
 		return f.listFn(ctx, userID, page)
 	}
 	return pagination.List[todoservice.Item]{Items: []todoservice.Item{}, Total: 0}, nil
 }
 
-func (f *fakeTodoService) Get(ctx context.Context, userID, todoID string) (*todoservice.Item, *errcode.Error) {
+func (f *fakeTodoService) Get(ctx context.Context, userID, todoID string) (*todoservice.Item, error) {
 	if f.getFn != nil {
 		return f.getFn(ctx, userID, todoID)
 	}
 	return &todoservice.Item{ID: todoID, Title: "demo"}, nil
 }
 
-func (f *fakeTodoService) Create(ctx context.Context, userID string, in *todoservice.CreateInput) (*todoservice.Item, *errcode.Error) {
+func (f *fakeTodoService) Create(ctx context.Context, userID string, in *todoservice.CreateInput) (*todoservice.Item, error) {
 	if f.createFn != nil {
 		return f.createFn(ctx, userID, in)
 	}
 	return &todoservice.Item{ID: "todo-1", Title: in.Title}, nil
 }
 
-func (f *fakeTodoService) Update(ctx context.Context, userID, todoID string, in *todoservice.UpdateInput) (*todoservice.Item, *errcode.Error) {
+func (f *fakeTodoService) Update(ctx context.Context, userID, todoID string, in *todoservice.UpdateInput) (*todoservice.Item, error) {
 	if f.updateFn != nil {
 		return f.updateFn(ctx, userID, todoID, in)
 	}
 	return &todoservice.Item{ID: todoID, Title: in.Title, Done: in.Done}, nil
 }
 
-func (f *fakeTodoService) Delete(ctx context.Context, userID, todoID string) *errcode.Error {
+func (f *fakeTodoService) Delete(ctx context.Context, userID, todoID string) error {
 	if f.deleteFn != nil {
 		return f.deleteFn(ctx, userID, todoID)
 	}

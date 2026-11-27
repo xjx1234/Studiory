@@ -40,7 +40,7 @@ func (h *UserTodoHandler) List(c *gin.Context) {
 	page := pagination.ParseQuery(c)
 	list, e := h.svc.List(c.Request.Context(), userID, page)
 	if e != nil {
-		resp.Fail(c, e)
+		failDomain(c, e)
 		return
 	}
 	resp.OK(c, list)
@@ -62,7 +62,7 @@ func (h *UserTodoHandler) Create(c *gin.Context) {
 		Title: req.Title,
 	})
 	if e != nil {
-		resp.Fail(c, e)
+		failDomain(c, e)
 		return
 	}
 	resp.OK(c, item)
@@ -82,7 +82,7 @@ func (h *UserTodoHandler) Get(c *gin.Context) {
 
 	item, e := h.svc.Get(c.Request.Context(), userID, param.ID)
 	if e != nil {
-		resp.Fail(c, e)
+		failDomain(c, e)
 		return
 	}
 	resp.OK(c, item)
@@ -110,7 +110,7 @@ func (h *UserTodoHandler) Update(c *gin.Context) {
 		Done:  req.Done,
 	})
 	if e != nil {
-		resp.Fail(c, e)
+		failDomain(c, e)
 		return
 	}
 	resp.OK(c, item)
@@ -129,7 +129,7 @@ func (h *UserTodoHandler) Delete(c *gin.Context) {
 	}
 
 	if e := h.svc.Delete(c.Request.Context(), userID, param.ID); e != nil {
-		resp.Fail(c, e)
+		failDomain(c, e)
 		return
 	}
 	resp.OK(c, nil)

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"backend/internal/repo"
-	"backend/pkg/errcode"
+	"backend/internal/service/domainerr"
 	"backend/pkg/pagination"
 
 	"github.com/google/uuid"
@@ -149,8 +149,8 @@ func TestList_InvalidUserID(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	_, e := svc.List(context.Background(), "not-a-uuid", pagination.Query{Page: 1, PageSize: 20})
-	if e == nil || e.Code != errcode.ErrBadRequest.Code {
-		t.Fatalf("expected ErrBadRequest, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument, got %+v", e)
 	}
 }
 
@@ -158,8 +158,8 @@ func TestList_CountInternalError(t *testing.T) {
 	svc := New(&fakeTodoRepo{countErr: errors.New("db down")})
 
 	_, e := svc.List(context.Background(), uuid.New().String(), pagination.Query{Page: 1, PageSize: 20})
-	if e == nil || e.Code != errcode.ErrInternal.Code {
-		t.Fatalf("expected ErrInternal, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInternal) {
+		t.Fatalf("expected internal, got %+v", e)
 	}
 }
 
@@ -167,8 +167,8 @@ func TestList_ListInternalError(t *testing.T) {
 	svc := New(&fakeTodoRepo{listErr: errors.New("db down")})
 
 	_, e := svc.List(context.Background(), uuid.New().String(), pagination.Query{Page: 1, PageSize: 20})
-	if e == nil || e.Code != errcode.ErrInternal.Code {
-		t.Fatalf("expected ErrInternal, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInternal) {
+		t.Fatalf("expected internal, got %+v", e)
 	}
 }
 
@@ -195,8 +195,8 @@ func TestGet_NotFound(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	_, e := svc.Get(context.Background(), uuid.New().String(), uuid.New().String())
-	if e == nil || e.Code != errcode.ErrNotFound.Code {
-		t.Fatalf("expected ErrNotFound, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeNotFound) {
+		t.Fatalf("expected not_found, got %+v", e)
 	}
 }
 
@@ -209,8 +209,8 @@ func TestGet_InvalidIDs(t *testing.T) {
 	}
 	for _, c := range cases {
 		_, e := svc.Get(context.Background(), c[0], c[1])
-		if e == nil || e.Code != errcode.ErrBadRequest.Code {
-			t.Errorf("userID=%q todoID=%q: expected ErrBadRequest, got %+v", c[0], c[1], e)
+		if e == nil || !domainerr.IsCode(e, domainerr.CodeInvalidArgument) {
+			t.Errorf("userID=%q todoID=%q: expected invalid_argument, got %+v", c[0], c[1], e)
 		}
 	}
 }
@@ -219,8 +219,8 @@ func TestGet_InternalError(t *testing.T) {
 	svc := New(&fakeTodoRepo{getErr: errors.New("db down")})
 
 	_, e := svc.Get(context.Background(), uuid.New().String(), uuid.New().String())
-	if e == nil || e.Code != errcode.ErrInternal.Code {
-		t.Fatalf("expected ErrInternal, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInternal) {
+		t.Fatalf("expected internal, got %+v", e)
 	}
 }
 
@@ -228,8 +228,8 @@ func TestCreate_InvalidUserID(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	_, e := svc.Create(context.Background(), "not-a-uuid", &CreateInput{Title: "x"})
-	if e == nil || e.Code != errcode.ErrBadRequest.Code {
-		t.Fatalf("expected ErrBadRequest, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument, got %+v", e)
 	}
 }
 
@@ -240,8 +240,8 @@ func TestCreate_ValidationErrors(t *testing.T) {
 	cases := []*CreateInput{nil, {}, {Title: ""}}
 	for _, in := range cases {
 		_, e := svc.Create(context.Background(), userID, in)
-		if e == nil || e.Code != errcode.ErrValidation.Code {
-			t.Errorf("input=%+v: expected ErrValidation, got %+v", in, e)
+		if e == nil || !domainerr.IsCode(e, domainerr.CodeValidation) {
+			t.Errorf("input=%+v: expected validation, got %+v", in, e)
 		}
 	}
 }
@@ -250,8 +250,8 @@ func TestCreate_InternalError(t *testing.T) {
 	svc := New(&fakeTodoRepo{createErr: errors.New("db down")})
 
 	_, e := svc.Create(context.Background(), uuid.New().String(), &CreateInput{Title: "x"})
-	if e == nil || e.Code != errcode.ErrInternal.Code {
-		t.Fatalf("expected ErrInternal, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInternal) {
+		t.Fatalf("expected internal, got %+v", e)
 	}
 }
 
@@ -278,8 +278,8 @@ func TestUpdate_InvalidIDs(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	_, e := svc.Update(context.Background(), "not-a-uuid", uuid.New().String(), &UpdateInput{Title: "x"})
-	if e == nil || e.Code != errcode.ErrBadRequest.Code {
-		t.Fatalf("expected ErrBadRequest, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument, got %+v", e)
 	}
 }
 
@@ -287,8 +287,8 @@ func TestUpdate_ValidationError(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	_, e := svc.Update(context.Background(), uuid.New().String(), uuid.New().String(), &UpdateInput{Title: ""})
-	if e == nil || e.Code != errcode.ErrValidation.Code {
-		t.Fatalf("expected ErrValidation, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeValidation) {
+		t.Fatalf("expected validation, got %+v", e)
 	}
 }
 
@@ -296,8 +296,8 @@ func TestUpdate_NotFound(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	_, e := svc.Update(context.Background(), uuid.New().String(), uuid.New().String(), &UpdateInput{Title: "x"})
-	if e == nil || e.Code != errcode.ErrNotFound.Code {
-		t.Fatalf("expected ErrNotFound, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeNotFound) {
+		t.Fatalf("expected not_found, got %+v", e)
 	}
 }
 
@@ -305,8 +305,8 @@ func TestUpdate_InternalError(t *testing.T) {
 	svc := New(&fakeTodoRepo{updateErr: errors.New("db down")})
 
 	_, e := svc.Update(context.Background(), uuid.New().String(), uuid.New().String(), &UpdateInput{Title: "x"})
-	if e == nil || e.Code != errcode.ErrInternal.Code {
-		t.Fatalf("expected ErrInternal, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInternal) {
+		t.Fatalf("expected internal, got %+v", e)
 	}
 }
 
@@ -324,7 +324,7 @@ func TestDelete_Success(t *testing.T) {
 		t.Fatalf("delete failed: %+v", e)
 	}
 
-	if _, e := svc.Get(context.Background(), userID.String(), created.ID); e == nil || e.Code != errcode.ErrNotFound.Code {
+	if _, e := svc.Get(context.Background(), userID.String(), created.ID); e == nil || !domainerr.IsCode(e, domainerr.CodeNotFound) {
 		t.Fatalf("expected item to be gone after delete, got %+v", e)
 	}
 }
@@ -333,8 +333,8 @@ func TestDelete_InvalidIDs(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	e := svc.Delete(context.Background(), "not-a-uuid", uuid.New().String())
-	if e == nil || e.Code != errcode.ErrBadRequest.Code {
-		t.Fatalf("expected ErrBadRequest, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument, got %+v", e)
 	}
 }
 
@@ -342,8 +342,8 @@ func TestDelete_NotFound(t *testing.T) {
 	svc := New(&fakeTodoRepo{})
 
 	e := svc.Delete(context.Background(), uuid.New().String(), uuid.New().String())
-	if e == nil || e.Code != errcode.ErrNotFound.Code {
-		t.Fatalf("expected ErrNotFound, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeNotFound) {
+		t.Fatalf("expected not_found, got %+v", e)
 	}
 }
 
@@ -351,7 +351,7 @@ func TestDelete_InternalError(t *testing.T) {
 	svc := New(&fakeTodoRepo{deleteErr: errors.New("db down")})
 
 	e := svc.Delete(context.Background(), uuid.New().String(), uuid.New().String())
-	if e == nil || e.Code != errcode.ErrInternal.Code {
-		t.Fatalf("expected ErrInternal, got %+v", e)
+	if e == nil || !domainerr.IsCode(e, domainerr.CodeInternal) {
+		t.Fatalf("expected internal, got %+v", e)
 	}
 }

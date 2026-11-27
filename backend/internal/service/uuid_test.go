@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"backend/internal/service/domainerr"
 	"backend/pkg/errcode"
 
 	"github.com/google/uuid"
@@ -58,6 +59,35 @@ func TestParseUUIDPair_SecondInvalidReturnsError(t *testing.T) {
 	_, _, errc := ParseUUIDPair(uuid.New().String(), "not-a-uuid")
 	if errc == nil {
 		t.Fatal("expected error when second UUID is invalid")
+	}
+}
+
+func TestParseUUIDError_InvalidReturnsInvalidArgument(t *testing.T) {
+	cases := []string{"", "not-a-uuid", "12345", "  "}
+	for _, s := range cases {
+		_, err := ParseUUIDError(s)
+		if !domainerr.IsCode(err, domainerr.CodeInvalidArgument) {
+			t.Errorf("ParseUUIDError(%q) = %v, want invalid_argument", s, err)
+		}
+	}
+}
+
+func TestParseUUIDPairError(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+
+	gotA, gotB, err := ParseUUIDPairError(a.String(), b.String())
+	if err != nil {
+		t.Fatalf("ParseUUIDPairError: %v", err)
+	}
+	if gotA != a || gotB != b {
+		t.Errorf("ParseUUIDPairError() = (%v, %v), want (%v, %v)", gotA, gotB, a, b)
+	}
+
+	if _, _, err := ParseUUIDPairError("not-a-uuid", b.String()); !domainerr.IsCode(err, domainerr.CodeInvalidArgument) {
+		t.Errorf("first invalid: error = %v, want invalid_argument", err)
+	}
+	if _, _, err := ParseUUIDPairError(a.String(), "not-a-uuid"); !domainerr.IsCode(err, domainerr.CodeInvalidArgument) {
+		t.Errorf("second invalid: error = %v, want invalid_argument", err)
 	}
 }
 

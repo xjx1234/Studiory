@@ -1,15 +1,17 @@
 package service
 
 import (
+	"backend/internal/service/domainerr"
 	"backend/pkg/errcode"
 
 	"github.com/google/uuid"
 )
 
 // ParseUUID 将外部传入的字符串 ID 统一转换为 uuid.UUID。
-// service 层统一把非法 UUID 视为 BadRequest，避免各业务模块重复处理。
+// 仍返回 *errcode.Error，供尚未迁移到 domainerr 的模块使用；
+// 新迁移的模块请用 ParseUUIDError。
 func ParseUUID(id string) (uuid.UUID, *errcode.Error) {
-	parsed, err := uuid.Parse(id)
+	parsed, err := ParseUUIDError(id)
 	if err != nil {
 		return uuid.Nil, errcode.ErrBadRequest
 	}
@@ -24,6 +26,30 @@ func ParseUUIDPair(first, second string) (uuid.UUID, uuid.UUID, *errcode.Error) 
 	parsedSecond, e := ParseUUID(second)
 	if e != nil {
 		return uuid.Nil, uuid.Nil, e
+	}
+	return parsedFirst, parsedSecond, nil
+}
+
+// ParseUUIDError 将外部传入的字符串 ID 转换为 uuid.UUID。
+// 非法 UUID 统一视为 invalid_argument，由 HTTP 适配层映射为 400，
+// 避免各业务模块重复判断。
+func ParseUUIDError(id string) (uuid.UUID, error) {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return uuid.Nil, domainerr.Wrap(domainerr.CodeInvalidArgument, "invalid uuid", err)
+	}
+	return parsed, nil
+}
+
+// ParseUUIDPairError 是 ParseUUIDPair 的 domainerr 版本。
+func ParseUUIDPairError(first, second string) (uuid.UUID, uuid.UUID, error) {
+	parsedFirst, err := ParseUUIDError(first)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	parsedSecond, err := ParseUUIDError(second)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
 	}
 	return parsedFirst, parsedSecond, nil
 }

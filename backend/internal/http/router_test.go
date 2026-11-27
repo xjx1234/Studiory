@@ -16,6 +16,7 @@ import (
 	"backend/internal/repo"
 	adminservice "backend/internal/service/admin"
 	authservice "backend/internal/service/auth"
+	"backend/internal/service/domainerr"
 	todoservice "backend/internal/service/todo"
 	userservice "backend/internal/service/user"
 	"backend/pkg/errcode"
@@ -387,8 +388,8 @@ func TestCreateTodo_ValidationError(t *testing.T) {
 
 func TestGetTodo_NotFound(t *testing.T) {
 	r, ts := newTestServer(t)
-	ts.todo.getFn = func(context.Context, string, string) (*todoservice.Item, *errcode.Error) {
-		return nil, errcode.ErrNotFound
+	ts.todo.getFn = func(context.Context, string, string) (*todoservice.Item, error) {
+		return nil, domainerr.New(domainerr.CodeNotFound, "todo not found")
 	}
 	w, body := doJSON(t, r, http.MethodGet,
 		"/api/v1/user/todos/11111111-1111-1111-1111-111111111111", nil, authHeaders(repo.RoleUser)...)
